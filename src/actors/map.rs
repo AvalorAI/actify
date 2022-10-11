@@ -59,7 +59,7 @@ where
     }
 }
 
-trait MapContainer<T> {
+trait MapContainer {
     fn get_key(&mut self, args: Box<dyn Any + Send>) -> Result<Box<dyn Any + Send>, ActorError>;
 
     fn insert(&mut self, args: Box<dyn Any + Send>) -> Result<Box<dyn Any + Send>, ActorError>;
@@ -67,7 +67,7 @@ trait MapContainer<T> {
     fn is_empty(&mut self, args: Box<dyn Any + Send>) -> Result<Box<dyn Any + Send>, ActorError>;
 }
 
-impl<K, V> MapContainer<HashMap<K, V>> for Container<HashMap<K, V>>
+impl<K, V> MapContainer for Container<HashMap<K, V>>
 where
     K: Clone + Debug + Eq + Hash + Send + 'static,
     V: Clone + Debug + Send + 'static,
