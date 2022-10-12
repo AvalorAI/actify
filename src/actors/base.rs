@@ -19,7 +19,7 @@ impl<T> Handle<T>
 where
     T: Clone + Debug + Send + Sync + 'static,
 {
-    pub async fn create_cache(&self) -> Cache<T> {
+    pub fn create_cache(&self) -> Cache<T> {
         Cache::new(self.clone())
     }
 
