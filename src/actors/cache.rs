@@ -27,7 +27,7 @@ impl<T> Cache<T>
 where
     T: Clone + Debug + Send + Sync + 'static,
 {
-    pub fn new(handle: Handle<T>) -> Self {
+    pub(crate) fn new(handle: Handle<T>) -> Self {
         Self {
             inner: None,
             handle,
@@ -35,7 +35,8 @@ where
         }
     }
 
-    pub async fn listen(&mut self) -> Result<T> {
+    async fn initialize(&mut self) -> Result<Option<T>> {
+        // These functionalities are only performed the firs time a listen is executed
         if self.rx.is_none() {
             self.rx = Some(self.handle.subscribe().await?);
         }
@@ -45,7 +46,7 @@ where
             match res {
                 Ok(val) => {
                     self.inner = Some(val.clone());
-                    return Ok(val); // Return immediately if no value was present
+                    return Ok(Some(val)); // Return immediately if no value was present
                 }
                 Err(ActorError::NoValueSet(_)) => {} // Continue to listen
                 Err(_) => {
@@ -53,14 +54,46 @@ where
                 }
             }
         }
+        Ok(None)
+    }
 
-        loop {
-            match self.rx.as_mut().unwrap().recv().await {
-                Ok(val) => {
-                    self.inner = Some(val.clone());
-                    return Ok(val);
+    pub async fn listen_newest(&mut self) -> Result<T> {
+        // Receive the newest message from the channel, discarding any older messages
+
+        if let Some(val) = self.initialize().await? {
+            Ok(val) // Return immediately if initialized with new value
+        } else {
+            // Else continue to listen for a first valid result from the channel
+            loop {
+                match self.rx.as_mut().unwrap().recv().await {
+                    Ok(val) => {
+                        self.inner = Some(val.clone());
+                        if self.rx.as_mut().unwrap().len() < 1 {
+                            break Ok(val); // Only break if the last message in the channel
+                        }
+                    }
+                    Err(e) => log::warn!("{e:?}"),
                 }
-                Err(e) => log::warn!("{e:?}"),
+            }
+        }
+    }
+
+    pub async fn listen(&mut self) -> Result<T> {
+        // Receive the last message still present in the channel (FIFO).
+        // A warning is printed if the channel is lagging behind (oldest messages discarded)
+
+        if let Some(val) = self.initialize().await? {
+            Ok(val) // Return immediately if initialized with new value
+        } else {
+            // Else continue to listen for a first valid result from the channel
+            loop {
+                match self.rx.as_mut().unwrap().recv().await {
+                    Ok(val) => {
+                        self.inner = Some(val.clone());
+                        break Ok(val);
+                    }
+                    Err(e) => log::warn!("{e:?}"),
+                }
             }
         }
     }

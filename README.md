@@ -9,3 +9,8 @@ Generic methods are get() and set(), but for the inner data type Vec and Hashmap
 Note that updating an Actor value through sequentially getting, updating and setting breaks any guarantees on atomicity. Hence the eval() method is added, which allows to remote execute a function **within** an actor. A drawback is that all arguments must be cast to a single [any type](https://doc.rust-lang.org/std/any/index.html), which prevents the compiler to do type-checking.
 
 Additionally, a cache is provided, which can be used to locally synchronize with an actor.
+
+**Feature request**
+
+- General broadcast function from actor, instead of trait impls
+- Macro for implementing type-specific actor functions

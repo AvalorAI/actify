@@ -4,7 +4,10 @@ use std::fmt;
 use std::fmt::Debug;
 use tokio::sync::{broadcast, mpsc, oneshot};
 
-use crate::actors::{ActorError, CHANNEL_SIZE, WRONG_ARGS, WRONG_RESPONSE};
+use crate::{
+    actors::{ActorError, CHANNEL_SIZE, WRONG_ARGS, WRONG_RESPONSE},
+    Cache,
+};
 
 // ------- Clonable handle that can be used to remotely execute a closure on the actor ------- //
 #[derive(Debug, Clone)]
@@ -16,6 +19,10 @@ impl<T> Handle<T>
 where
     T: Clone + Debug + Send + Sync + 'static,
 {
+    pub async fn create_cache(&self) -> Cache<T> {
+        Cache::new(self.clone())
+    }
+
     pub async fn get(&self) -> Result<T, ActorError> {
         let res = self
             .send_job(FnType::Inner(Box::new(Container::get)), Box::new(()))
