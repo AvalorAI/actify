@@ -34,9 +34,8 @@ pub enum ActorError {
 
 // Convert any actor error to an internal failure
 impl From<ActorError> for Status {
-    fn from(e: ActorError) -> Self {
-        log::warn!("Could not process register: {e:?}");
-        Status::new(Code::DataLoss, "Internal failure processing the register")
+    fn from(_e: ActorError) -> Self {
+        Status::internal("Actor model failed")
     }
 }
 
