@@ -1,0 +1,21 @@
+name: actor-model Docker
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v3
+      - name: Build the Docker image
+        run: docker build -f ci.Dockerfile --tag actormodel-ci-test .
+      - name: Run the Docker image
+        run: docker run --rm -d --name actormodel-ci-test-run actormodel-ci-test
+      - name: Stop Docker
+        if: always() # also stop on failure
+        run: docker stop bt-ci-test-run
