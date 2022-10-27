@@ -1,7 +1,7 @@
 use std::fmt::Debug;
 use thiserror::Error;
 use tokio::sync::oneshot::error::RecvError;
-use tonic::{Code, Status};
+use tonic::Status;
 
 pub mod base;
 pub mod cache;
