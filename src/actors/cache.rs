@@ -98,7 +98,13 @@ where
                         self.inner = Some(val.clone());
                         break Ok(val);
                     }
-                    Err(e) => log::warn!("{e:?}"),
+                    Err(e) => match e {
+                        RecvError::Closed => {
+                            log::warn!("{e:?}");
+                            break Err(anyhow!("Actor channel closed!"));
+                        }
+                        RecvError::Lagged(_) => log::warn!("{e:?}"),
+                    },
                 }
             }
         }
