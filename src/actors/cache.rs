@@ -1,6 +1,6 @@
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use std::fmt::Debug;
-use tokio::sync::broadcast;
+use tokio::sync::broadcast::{self, error::RecvError};
 
 use super::{ActorError, Handle};
 
@@ -72,7 +72,13 @@ where
                             break Ok(val); // Only break if the last message in the channel
                         }
                     }
-                    Err(e) => log::warn!("{e:?}"),
+                    Err(e) => match e {
+                        RecvError::Closed => {
+                            log::warn!("{e:?}");
+                            break Err(anyhow!("Actor channel closed!"));
+                        }
+                        RecvError::Lagged(_) => log::warn!("{e:?}"),
+                    },
                 }
             }
         }
