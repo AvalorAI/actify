@@ -74,7 +74,7 @@ where
                     }
                     Err(e) => match e {
                         RecvError::Closed => {
-                            log::warn!("{e:?}");
+                            log::warn!("Actor channel closed");
                             break Err(anyhow!("Actor channel closed!"));
                         }
                         RecvError::Lagged(_) => log::warn!("{e:?}"),
@@ -101,7 +101,7 @@ where
                     Err(e) => match e {
                         RecvError::Closed => {
                             log::warn!("{e:?}");
-                            break Err(anyhow!("Actor channel closed!"));
+                            log::warn!("Actor channel closed")
                         }
                         RecvError::Lagged(_) => log::warn!("{e:?}"),
                     },
