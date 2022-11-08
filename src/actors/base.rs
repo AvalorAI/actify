@@ -132,12 +132,8 @@ where
         // A broadcast error is not propagated, as otherwise a succesful call could produce an independent broadcast error
         if self.broadcast.receiver_count() > 0 {
             if let Some(val) = &self.inner {
-                if let Err(e) = self
-                    .broadcast
-                    .send(val.clone())
-                    .map_err(|_| ActorError::TokioSendError)
-                {
-                    log::warn!("Broadcast value error: {:?}", e);
+                if let Err(e) = self.broadcast.send(val.clone()) {
+                    log::warn!("Broadcast value error: {:?}", e.to_string());
                 }
             }
         }
@@ -177,10 +173,7 @@ where
             args,
             respond_to,
         };
-        self.tx
-            .send(job)
-            .await
-            .map_err(|_| ActorError::TokioSendError)?;
+        self.tx.send(job).await?;
         get_result.await?
         // TODO add a timeout on this result await
     }

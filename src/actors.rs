@@ -1,6 +1,6 @@
 use std::fmt::Debug;
 use thiserror::Error;
-use tokio::sync::oneshot::error::RecvError;
+use tokio::sync::{mpsc::error::SendError, oneshot::error::RecvError};
 use tonic::Status;
 
 pub mod base;
@@ -26,10 +26,16 @@ pub enum ActorError {
     EvalError(String), // Originates from general eval format
     #[error("Tokio receiver error")]
     TokioRecvError(#[from] RecvError),
-    #[error("Tokio sender error")]
-    TokioSendError,
+    #[error("Tokio sender error: {0}")]
+    TokioSendError(String),
     #[error("An incorrect response type for this method has been received")]
     WrongResponse,
+}
+
+impl<T> From<SendError<T>> for ActorError {
+    fn from(err: SendError<T>) -> ActorError {
+        ActorError::TokioSendError(err.to_string())
+    }
 }
 
 // Convert any actor error to an internal failure
