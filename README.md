@@ -14,3 +14,4 @@ Additionally, a cache is provided, which can be used to locally synchronize with
 
 - General broadcast function from actor, instead of trait impls
 - Macro for implementing type-specific actor functions
+- Drain & Swap functions
