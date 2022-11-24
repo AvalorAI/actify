@@ -6,7 +6,7 @@ use tokio::sync::{broadcast, mpsc, oneshot};
 
 use crate::{
     actors::{ActorError, CHANNEL_SIZE, WRONG_ARGS, WRONG_RESPONSE},
-    Cache,
+    Cache, Frequency, ThrottleBuilder, Throttled,
 };
 
 // ------- Clonable handle that can be used to remotely execute a closure on the actor ------- //
@@ -21,6 +21,24 @@ where
 {
     pub fn create_cache(&self) -> Cache<T> {
         Cache::new(self.clone())
+    }
+
+    pub async fn spawn_throttle<C, F>(
+        &self,
+        client: C,
+        call: fn(&C, F),
+        freq: Frequency,
+    ) -> Result<()>
+    where
+        C: Send + Sync + 'static,
+        T: Throttled<F>,
+        F: Clone + Send + Sync + 'static,
+    {
+        ThrottleBuilder::<C, T, F>::new(client, call, freq)
+            .attach(self.clone())
+            .await?
+            .spawn()?;
+        Ok(())
     }
 
     pub async fn get(&self) -> Result<T, ActorError> {
