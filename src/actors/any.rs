@@ -23,6 +23,10 @@ where
         Cache::new(self.clone())
     }
 
+    pub fn capacity(&self) -> usize {
+        self.tx.capacity()
+    }
+
     pub async fn spawn_throttle<C, F>(
         &self,
         client: C,
