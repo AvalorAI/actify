@@ -55,16 +55,15 @@ where
         // If listening for the first time and not for the newest, return the initialization value if exisiting
         if !self.has_listenend {
             self.has_listenend = true;
-            if !listen_newest {
-                // Only return the initialized value without checking if not interested in the newest
-                if let Some(val) = &self.inner {
-                    return Ok(val.clone());
-                }
-            } else {
-                // If interested in the newest, try to obtain any newer version, otherwise continue listening
+            if listen_newest {
                 if let Some(val) = self.try_listen_newest()? {
+                    self.inner = Some(val.clone());
                     return Ok(val.clone());
                 }
+            }
+            // Only return the initialized value without checking if not interested in the newest or if it did not yield any newer values
+            if let Some(val) = &self.inner {
+                return Ok(val.clone());
             }
         }
 
@@ -124,7 +123,7 @@ where
                 }
                 Err(e) => match e {
                     TryRecvError::Closed => break Err(e.into()),
-                    TryRecvError::Empty => break Ok(self.inner.clone()), // If no new value present, return the most recent value
+                    TryRecvError::Empty => break Ok(None), // If no new value present, return none
                     TryRecvError::Lagged(_) => {
                         if !listen_newest {
                             log::warn!("{e:?}")
