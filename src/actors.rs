@@ -1,7 +1,6 @@
 use std::fmt::Debug;
 use thiserror::Error;
-use tokio::sync::{mpsc::error::SendError, oneshot::error::RecvError};
-use tonic::Status;
+use tokio::sync::{broadcast, mpsc, oneshot};
 
 pub mod any;
 pub mod map;
@@ -19,28 +18,30 @@ const WRONG_RESPONSE: &str = "An incorrect response type for this method has bee
 pub enum ActorError {
     #[error("A request has been received for type {0} while no value is set")]
     NoValueSet(String),
-    #[error("The response of a request has timed out")]
-    TimeOut, // TODO not yet implemented
     #[error("Error from actor function evaluation: {0}")]
     EvalError(String), // Originates from general eval format
-    #[error("Tokio receiver error")]
-    TokioRecvError(#[from] RecvError),
-    #[error("Tokio sender error: {0}")]
-    TokioSendError(String),
+    #[error("Tokio oneshot receiver error")]
+    TokioOneshotRecvError(#[from] oneshot::error::RecvError),
+    #[error("Tokio mpsc sender error: {0}")]
+    TokioMpscSendError(String),
+    #[error("Tokio broadcast try receiver error")]
+    TokioBroadcastTryRecvError(#[from] broadcast::error::TryRecvError),
+    #[error("Tokio broadcast receiver error")]
+    TokioBroadcastRecvError(#[from] broadcast::error::RecvError),
     #[error("An incorrect response type for this method has been received")]
     WrongResponse,
 }
 
-impl<T> From<SendError<T>> for ActorError {
-    fn from(err: SendError<T>) -> ActorError {
-        ActorError::TokioSendError(err.to_string())
+impl<T> From<mpsc::error::SendError<T>> for ActorError {
+    fn from(err: mpsc::error::SendError<T>) -> ActorError {
+        ActorError::TokioMpscSendError(err.to_string())
     }
 }
 
-// Convert any actor error to an internal failure
-impl From<ActorError> for Status {
+// Convert any actor error to an gRPC internal failure status
+impl From<ActorError> for tonic::Status {
     fn from(_e: ActorError) -> Self {
-        Status::internal("Actor model failed")
+        tonic::Status::internal("Actor model failed")
     }
 }
 
