@@ -29,7 +29,13 @@ where
         })
     }
 
-    /// Returns the last value that is received in the cache // TODO is this necessary?
+    /// Returns the newest value available
+    pub fn get_newest(&mut self) -> Result<Option<T>, ActorError> {
+        _ = self.try_listen_newest()?; // Update if possible
+        Ok(self.inner.clone())
+    }
+
+    /// Returns the last value that is received in the cache
     pub fn get_inner(&self) -> Option<T> {
         self.inner.clone()
     }
@@ -38,8 +44,6 @@ where
     /// If the cache is called for the first time, a get is executed to see if the actor already contains a value.
     /// If the actor is empty or the cache is already initialized, it waits for any new updates.
     pub async fn listen_newest(&mut self) -> Result<T, ActorError> {
-        // todo Try listen newest if first
-
         self._listen(true).await
     }
 
