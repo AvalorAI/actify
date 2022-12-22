@@ -29,6 +29,11 @@ where
         })
     }
 
+    /// Returns if any new updates are received
+    pub fn has_updates(&self) -> bool {
+        self.rx.len() > 0
+    }
+
     /// Returns the newest value available
     pub fn get_newest(&mut self) -> Result<Option<T>, ActorError> {
         _ = self.try_listen_newest()?; // Update if possible
@@ -164,6 +169,15 @@ where
 mod tests {
     use super::*;
     use tokio::time::{sleep, Duration};
+
+    #[tokio::test]
+    async fn test_has_updates() {
+        let handle = Handle::new_from(1);
+        let cache = handle.create_cache().await.unwrap();
+        assert_eq!(cache.has_updates(), false);
+        handle.set(2).await.unwrap();
+        assert_eq!(cache.has_updates(), true);
+    }
 
     #[tokio::test]
     async fn test_listen_cache() {
