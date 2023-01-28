@@ -17,16 +17,21 @@ mod tests {
 
     struct MyActor {}
 
+    #[actify]
     impl MyActor {
-        #[actify]
-        fn some_function(&mut self, i: i32, f: f32) {
-            println!("Hello {}, World ! {}", i, f);
+        fn foo(&mut self, i: i32, f: f32) {
+            println!("Hello foo: {}, {}", i, f);
+        }
+
+        fn bar(&self, test: usize) {
+            println!("Hello bar: {}", test);
         }
     }
 
     #[test]
     fn test_macro() {
         let mut actor = MyActor {};
-        actor.handle_some_function(1, 4.5)
+        actor.handle_foo(1, 4.5);
+        actor.handle_bar(2);
     }
 }
