@@ -34,9 +34,9 @@ struct MyActor {}
 
 // #[actify] // TODO is currently broken
 impl MyActor {
-    fn foo(&mut self, i: i32, f: f32) -> i32 {
+    fn foo(&mut self, i: i32, f: f32) -> f64 {
         println!("Hello foo: {}, {}", i, f);
-        i + 1
+        (i + 1) as f64
     }
 }
 
