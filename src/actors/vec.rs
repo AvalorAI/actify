@@ -1,7 +1,6 @@
 use anyhow::Result;
 use async_trait::async_trait;
 use std::any::Any;
-use std::fmt::Debug;
 
 use crate::actors::{
     ActorError, Handle, WRONG_ARGS, WRONG_RESPONSE, {Container, FnType},
@@ -10,7 +9,7 @@ use crate::actors::{
 #[async_trait]
 pub trait VecHandle<I>
 where
-    I: Clone + Debug + Send + Sync + 'static,
+    I: Clone + Send + Sync + 'static,
 {
     async fn push(&self, val: I) -> Result<(), ActorError>;
 
@@ -22,7 +21,7 @@ where
 #[async_trait]
 impl<I> VecHandle<I> for Handle<Vec<I>>
 where
-    I: Clone + Debug + Send + Sync + 'static,
+    I: Clone + Send + Sync + 'static,
 {
     async fn push(&self, val: I) -> Result<(), ActorError> {
         let res = self
@@ -59,7 +58,7 @@ trait VecContainer {
 
 impl<I> VecContainer for Container<Vec<I>>
 where
-    I: Clone + Debug + Send + Sync + 'static,
+    I: Clone + Send + Sync + 'static,
 {
     fn push(&mut self, args: Box<dyn Any + Send>) -> Result<Box<dyn Any + Send>, ActorError> {
         let val = *args.downcast().expect(WRONG_ARGS);

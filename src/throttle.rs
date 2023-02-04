@@ -146,10 +146,7 @@ where
         self
     }
 
-    pub async fn attach(mut self, handle: Handle<T>) -> Result<Self>
-    where
-        T: Debug,
-    {
+    pub async fn attach(mut self, handle: Handle<T>) -> Result<Self> {
         // TODO discuss if this expect is acceptable
         let receiver = handle.subscribe().await?;
         self.val_rx = Some(receiver);

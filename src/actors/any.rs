@@ -17,7 +17,7 @@ pub struct Handle<T> {
 
 impl<T> Handle<T>
 where
-    T: Clone + Debug + Send + Sync + 'static,
+    T: Clone + Send + Sync + 'static,
 {
     pub async fn create_cache(&self) -> Result<Cache<T>, ActorError> {
         Cache::new(self.clone()).await
@@ -165,7 +165,7 @@ where
 // ------- Seperate implementation of the general functions for the base handle ------- //
 impl<T> Handle<T>
 where
-    T: Clone + Debug + Send + Sync + 'static,
+    T: Clone + Send + Sync + 'static,
 {
     pub fn new() -> Handle<T> {
         Self::_new(None)
@@ -212,7 +212,7 @@ where
 
 impl<T> Actor<T>
 where
-    T: Clone + Debug + Send + 'static,
+    T: Clone + Send + 'static,
 {
     fn new(rx: mpsc::Receiver<Job<T>>, container: Container<T>) -> Self {
         Self { rx, container }

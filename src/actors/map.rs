@@ -2,7 +2,6 @@ use anyhow::Result;
 use async_trait::async_trait;
 use std::any::Any;
 use std::collections::HashMap;
-use std::fmt::Debug;
 use std::hash::Hash;
 
 use crate::actors::{
@@ -12,8 +11,8 @@ use crate::actors::{
 #[async_trait]
 pub trait MapHandle<K, V>
 where
-    K: Clone + Debug + Eq + Hash + Send + Sync + 'static,
-    V: Clone + Debug + Send + Sync + 'static,
+    K: Clone + Eq + Hash + Send + Sync + 'static,
+    V: Clone + Send + Sync + 'static,
 {
     async fn get_key(&self, key: K) -> Result<Option<V>, ActorError>;
 
@@ -25,8 +24,8 @@ where
 #[async_trait]
 impl<K, V> MapHandle<K, V> for Handle<HashMap<K, V>>
 where
-    K: Clone + Debug + Eq + Hash + Send + Sync + 'static,
-    V: Clone + Debug + Send + Sync + 'static,
+    K: Clone + Eq + Hash + Send + Sync + 'static,
+    V: Clone + Send + Sync + 'static,
 {
     async fn get_key(&self, key: K) -> Result<Option<V>, ActorError> {
         let res = self
@@ -69,8 +68,8 @@ trait MapContainer {
 
 impl<K, V> MapContainer for Container<HashMap<K, V>>
 where
-    K: Clone + Debug + Eq + Hash + Send + 'static,
-    V: Clone + Debug + Send + 'static,
+    K: Clone + Eq + Hash + Send + 'static,
+    V: Clone + Send + 'static,
 {
     fn get_key(&mut self, args: Box<dyn Any + Send>) -> Result<Box<dyn Any + Send>, ActorError> {
         let val = *args.downcast().expect(WRONG_ARGS);
