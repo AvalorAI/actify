@@ -6,8 +6,9 @@ use syn::{
     ItemImpl, ReturnType, TraitItemMethod, Type,
 };
 
-// TODO what happens with generics inside the struct impl including lifetimes?
-
+/// The actify macro expands an impl block of a rust struct to support usage in an actor model.
+/// Effecyively, this macro allows to remotely call an actor method through a handle.
+/// By using traits, the methods on the handle have the same signatures, so that type checking is enforced
 #[proc_macro_attribute]
 pub fn actify(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let mut impl_block = syn::parse_macro_input!(item as syn::ItemImpl);
@@ -22,6 +23,10 @@ pub fn actify(_attr: TokenStream, item: TokenStream) -> TokenStream {
     result.into()
 }
 
+/// This function consists of the main body of the macro parsing.
+/// The body consists of two traits and its implementations:
+/// The handle: code the user interacts with
+/// The container: code that executes the user-defined method in the actified impl block
 fn parse_macro(
     impl_block: &mut ItemImpl,
 ) -> Result<proc_macro2::TokenStream, proc_macro2::TokenStream> {
@@ -63,6 +68,7 @@ fn parse_macro(
     Ok(result)
 }
 
+/// A function that generates the implementation for the containter trait
 fn generate_container_trait_impl(
     impl_block: &ItemImpl,
     container_trait: &Ident,
@@ -84,19 +90,23 @@ fn generate_container_trait_impl(
     Ok(result)
 }
 
+/// A function that generates the implementation for each method in the container trait
 fn generate_container_trait_method_impl(
     impl_type: &Type,
     method: &TraitItemMethod,
     original_method: &ImplItemMethod,
 ) -> Result<proc_macro2::TokenStream, proc_macro2::TokenStream> {
+    // A tuple of (names): (types) is generated so that the types can be cast & downcast to the Any type for sending to the actor
     let (input_arg_names, input_arg_types) = transform_args(&original_method.sig.inputs)?;
 
     let container_method_ident = &method.sig.ident;
-
     let fn_ident = &original_method.sig.ident;
-
     let ReturnType::Type(_, original_output_type) = &original_method.sig.output else {panic!("Actify macro could not unwrap result output")};
 
+    // The generated method impls downcast the sent arguments originating from the handle back to its original types
+    // Then, the arguments are used to call the method on the inner type held by the actor.
+    // Optionally, the new actor value is broadcasted to all subscribed listeners
+    // Lastly, the result is boxed and sent back to the calling handle
     let result = quote! {
         fn #container_method_ident(&mut self, args: Box<dyn Any + Send>) -> Result<Box<dyn Any + Send>, ActorError> {
             let (#input_arg_names): (#input_arg_types) = *args
@@ -120,8 +130,7 @@ fn generate_container_trait_method_impl(
     Ok(result)
 }
 
-/// This function creates a trait for the Container, derived from the impl type.
-/// It modifies all method in the impl block and adds them to the trait.
+/// This function creates a trait for the container, derived from the impl type.
 fn generate_container_trait(
     container_trait_ident: &Ident,
     methods: &Vec<GeneratedMethods>,
@@ -129,7 +138,6 @@ fn generate_container_trait(
     let methods = GeneratedMethods::get_container_trait_methods(methods);
 
     let result = quote! {
-
         trait #container_trait_ident
         {
             #methods
@@ -139,7 +147,9 @@ fn generate_container_trait(
     Ok(result)
 }
 
-// All container
+// This function takes a method from the original impl block and creates the container variant that is remotely called by the handle.
+// It is preceded by _ to mark the difference between the two methods
+// Its signature must be standardized to the any type, to allow it being sent by the handle without using some kind of enum
 fn generate_container_trait_method(
     method: &ImplItemMethod,
 ) -> Result<proc_macro2::TokenStream, proc_macro2::TokenStream> {
@@ -155,6 +165,8 @@ fn generate_container_trait_method(
     Ok(result)
 }
 
+/// This function generates the handle trait implementation.
+/// This trait generation at compile time allows to outfit handles with various kinds of methods, depending on its coupled actor.
 fn generate_handle_trait_impl(
     impl_block: &ItemImpl,
     handle_trait: &Ident,
@@ -177,6 +189,10 @@ fn generate_handle_trait_impl(
     Ok(result)
 }
 
+/// The method implementation for each handle has the main job of:
+/// 1. boxing the arguments in a tuple, so it can be send as any type
+/// 2. sending a job to the actor with the appropriate method that needs to be executed
+/// 3. downcasting the return value to the original type
 fn generate_handle_trait_method_impl(
     method: &TraitItemMethod,
     container_trait_ident: &Ident,
@@ -205,6 +221,8 @@ fn generate_handle_trait_method_impl(
     Ok(result)
 }
 
+/// This struct holds the derived methods from each original method.
+/// The methods are collected purely for sanity
 #[derive(Clone, Debug)]
 struct GeneratedMethods {
     handle_trait: proc_macro2::TokenStream,
@@ -214,11 +232,13 @@ struct GeneratedMethods {
 }
 
 impl GeneratedMethods {
+    /// A utility function to multiple generated method structs to a single tokenstream
     fn get_handle_trait_methods(methods: &Vec<GeneratedMethods>) -> proc_macro2::TokenStream {
         let handle_trait_methods = methods.iter().map(|m| m.handle_trait.clone()).collect();
         GeneratedMethods::flatten_token_stream(handle_trait_methods)
     }
 
+    /// A utility function to multiple generated method structs to a single tokenstream
     fn get_handle_trait_impl_methods(methods: &Vec<GeneratedMethods>) -> proc_macro2::TokenStream {
         let handle_trait_impl_methods = methods
             .iter()
@@ -227,11 +247,13 @@ impl GeneratedMethods {
         GeneratedMethods::flatten_token_stream(handle_trait_impl_methods)
     }
 
+    /// A utility function to multiple generated method structs to a single tokenstream
     fn get_container_trait_methods(methods: &Vec<GeneratedMethods>) -> proc_macro2::TokenStream {
         let container_trait_methods = methods.iter().map(|m| m.container_trait.clone()).collect();
         GeneratedMethods::flatten_token_stream(container_trait_methods)
     }
 
+    /// A utility function to multiple generated method structs to a single tokenstream
     fn get_container_trait_impl_methods(
         methods: &Vec<GeneratedMethods>,
     ) -> proc_macro2::TokenStream {
@@ -242,6 +264,7 @@ impl GeneratedMethods {
         GeneratedMethods::flatten_token_stream(container_trait_impl_methods)
     }
 
+    /// A utility function that flattens for instance a vector of trait impl methods to a single token stream
     fn flatten_token_stream(
         token_streams: Vec<proc_macro2::TokenStream>,
     ) -> proc_macro2::TokenStream {
@@ -253,6 +276,7 @@ impl GeneratedMethods {
     }
 }
 
+// Generates and collects the derived methods of each original method in the impl block
 fn generate_all_methods(
     impl_block: &ItemImpl,
     container_trait_ident: &Ident,
@@ -272,37 +296,40 @@ fn generate_all_methods(
     Ok(methods)
 }
 
+/// A function collecting the derived methods of a single original method from the impl block
 fn generate_methods(
     impl_type: &Type,
     original_method: &ImplItemMethod,
     container_trait_ident: &Ident,
 ) -> Result<GeneratedMethods, proc_macro2::TokenStream> {
-    let container_trait = generate_container_trait_method(original_method)?;
-    let handle_trait = generate_handle_trait_method(original_method)?;
+    let container_trait_signature = generate_container_trait_method(original_method)?;
+    let handle_trait_signature = generate_handle_trait_method(original_method)?;
 
-    let container_trait_parsed = syn::parse(container_trait.clone().into())
+    let parsed_container_signature = syn::parse(container_trait_signature.clone().into())
         .expect("Parsing the container trait in the Actify macro failed");
-    let handle_trait_parsed = syn::parse(handle_trait.clone().into())
+    let parsed_handle_signature = syn::parse(handle_trait_signature.clone().into())
         .expect("Parsing the handle trait in the Actify macro failed");
 
-    let container_trait_impl =
-        generate_container_trait_method_impl(impl_type, &container_trait_parsed, original_method)?;
-    let handle_trait_impl = generate_handle_trait_method_impl(
-        &handle_trait_parsed,
+    let container_method_impl = generate_container_trait_method_impl(
+        impl_type,
+        &parsed_container_signature,
+        original_method,
+    )?;
+    let handle_method_impl = generate_handle_trait_method_impl(
+        &parsed_handle_signature,
         container_trait_ident,
-        &container_trait_parsed,
+        &parsed_container_signature,
     )?;
 
     Ok(GeneratedMethods {
-        handle_trait,
-        handle_trait_impl,
-        container_trait,
-        container_trait_impl,
+        handle_trait: handle_trait_signature,
+        handle_trait_impl: handle_method_impl,
+        container_trait: container_trait_signature,
+        container_trait_impl: container_method_impl,
     })
 }
 
 /// This function creates a trait for the Handle, derived from the impl type.
-/// It modifies all method in the impl block and adds them to the trait.
 fn generate_handle_trait(
     handle_trait_ident: &Ident,
     methods: &Vec<GeneratedMethods>,
@@ -359,6 +386,9 @@ fn generate_handle_trait_method(
     Ok(result)
 }
 
+/// This function verifies the type of impl block that the macro is placed upon.
+/// If the impl is not of the right format, an error is returned
+/// If correct, the type is returned as a String for usage in the trait generation
 fn get_impl_type(impl_block: &ItemImpl) -> Result<String, proc_macro2::TokenStream> {
     match &*impl_block.self_ty {
         Type::Path(type_path) => {
