@@ -16,18 +16,19 @@ mod cache;
 mod throttle;
 
 use std::any::Any;
+use std::collections::HashMap;
 
 // Reexport for easier reference
 pub use actify_macros::actify;
 pub use actors::any::{Actor, Handle};
 pub use actors::map::MapHandle;
 pub use actors::vec::VecHandle;
-pub use actors::ActorError;
-use actors::FnType;
+pub use actors::{ActorError, FnType};
+pub use async_trait::async_trait;
 pub use cache::Cache;
 pub use throttle::{Frequency, ThrottleBuilder, Throttled};
 
-pub use async_trait::async_trait;
+use crate as actor_model;
 
 #[allow(dead_code)]
 #[derive(Clone)]
@@ -40,8 +41,8 @@ impl<T> crate::MyStruct<T>
 where
     T: Clone + Send + Sync + 'static,
 {
-    fn foo(&mut self, i: i32, f: f32) -> f64 {
-        println!("Hello foo: {}, {}", i, f);
+    fn foo(&mut self, i: i32, f: HashMap<String, f32>) -> f64 {
+        println!("Hello foo: {}, {:?}", i, f);
         (i + 1) as f64
     }
 }
@@ -119,6 +120,6 @@ mod tests {
         });
 
         assert_eq!(actor_handle.bar(0).await.unwrap(), 1.);
-        assert_eq!(actor_handle.foo(0, 1.).await.unwrap(), 1.)
+        assert_eq!(actor_handle.foo(0, HashMap::new()).await.unwrap(), 1.)
     }
 }

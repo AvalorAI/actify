@@ -3,7 +3,7 @@ use proc_macro2::Span;
 use quote::{quote, quote_spanned};
 use syn::{
     punctuated::Punctuated, spanned::Spanned, token::Comma, FnArg, Ident, ImplItem, ImplItemMethod,
-    ItemImpl, ReturnType, TraitItemMethod, Type,
+    ItemImpl, PatIdent, PathSegment, ReturnType, TraitItemMethod, Type,
 };
 
 /// The actify macro expands an impl block of a rust struct to support usage in an actor model.
@@ -80,7 +80,7 @@ fn generate_actor_trait_impl(
     let where_clause = impl_block.generics.where_clause.as_ref().unwrap();
     let result = quote! {
         #[allow(unused_parens)]
-        impl #generics #actor_trait for Actor<#impl_type> #where_clause
+        impl #generics #actor_trait for actor_model::Actor<#impl_type> #where_clause
         {
             #methods
         }
@@ -100,14 +100,20 @@ fn generate_actor_trait_method_impl(
 
     let actor_method_ident = &method.sig.ident;
     let fn_ident = &original_method.sig.ident;
-    let ReturnType::Type(_, original_output_type) = &original_method.sig.output else {panic!("Actify macro could not unwrap result output")};
+
+    let unit_type = quote! { () };
+    let parsed_unit_type: Box<Type> = Box::new(syn::parse(unit_type.into()).unwrap());
+    let original_output_type = match &original_method.sig.output {
+        ReturnType::Type(_, original_output_type) => original_output_type,
+        ReturnType::Default => &parsed_unit_type,
+    };
 
     // The generated method impls downcast the sent arguments originating from the handle back to its original types
     // Then, the arguments are used to call the method on the inner type held by the actor.
     // Optionally, the new actor value is broadcasted to all subscribed listeners
     // Lastly, the result is boxed and sent back to the calling handle
     let result = quote! {
-        fn #actor_method_ident(&mut self, args: Box<dyn Any + Send>) -> Result<Box<dyn Any + Send>, ActorError> {
+        fn #actor_method_ident(&mut self, args: Box<dyn Any + Send>) -> Result<Box<dyn Any + Send>, actor_model::ActorError> {
             let (#input_arg_names): (#input_arg_types) = *args
             .downcast()
             .expect("Downcasting failed due to an error in the Actify macro");
@@ -115,7 +121,7 @@ fn generate_actor_trait_method_impl(
             let result: #original_output_type = self
             .inner
             .as_mut()
-            .ok_or(ActorError::NoValueSet(
+            .ok_or(actor_model::ActorError::NoValueSet(
                 std::any::type_name::<#impl_type>().to_string(),
             ))?.
             #fn_ident(#input_arg_names);
@@ -158,7 +164,7 @@ fn generate_actor_trait_method(
     );
 
     let result = quote! {
-        fn #actor_method_ident(&mut self, args: Box<dyn Any + Send>) -> Result<Box<dyn Any + Send>, ActorError>;
+        fn #actor_method_ident(&mut self, args: Box<dyn Any + Send>) -> Result<Box<dyn Any + Send>, actor_model::ActorError>;
     };
 
     Ok(result)
@@ -178,8 +184,8 @@ fn generate_handle_trait_impl(
     let where_clause = impl_block.generics.where_clause.as_ref().unwrap();
 
     let result = quote! {
-        #[async_trait]
-        impl #generics #handle_trait for Handle<#impl_type> #where_clause
+        #[actor_model::async_trait]
+        impl #generics #handle_trait for actor_model::Handle<#impl_type> #where_clause
         {
             #methods
         }
@@ -206,7 +212,7 @@ fn generate_handle_trait_method_impl(
         #signature {
             let res = self
             .send_job(
-                FnType::Inner(Box::new(#actor_trait_ident::#actor_method_name)),
+                actor_model::FnType::Inner(Box::new(#actor_trait_ident::#actor_method_name)),
                 Box::new((#input_arg_names)),
             )
             .await?;
@@ -328,7 +334,7 @@ fn generate_handle_trait(
     let methods = GeneratedMethods::get_handle_trait_methods(methods);
 
     let result = quote! {
-        #[async_trait::async_trait]
+        #[actor_model::async_trait]
         pub trait #handle_trait_ident
         {
             #methods
@@ -364,12 +370,12 @@ fn generate_handle_trait_method(
     let result = match &method.sig.output {
         ReturnType::Default => {
             quote! {
-                async fn #name(#modified_inputs) -> Result<(), ActorError>;
+                async fn #name(#modified_inputs) -> Result<(), actor_model::ActorError>;
             }
         }
         ReturnType::Type(_, output_type) => {
             quote! {
-               async fn #name(#modified_inputs) -> Result<#output_type, ActorError>;
+               async fn #name(#modified_inputs) -> Result<#output_type, actor_model::ActorError>;
             }
         }
     };
@@ -403,10 +409,11 @@ fn get_impl_type(impl_block: &ItemImpl) -> Result<String, proc_macro2::TokenStre
 /// TODO is allowing only the Ident pattern to prohibitive?
 fn transform_args(
     args: &Punctuated<FnArg, Comma>,
-) -> Result<(Punctuated<Ident, Comma>, Punctuated<Ident, Comma>), proc_macro2::TokenStream> {
+) -> Result<(Punctuated<PatIdent, Comma>, Punctuated<PathSegment, Comma>), proc_macro2::TokenStream>
+{
     // Add all idents to a Punctuated => param1, param2, ...
-    let mut input_arg_names: Punctuated<syn::Ident, Comma> = Punctuated::new();
-    let mut input_arg_types: Punctuated<syn::Ident, Comma> = Punctuated::new();
+    let mut input_arg_names: Punctuated<PatIdent, Comma> = Punctuated::new();
+    let mut input_arg_types: Punctuated<PathSegment, Comma> = Punctuated::new();
 
     for arg in args {
         if let syn::FnArg::Typed(pat_type) = arg {
@@ -424,8 +431,8 @@ fn transform_args(
                             .segments
                             .last()
                             .expect("Actify macro expected a valid type");
-                        input_arg_names.push(pat_ident.ident);
-                        input_arg_types.push(var_type.ident.clone());
+                        input_arg_names.push(pat_ident.clone());
+                        input_arg_types.push(var_type.clone());
                     }
                     _ => panic!(
                         "Actify macro cannot yet handle the type: {:?}",
