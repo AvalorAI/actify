@@ -106,6 +106,7 @@ mod tests {
     async fn test_macro() {
         let actor_handle = Handle::new_from(MyActor {});
 
-        assert_eq!(actor_handle.bar(0).await.unwrap(), 1.)
+        assert_eq!(actor_handle.bar(0).await.unwrap(), 1.);
+        assert_eq!(actor_handle.foo(0, 1.).await.unwrap(), 1.)
     }
 }
