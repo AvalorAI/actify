@@ -32,8 +32,8 @@ pub use async_trait::async_trait;
 #[derive(Clone)]
 struct MyActor {}
 
-// #[actify] // TODO is currently broken
-impl MyActor {
+#[actify]
+impl crate::MyActor {
     fn foo(&mut self, i: i32, f: f32) -> f64 {
         println!("Hello foo: {}, {}", i, f);
         (i + 1) as f64
