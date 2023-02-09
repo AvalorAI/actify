@@ -10,9 +10,9 @@ use syn::{
 
 #[proc_macro_attribute]
 pub fn actify(_attr: TokenStream, item: TokenStream) -> TokenStream {
-    let impl_block = syn::parse_macro_input!(item as syn::ItemImpl);
+    let mut impl_block = syn::parse_macro_input!(item as syn::ItemImpl);
 
-    let result = match parse_macro(&impl_block) {
+    let result = match parse_macro(&mut impl_block) {
         Ok(parsed) => parsed,
         Err(error) => error,
     };
@@ -23,9 +23,11 @@ pub fn actify(_attr: TokenStream, item: TokenStream) -> TokenStream {
 }
 
 fn parse_macro(
-    impl_block: &ItemImpl,
+    impl_block: &mut ItemImpl,
 ) -> Result<proc_macro2::TokenStream, proc_macro2::TokenStream> {
     let impl_type = get_impl_type(&impl_block)?;
+
+    impl_block.generics.make_where_clause(); // Ensures the unwraps are safe
 
     // TODO what span to use for the new traits?
     let container_trait_ident =
@@ -38,15 +40,12 @@ fn parse_macro(
     let handle_trait = generate_handle_trait(&handle_trait_ident, &generated_methods)?;
 
     let handle_trait_impl =
-        generate_handle_trait_impl(&impl_block.self_ty, &handle_trait_ident, &generated_methods)?;
+        generate_handle_trait_impl(&impl_block, &handle_trait_ident, &generated_methods)?;
 
     let container_trait = generate_container_trait(&container_trait_ident, &generated_methods)?;
 
-    let container_trait_impl = generate_container_trait_impl(
-        &impl_block.self_ty,
-        &container_trait_ident,
-        &generated_methods,
-    )?;
+    let container_trait_impl =
+        generate_container_trait_impl(&impl_block, &container_trait_ident, &generated_methods)?;
 
     let result = quote! {
 
@@ -65,15 +64,18 @@ fn parse_macro(
 }
 
 fn generate_container_trait_impl(
-    impl_type: &Type,
+    impl_block: &ItemImpl,
     container_trait: &Ident,
     methods: &Vec<GeneratedMethods>,
 ) -> Result<proc_macro2::TokenStream, proc_macro2::TokenStream> {
     let methods = GeneratedMethods::get_container_trait_impl_methods(methods);
 
+    let impl_type = &impl_block.self_ty;
+    let generics = &impl_block.generics;
+    let where_clause = impl_block.generics.where_clause.as_ref().unwrap();
     let result = quote! {
         #[allow(unused_parens)]
-        impl #container_trait for Container<#impl_type>
+        impl #generics #container_trait for Container<#impl_type> #where_clause
         {
             #methods
         }
@@ -83,6 +85,7 @@ fn generate_container_trait_impl(
 }
 
 fn generate_container_trait_method_impl(
+    impl_type: &Type,
     method: &TraitItemMethod,
     original_method: &ImplItemMethod,
 ) -> Result<proc_macro2::TokenStream, proc_macro2::TokenStream> {
@@ -104,7 +107,7 @@ fn generate_container_trait_method_impl(
             .inner
             .as_mut()
             .ok_or(ActorError::NoValueSet(
-                std::any::type_name::<MyActor>().to_string(),
+                std::any::type_name::<#impl_type>().to_string(),
             ))?.
             #fn_ident(#input_arg_names);
 
@@ -153,17 +156,19 @@ fn generate_container_trait_method(
 }
 
 fn generate_handle_trait_impl(
-    impl_type: &Type,
+    impl_block: &ItemImpl,
     handle_trait: &Ident,
     methods: &Vec<GeneratedMethods>,
 ) -> Result<proc_macro2::TokenStream, proc_macro2::TokenStream> {
     let methods = GeneratedMethods::get_handle_trait_impl_methods(methods);
 
+    let impl_type = &impl_block.self_ty;
+    let generics = &impl_block.generics;
+    let where_clause = impl_block.generics.where_clause.as_ref().unwrap();
+
     let result = quote! {
         #[async_trait]
-        impl #handle_trait for Handle<#impl_type>
-        where
-            #impl_type: Clone,
+        impl #generics #handle_trait for Handle<#impl_type> #where_clause
         {
             #methods
         }
@@ -255,9 +260,11 @@ fn generate_all_methods(
     let mut methods = vec![];
     for item in &impl_block.items {
         match item {
-            ImplItem::Method(original_method) => {
-                methods.push(generate_methods(original_method, container_trait_ident)?)
-            }
+            ImplItem::Method(original_method) => methods.push(generate_methods(
+                &impl_block.self_ty,
+                original_method,
+                container_trait_ident,
+            )?),
             _ => {}
         }
     }
@@ -266,6 +273,7 @@ fn generate_all_methods(
 }
 
 fn generate_methods(
+    impl_type: &Type,
     original_method: &ImplItemMethod,
     container_trait_ident: &Ident,
 ) -> Result<GeneratedMethods, proc_macro2::TokenStream> {
@@ -278,7 +286,7 @@ fn generate_methods(
         .expect("Parsing the handle trait in the Actify macro failed");
 
     let container_trait_impl =
-        generate_container_trait_method_impl(&container_trait_parsed, original_method)?;
+        generate_container_trait_method_impl(impl_type, &container_trait_parsed, original_method)?;
     let handle_trait_impl = generate_handle_trait_method_impl(
         &handle_trait_parsed,
         container_trait_ident,

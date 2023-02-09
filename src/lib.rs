@@ -29,18 +29,24 @@ pub use throttle::{Frequency, ThrottleBuilder, Throttled};
 
 pub use async_trait::async_trait;
 
+#[allow(dead_code)]
 #[derive(Clone)]
-struct MyActor {}
+struct MyActor<T> {
+    inner_data: T,
+}
 
 #[actify]
-impl crate::MyActor {
+impl<T> crate::MyActor<T>
+where
+    T: Clone + Send + Sync + 'static,
+{
     fn foo(&mut self, i: i32, f: f32) -> f64 {
         println!("Hello foo: {}, {}", i, f);
         (i + 1) as f64
     }
 }
 
-impl MyActor {
+impl<T> MyActor<T> {
     fn bar(&self, i: usize) -> f32 {
         println!("Hello bar: {}", i);
         (i + 1) as f32
@@ -55,9 +61,10 @@ pub trait MyActorTypedHandle {
 }
 
 #[async_trait]
-impl MyActorTypedHandle for Handle<MyActor>
+impl<T> MyActorTypedHandle for Handle<MyActor<T>>
 where
-    MyActor: Clone,
+    MyActor<T>: Clone + Send + Sync + 'static,
+    T: Clone + Send + Sync + 'static,
 {
     async fn bar(&self, test: usize) -> Result<f32, ActorError> {
         let res = self
@@ -77,7 +84,10 @@ trait MyActorTypedContainer {
 }
 
 #[allow(unused_parens)]
-impl MyActorTypedContainer for Container<MyActor> {
+impl<T> MyActorTypedContainer for Container<MyActor<T>>
+where
+    T: Clone + Send + Sync + 'static,
+{
     fn _bar(&mut self, args: Box<dyn Any + Send>) -> Result<Box<dyn Any + Send>, ActorError> {
         let (test): (usize) = *args
             .downcast()
@@ -87,7 +97,7 @@ impl MyActorTypedContainer for Container<MyActor> {
             .inner
             .as_mut()
             .ok_or(ActorError::NoValueSet(
-                std::any::type_name::<MyActor>().to_string(),
+                std::any::type_name::<MyActor<T>>().to_string(),
             ))?
             .bar(test);
 
@@ -104,7 +114,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_macro() {
-        let actor_handle = Handle::new_from(MyActor {});
+        let actor_handle = Handle::new_from(MyActor {
+            inner_data: "Test".to_string(),
+        });
 
         assert_eq!(actor_handle.bar(0).await.unwrap(), 1.);
         assert_eq!(actor_handle.foo(0, 1.).await.unwrap(), 1.)
