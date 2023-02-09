@@ -47,33 +47,34 @@ where
 
     pub async fn get(&self) -> Result<T, ActorError> {
         let res = self
-            .send_job(FnType::Inner(Box::new(Container::get)), Box::new(()))
+            .send_job(FnType::Inner(Box::new(Actor::get)), Box::new(()))
             .await?;
         Ok(*res.downcast().expect(WRONG_RESPONSE))
     }
 
     pub async fn is_none(&self) -> Result<bool, ActorError> {
         let res = self
-            .send_job(FnType::Inner(Box::new(Container::is_none)), Box::new(()))
+            .send_job(FnType::Inner(Box::new(Actor::is_none)), Box::new(()))
             .await?;
         Ok(*res.downcast().expect(WRONG_RESPONSE))
     }
 
     pub async fn set(&self, val: T) -> Result<(), ActorError> {
         let res = self
-            .send_job(FnType::Inner(Box::new(Container::set)), Box::new(val))
+            .send_job(FnType::Inner(Box::new(Actor::set)), Box::new(val))
             .await?;
         Ok(*res.downcast().expect(WRONG_RESPONSE))
     }
 
     pub async fn subscribe(&self) -> Result<broadcast::Receiver<T>, ActorError> {
         let res = self
-            .send_job(FnType::Inner(Box::new(Container::subscribe)), Box::new(()))
+            .send_job(FnType::Inner(Box::new(Actor::subscribe)), Box::new(()))
             .await?;
         Ok(*res.downcast().expect(WRONG_RESPONSE))
     }
 
-    // For distinction: eval messages are closures that only apply to a SINGLE TYPE, the container functions apply to ALL
+    /// Eval messages are closures that only apply to a SINGLE TYPE.
+    /// The actor functions apply to either all actors (any) or those enabled through a trait implementation
     pub async fn eval<F, A, R>(&self, eval_fn: F, args: A) -> Result<R, ActorError>
     where
         F: FnMut(&mut T, Box<dyn Any + Send>) -> Result<Box<dyn Any + Send>> + Send + 'static,
@@ -89,22 +90,80 @@ where
     }
 }
 
-// ------- The container that actually implements the methods within the actor ------- //
-#[derive(Debug)]
-pub struct Container<T> {
+// ------- Seperate implementation of the general functions for the base handle ------- //
+impl<T> Handle<T>
+where
+    T: Clone + Send + Sync + 'static,
+{
+    pub fn new() -> Handle<T> {
+        Self::_new(None)
+    }
+
+    pub fn new_from(init: T) -> Handle<T> {
+        Self::_new(Some(init))
+    }
+
+    fn _new(init: Option<T>) -> Handle<T> {
+        let (tx, rx) = mpsc::channel(CHANNEL_SIZE);
+        let (broadcast, _) = broadcast::channel(CHANNEL_SIZE);
+        let actor = Actor::new(rx, broadcast, init);
+        tokio::spawn(Actor::serve(actor));
+        Handle { tx }
+    }
+
+    pub async fn send_job(
+        &self,
+        call: FnType<T>,
+        args: Box<dyn Any + Send>,
+    ) -> Result<Box<dyn Any + Send>, ActorError> {
+        let (respond_to, get_result) = oneshot::channel();
+        let job = Job {
+            call,
+            args,
+            respond_to,
+        };
+        self.tx.send(job).await?;
+        get_result.await?
+        // TODO add a timeout on this result await
+    }
+}
+
+// ------- The remote actor that runs in a seperate thread ------- //
+pub struct Actor<T> {
+    rx: mpsc::Receiver<Job<T>>,
     pub inner: Option<T>,
     pub broadcast: broadcast::Sender<T>,
 }
 
-impl<T: Clone> Container<T>
+impl<T> Actor<T>
 where
-    T: Send + 'static,
+    T: Clone + Send + 'static,
 {
-    fn new(broadcast: broadcast::Sender<T>, init: Option<T>) -> Self {
+    fn new(rx: mpsc::Receiver<Job<T>>, broadcast: broadcast::Sender<T>, inner: Option<T>) -> Self {
         Self {
-            inner: init,
+            rx,
+            inner,
             broadcast,
         }
+    }
+
+    async fn serve(mut self) {
+        // Execute the function on the inner data
+        while let Some(job) = self.rx.recv().await {
+            let res = match job.call {
+                FnType::Inner(mut call) => (*call)(&mut self, job.args),
+                FnType::Eval(call) => self.eval(call, job.args),
+            };
+
+            if let Err(_) = job.respond_to.send(res) {
+                log::warn!(
+                    "Actor of type {} failed to respond as the receiver is dropped",
+                    std::any::type_name::<T>()
+                );
+            }
+        }
+        let inner_type = std::any::type_name::<T>();
+        log::warn!("Actor of type {inner_type} exited!");
     }
 
     fn subscribe(&mut self, _args: Box<dyn Any + Send>) -> Result<Box<dyn Any + Send>, ActorError> {
@@ -162,82 +221,6 @@ where
     }
 }
 
-// ------- Seperate implementation of the general functions for the base handle ------- //
-impl<T> Handle<T>
-where
-    T: Clone + Send + Sync + 'static,
-{
-    pub fn new() -> Handle<T> {
-        Self::_new(None)
-    }
-
-    pub fn new_from(init: T) -> Handle<T> {
-        Self::_new(Some(init))
-    }
-
-    fn _new(init: Option<T>) -> Handle<T> {
-        let (tx, rx) = mpsc::channel(CHANNEL_SIZE);
-        let (broadcast, _) = broadcast::channel(CHANNEL_SIZE);
-        let container = Container::new(broadcast, init);
-        let actor = Actor::new(rx, container);
-        tokio::spawn(Actor::serve(actor));
-        Handle { tx }
-    }
-
-    pub async fn send_job(
-        &self,
-        call: FnType<T>,
-        args: Box<dyn Any + Send>,
-    ) -> Result<Box<dyn Any + Send>, ActorError> {
-        let (respond_to, get_result) = oneshot::channel();
-        let job = Job {
-            call,
-            args,
-            respond_to,
-        };
-        self.tx.send(job).await?;
-        get_result.await?
-        // TODO add a timeout on this result await
-    }
-}
-
-// ------- The remote actor that runs in a seperate thread ------- //
-struct Actor<T>
-where
-    T: Send + 'static,
-{
-    rx: mpsc::Receiver<Job<T>>,
-    container: Container<T>,
-}
-
-impl<T> Actor<T>
-where
-    T: Clone + Send + 'static,
-{
-    fn new(rx: mpsc::Receiver<Job<T>>, container: Container<T>) -> Self {
-        Self { rx, container }
-    }
-
-    async fn serve(mut self) {
-        // Execute the function on the inner data
-        while let Some(job) = self.rx.recv().await {
-            let res = match job.call {
-                FnType::Inner(mut call) => (*call)(&mut self.container, job.args),
-                FnType::Eval(call) => self.container.eval(call, job.args),
-            };
-
-            if let Err(_) = job.respond_to.send(res) {
-                log::warn!(
-                    "Actor of type {} failed to respond as the receiver is dropped",
-                    std::any::type_name::<T>()
-                );
-            }
-        }
-        let inner_type = std::any::type_name::<T>();
-        log::warn!("Actor of type {inner_type} exited!");
-    }
-}
-
 // ------- Job struct that holds the closure, arguments and a response channel for the actor ------- //
 struct Job<T> {
     call: FnType<T>,
@@ -245,14 +228,11 @@ struct Job<T> {
     respond_to: oneshot::Sender<Result<Box<dyn Any + Send>, ActorError>>,
 }
 
-// Closures are either to be evaluated using container functions over the inner value, or by custom implementations over specific types
+// Closures are either to be evaluated using actor functions over the inner value, or by custom implementations over specific types
 pub enum FnType<T> {
     Inner(
         Box<
-            dyn FnMut(
-                    &mut Container<T>,
-                    Box<dyn Any + Send>,
-                ) -> Result<Box<dyn Any + Send>, ActorError>
+            dyn FnMut(&mut Actor<T>, Box<dyn Any + Send>) -> Result<Box<dyn Any + Send>, ActorError>
                 + Send
                 + 'static,
         >,

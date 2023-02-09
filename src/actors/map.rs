@@ -4,9 +4,9 @@ use std::any::Any;
 use std::collections::HashMap;
 use std::hash::Hash;
 
-use crate::actors::{
-    ActorError, Handle, WRONG_ARGS, WRONG_RESPONSE, {Container, FnType},
-};
+use crate::actors::{ActorError, FnType, Handle, WRONG_ARGS, WRONG_RESPONSE};
+
+use super::any::Actor;
 
 #[async_trait]
 pub trait MapHandle<K, V>
@@ -29,10 +29,7 @@ where
 {
     async fn get_key(&self, key: K) -> Result<Option<V>, ActorError> {
         let res = self
-            .send_job(
-                FnType::Inner(Box::new(MapContainer::get_key)),
-                Box::new(key),
-            )
+            .send_job(FnType::Inner(Box::new(MapActor::get_key)), Box::new(key))
             .await?;
         Ok(*res.downcast().expect(WRONG_RESPONSE))
     }
@@ -40,7 +37,7 @@ where
     async fn insert(&self, key: K, val: V) -> Result<Option<V>, ActorError> {
         let res = self
             .send_job(
-                FnType::Inner(Box::new(MapContainer::insert)),
+                FnType::Inner(Box::new(MapActor::insert)),
                 Box::new((key, val)),
             )
             .await?;
@@ -49,16 +46,13 @@ where
 
     async fn is_empty(&self) -> Result<bool, ActorError> {
         let res = self
-            .send_job(
-                FnType::Inner(Box::new(MapContainer::is_empty)),
-                Box::new(()),
-            )
+            .send_job(FnType::Inner(Box::new(MapActor::is_empty)), Box::new(()))
             .await?;
         Ok(*res.downcast().expect(WRONG_RESPONSE))
     }
 }
 
-trait MapContainer {
+trait MapActor {
     fn get_key(&mut self, args: Box<dyn Any + Send>) -> Result<Box<dyn Any + Send>, ActorError>;
 
     fn insert(&mut self, args: Box<dyn Any + Send>) -> Result<Box<dyn Any + Send>, ActorError>;
@@ -66,7 +60,7 @@ trait MapContainer {
     fn is_empty(&mut self, args: Box<dyn Any + Send>) -> Result<Box<dyn Any + Send>, ActorError>;
 }
 
-impl<K, V> MapContainer for Container<HashMap<K, V>>
+impl<K, V> MapActor for Actor<HashMap<K, V>>
 where
     K: Clone + Eq + Hash + Send + 'static,
     V: Clone + Send + 'static,

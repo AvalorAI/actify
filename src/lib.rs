@@ -19,11 +19,11 @@ use std::any::Any;
 
 // Reexport for easier reference
 pub use actify_macros::actify;
-pub use actors::any::Handle;
+pub use actors::any::{Actor, Handle};
 pub use actors::map::MapHandle;
 pub use actors::vec::VecHandle;
 pub use actors::ActorError;
-use actors::{Container, FnType};
+use actors::FnType;
 pub use cache::Cache;
 pub use throttle::{Frequency, ThrottleBuilder, Throttled};
 
@@ -31,12 +31,12 @@ pub use async_trait::async_trait;
 
 #[allow(dead_code)]
 #[derive(Clone)]
-struct MyActor<T> {
+struct MyStruct<T> {
     inner_data: T,
 }
 
 #[actify]
-impl<T> crate::MyActor<T>
+impl<T> crate::MyStruct<T>
 where
     T: Clone + Send + Sync + 'static,
 {
@@ -46,7 +46,7 @@ where
     }
 }
 
-impl<T> MyActor<T> {
+impl<T> MyStruct<T> {
     fn bar(&self, i: usize) -> f32 {
         println!("Hello bar: {}", i);
         (i + 1) as f32
@@ -61,15 +61,15 @@ pub trait MyActorTypedHandle {
 }
 
 #[async_trait]
-impl<T> MyActorTypedHandle for Handle<MyActor<T>>
+impl<T> MyActorTypedHandle for Handle<MyStruct<T>>
 where
-    MyActor<T>: Clone + Send + Sync + 'static,
+    MyStruct<T>: Clone + Send + Sync + 'static,
     T: Clone + Send + Sync + 'static,
 {
     async fn bar(&self, test: usize) -> Result<f32, ActorError> {
         let res = self
             .send_job(
-                FnType::Inner(Box::new(MyActorTypedContainer::_bar)),
+                FnType::Inner(Box::new(MyStructTypedActor::_bar)),
                 Box::new(test),
             )
             .await?;
@@ -79,12 +79,12 @@ where
     }
 }
 
-trait MyActorTypedContainer {
+trait MyStructTypedActor {
     fn _bar(&mut self, args: Box<dyn Any + Send>) -> Result<Box<dyn Any + Send>, ActorError>;
 }
 
 #[allow(unused_parens)]
-impl<T> MyActorTypedContainer for Container<MyActor<T>>
+impl<T> MyStructTypedActor for Actor<MyStruct<T>>
 where
     T: Clone + Send + Sync + 'static,
 {
@@ -97,7 +97,7 @@ where
             .inner
             .as_mut()
             .ok_or(ActorError::NoValueSet(
-                std::any::type_name::<MyActor<T>>().to_string(),
+                std::any::type_name::<MyStruct<T>>().to_string(),
             ))?
             .bar(test);
 
@@ -114,7 +114,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_macro() {
-        let actor_handle = Handle::new_from(MyActor {
+        let actor_handle = Handle::new_from(MyStruct {
             inner_data: "Test".to_string(),
         });
 

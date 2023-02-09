@@ -2,9 +2,9 @@ use anyhow::Result;
 use async_trait::async_trait;
 use std::any::Any;
 
-use crate::actors::{
-    ActorError, Handle, WRONG_ARGS, WRONG_RESPONSE, {Container, FnType},
-};
+use crate::actors::{ActorError, FnType, Handle, WRONG_ARGS, WRONG_RESPONSE};
+
+use super::any::Actor;
 
 #[async_trait]
 pub trait VecHandle<I>
@@ -25,30 +25,27 @@ where
 {
     async fn push(&self, val: I) -> Result<(), ActorError> {
         let res = self
-            .send_job(FnType::Inner(Box::new(VecContainer::push)), Box::new(val))
+            .send_job(FnType::Inner(Box::new(VecActor::push)), Box::new(val))
             .await?;
         Ok(*res.downcast().expect(WRONG_RESPONSE))
     }
 
     async fn is_empty(&self) -> Result<bool, ActorError> {
         let res = self
-            .send_job(
-                FnType::Inner(Box::new(VecContainer::is_empty)),
-                Box::new(()),
-            )
+            .send_job(FnType::Inner(Box::new(VecActor::is_empty)), Box::new(()))
             .await?;
         Ok(*res.downcast().expect(WRONG_RESPONSE))
     }
 
     async fn drain(&self) -> Result<Vec<I>, ActorError> {
         let res = self
-            .send_job(FnType::Inner(Box::new(VecContainer::drain)), Box::new(()))
+            .send_job(FnType::Inner(Box::new(VecActor::drain)), Box::new(()))
             .await?;
         Ok(*res.downcast().expect(WRONG_RESPONSE))
     }
 }
 
-trait VecContainer {
+trait VecActor {
     fn push(&mut self, args: Box<dyn Any + Send>) -> Result<Box<dyn Any + Send>, ActorError>;
 
     fn is_empty(&mut self, args: Box<dyn Any + Send>) -> Result<Box<dyn Any + Send>, ActorError>;
@@ -56,7 +53,7 @@ trait VecContainer {
     fn drain(&mut self, args: Box<dyn Any + Send>) -> Result<Box<dyn Any + Send>, ActorError>;
 }
 
-impl<I> VecContainer for Container<Vec<I>>
+impl<I> VecActor for Actor<Vec<I>>
 where
     I: Clone + Send + Sync + 'static,
 {

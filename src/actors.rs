@@ -6,7 +6,7 @@ pub mod any;
 pub mod map;
 pub mod vec;
 
-pub use any::{Container, FnType, Handle}; // Reexport for easier reference
+pub use any::{FnType, Handle}; // Reexport for easier reference
 pub use map::MapHandle; // Reexport for easier reference
 pub use vec::VecHandle; // Reexport for easier reference
 
