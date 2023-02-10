@@ -12,5 +12,9 @@ thiserror = "1.0"
 tokio = { version = "1.15", features = ["full"] }
 tonic = "0.8"
 log = "0.4"
-env_logger = "0.9"
+env_logger = "0.10"
 actify-macros = { path = "actify-macros" }
+
+[features]
+default = []
+test_feature = []
