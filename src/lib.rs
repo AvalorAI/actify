@@ -1,5 +1,6 @@
 #![warn(missing_debug_implementations, unreachable_pub)] // missing_docs
 #![deny(unused_must_use)]
+#![allow(clippy::unit_arg)]
 
 //! An intuitive actor model with minimal required boilerplate code.
 //!

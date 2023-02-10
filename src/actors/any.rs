@@ -103,6 +103,15 @@ where
     }
 }
 
+impl<T> Default for Handle<T>
+where
+    T: Clone + Send + Sync + 'static,
+{
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 // ------- The remote actor that runs in a seperate thread ------- //
 #[derive(Debug)]
 pub struct Actor<T> {
@@ -127,7 +136,7 @@ where
                 FnType::Eval(call) => self.eval(call, job.args),
             };
 
-            if let Err(_) = job.respond_to.send(res) {
+            if job.respond_to.send(res).is_err() {
                 log::warn!("Actor of type {} failed to respond as the receiver is dropped", std::any::type_name::<T>());
             }
         }
@@ -147,7 +156,7 @@ where
         Ok(Box::new(
             self.inner
                 .as_ref()
-                .ok_or(ActorError::NoValueSet(std::any::type_name::<T>().to_string()))?
+                .ok_or_else(|| ActorError::NoValueSet(std::any::type_name::<T>().to_string()))?
                 .clone(),
         ))
     }
@@ -158,6 +167,7 @@ where
         Ok(Box::new(()))
     }
 
+    #[allow(clippy::type_complexity)]
     fn eval(
         &mut self,
         mut eval_fn: Box<dyn FnMut(&mut T, Box<dyn Any + Send>) -> Result<Box<dyn Any + Send>> + Send + 'static>,
@@ -166,7 +176,7 @@ where
         let response = (*eval_fn)(
             self.inner
                 .as_mut()
-                .ok_or(ActorError::NoValueSet(std::any::type_name::<T>().to_string()))?,
+                .ok_or_else(|| ActorError::NoValueSet(std::any::type_name::<T>().to_string()))?,
             args,
         )
         .map_err(|e| ActorError::EvalError(e.to_string()))?;
@@ -195,6 +205,7 @@ struct Job<T> {
 
 // Closures are either to be evaluated using actor functions over the inner value, or by custom implementations over specific types
 #[allow(missing_debug_implementations)]
+#[allow(clippy::type_complexity)]
 pub enum FnType<T> {
     Inner(Box<dyn FnMut(&mut Actor<T>, Box<dyn Any + Send>) -> Result<Box<dyn Any + Send>, ActorError> + Send + 'static>),
     Eval(Box<dyn FnMut(&mut T, Box<dyn Any + Send>) -> Result<Box<dyn Any + Send>> + Send + 'static>),

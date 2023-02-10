@@ -66,7 +66,7 @@ where
         let res = self
             .inner
             .as_mut()
-            .ok_or(ActorError::NoValueSet(std::any::type_name::<HashMap<K, V>>().to_string()))?
+            .ok_or_else(|| ActorError::NoValueSet(std::any::type_name::<HashMap<K, V>>().to_string()))?
             .get(&val)
             .cloned();
         Ok(Box::new(res))
@@ -77,7 +77,7 @@ where
         let res = self
             .inner
             .as_mut()
-            .ok_or(ActorError::NoValueSet(std::any::type_name::<HashMap<K, V>>().to_string()))?
+            .ok_or_else(|| ActorError::NoValueSet(std::any::type_name::<HashMap<K, V>>().to_string()))?
             .insert(key, val);
         self.broadcast();
         Ok(Box::new(res))

@@ -31,7 +31,7 @@ where
 
     /// Returns if any new updates are received
     pub fn has_updates(&self) -> bool {
-        self.rx.len() > 0
+        !self.rx.is_empty()
     }
 
     /// Returns the newest value available
@@ -67,7 +67,7 @@ where
             if listen_newest {
                 if let Some(val) = self.try_listen_newest()? {
                     self.inner = Some(val.clone());
-                    return Ok(val.clone());
+                    return Ok(val);
                 }
             }
             // Only return the initialized value without checking if not interested in the newest or if it did not yield any newer values
@@ -80,7 +80,7 @@ where
             match self.rx.recv().await {
                 Ok(val) => {
                     self.inner = Some(val.clone());
-                    if !listen_newest || self.rx.len() < 1 {
+                    if !listen_newest || self.rx.is_empty() {
                         break Ok(val); // Only break if the last message in the channel
                     }
                 }
@@ -127,7 +127,7 @@ where
             match self.rx.try_recv() {
                 Ok(val) => {
                     self.inner = Some(val.clone());
-                    if !listen_newest || self.rx.len() < 1 {
+                    if !listen_newest || self.rx.is_empty() {
                         break Ok(Some(val)); // Only break if the last message in the channel or if listening to all values
                     }
                 }

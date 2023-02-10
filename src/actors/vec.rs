@@ -58,7 +58,7 @@ where
         let val = *args.downcast().expect(WRONG_ARGS);
         self.inner
             .as_mut()
-            .ok_or(ActorError::NoValueSet(std::any::type_name::<Vec<I>>().to_string()))?
+            .ok_or_else(|| ActorError::NoValueSet(std::any::type_name::<Vec<I>>().to_string()))?
             .push(val);
         self.broadcast();
         Ok(Box::new(()))
@@ -80,7 +80,7 @@ where
         let contents: Vec<I> = self
             .inner
             .as_mut()
-            .ok_or(ActorError::NoValueSet(std::any::type_name::<Vec<I>>().to_string()))?
+            .ok_or_else(|| ActorError::NoValueSet(std::any::type_name::<Vec<I>>().to_string()))?
             .drain(..)
             .collect();
         self.broadcast();
