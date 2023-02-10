@@ -28,7 +28,7 @@ pub fn actify(_attr: TokenStream, item: TokenStream) -> TokenStream {
 /// The handle: code the user interacts with
 /// The actor: code that executes the user-defined method in the actified impl block
 fn parse_macro(impl_block: &mut ItemImpl) -> Result<proc_macro2::TokenStream, proc_macro2::TokenStream> {
-    let impl_type = get_impl_type(&impl_block)?;
+    let impl_type = get_impl_type(impl_block)?;
 
     impl_block.generics.make_where_clause(); // Ensures the unwraps are safe
 
@@ -41,11 +41,11 @@ fn parse_macro(impl_block: &mut ItemImpl) -> Result<proc_macro2::TokenStream, pr
 
     let handle_trait = generate_handle_trait(&handle_trait_ident, &generated_methods)?;
 
-    let handle_trait_impl = generate_handle_trait_impl(&impl_block, &handle_trait_ident, &generated_methods)?;
+    let handle_trait_impl = generate_handle_trait_impl(impl_block, &handle_trait_ident, &generated_methods)?;
 
     let actor_trait = generate_actor_trait(&actor_trait_ident, &generated_methods)?;
 
-    let actor_trait_impl = generate_actor_trait_impl(&impl_block, &actor_trait_ident, &generated_methods)?;
+    let actor_trait_impl = generate_actor_trait_impl(impl_block, &actor_trait_ident, &generated_methods)?;
 
     let result = quote! {
 
@@ -401,7 +401,7 @@ fn transform_args(
                         input_arg_names.push(pat_ident.clone());
                         input_arg_types.push(var_type.clone());
                     }
-                    _ => panic!("Actify macro cannot yet handle the type: {:?}", *pat_type.ty),
+                    _ => panic!("Actify macro cannot yet handle the type"), // TODO make this an exhaustive pattern as suggested by the Syn crate
                 }
             }
         }
