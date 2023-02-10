@@ -90,6 +90,7 @@ fn generate_actor_trait_method_impl(
     impl_type: &Type,
     method: &TraitItemMethod,
     original_method: &ImplItemMethod,
+    attributes: &proc_macro2::TokenStream,
 ) -> Result<proc_macro2::TokenStream, proc_macro2::TokenStream> {
     // A tuple of (names): (types) is generated so that the types can be cast & downcast to the Any type for sending to the actor
     let (input_arg_names, input_arg_types) = transform_args(&original_method.sig.inputs)?;
@@ -109,6 +110,7 @@ fn generate_actor_trait_method_impl(
     // Optionally, the new actor value is broadcasted to all subscribed listeners
     // Lastly, the result is boxed and sent back to the calling handle
     let result = quote! {
+        #attributes
         fn #actor_method_ident(&mut self, args: Box<dyn std::any::Any + Send>) -> Result<Box<dyn std::any::Any + Send>, actor_model::ActorError> {
             let (#input_arg_names): (#input_arg_types) = *args
             .downcast()
@@ -151,10 +153,14 @@ fn generate_actor_trait(
 // This function takes a method from the original impl block and creates the actor variant that is remotely called by the handle.
 // It is preceded by _ to mark the difference between the two methods
 // Its signature must be standardized to the any type, to allow it being sent by the handle without using some kind of enum
-fn generate_actor_trait_method(method: &ImplItemMethod) -> Result<proc_macro2::TokenStream, proc_macro2::TokenStream> {
+fn generate_actor_trait_method(
+    method: &ImplItemMethod,
+    attributes: &proc_macro2::TokenStream,
+) -> Result<proc_macro2::TokenStream, proc_macro2::TokenStream> {
     let actor_method_ident = syn::Ident::new(&format!("_{}", &method.sig.ident.to_string()), Span::call_site());
 
     let result = quote! {
+        #attributes
         fn #actor_method_ident(&mut self, args: Box<dyn std::any::Any + Send>) -> Result<Box<dyn std::any::Any + Send>, actor_model::ActorError>;
     };
 
@@ -193,6 +199,7 @@ fn generate_handle_trait_method_impl(
     method: &TraitItemMethod,
     actor_trait_ident: &Ident,
     actor_method: &TraitItemMethod,
+    attributes: &proc_macro2::TokenStream,
 ) -> Result<proc_macro2::TokenStream, proc_macro2::TokenStream> {
     let signature = &method.sig;
     let (input_arg_names, _) = transform_args(&method.sig.inputs)?;
@@ -200,6 +207,7 @@ fn generate_handle_trait_method_impl(
     let actor_method_name = &actor_method.sig.ident;
 
     let result = quote! {
+        #attributes
         #signature {
             let res = self
             .send_job(
@@ -281,16 +289,23 @@ fn generate_methods(
     original_method: &ImplItemMethod,
     actor_trait_ident: &Ident,
 ) -> Result<GeneratedMethods, proc_macro2::TokenStream> {
-    let actor_trait_signature = generate_actor_trait_method(original_method)?;
-    let handle_trait_signature = generate_handle_trait_method(original_method)?;
+    let mut parsed_attributes = vec![];
+    for attribute in &original_method.attrs {
+        parsed_attributes.push(quote! { #attribute });
+    }
+    let flattenend_attributes = GeneratedMethods::flatten_token_stream(parsed_attributes);
+
+    let actor_trait_signature = generate_actor_trait_method(original_method, &flattenend_attributes)?;
+    let handle_trait_signature = generate_handle_trait_method(original_method, &flattenend_attributes)?;
 
     let parsed_actor_signature =
         syn::parse(actor_trait_signature.clone().into()).expect("Parsing the actor trait in the Actify macro failed");
     let parsed_handle_signature =
         syn::parse(handle_trait_signature.clone().into()).expect("Parsing the handle trait in the Actify macro failed");
 
-    let actor_method_impl = generate_actor_trait_method_impl(impl_type, &parsed_actor_signature, original_method)?;
-    let handle_method_impl = generate_handle_trait_method_impl(&parsed_handle_signature, actor_trait_ident, &parsed_actor_signature)?;
+    let actor_method_impl = generate_actor_trait_method_impl(impl_type, &parsed_actor_signature, original_method, &flattenend_attributes)?;
+    let handle_method_impl =
+        generate_handle_trait_method_impl(&parsed_handle_signature, actor_trait_ident, &parsed_actor_signature, &flattenend_attributes)?;
 
     Ok(GeneratedMethods {
         handle_trait: handle_trait_signature,
@@ -322,7 +337,10 @@ fn generate_handle_trait(
 /// First, all methods to the handle are async by default, to allow communication with the actor.
 /// Second, it is checked if a receiver is present and its mutability is removed as that is unnecessary.
 /// Thirdly, the output type is wrapped in a result. The default type is converted to () in all cases.
-fn generate_handle_trait_method(method: &ImplItemMethod) -> Result<proc_macro2::TokenStream, proc_macro2::TokenStream> {
+fn generate_handle_trait_method(
+    method: &ImplItemMethod,
+    attributes: &proc_macro2::TokenStream,
+) -> Result<proc_macro2::TokenStream, proc_macro2::TokenStream> {
     // Remove any mutability, as a handle is never required to be so even if the actor method is
     let mut modified_method = method.clone();
     let Some(FnArg::Receiver(receiver)) = modified_method
@@ -342,11 +360,13 @@ fn generate_handle_trait_method(method: &ImplItemMethod) -> Result<proc_macro2::
     let result = match &method.sig.output {
         ReturnType::Default => {
             quote! {
+                #attributes
                 async fn #name(#modified_inputs) -> Result<(), actor_model::ActorError>;
             }
         }
         ReturnType::Type(_, output_type) => {
             quote! {
+                #attributes
                async fn #name(#modified_inputs) -> Result<#output_type, actor_model::ActorError>;
             }
         }

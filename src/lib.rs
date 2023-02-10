@@ -1,4 +1,4 @@
-#![warn(missing_debug_implementations, unreachable_pub)] // missing_docs
+#![warn(missing_debug_implementations, unreachable_pub)] // TODO enable 'missing_docs'
 #![deny(unused_must_use)]
 #![allow(clippy::unit_arg)]
 
@@ -140,6 +140,7 @@ mod tests {
     where
         T: Clone + Send + Sync + 'static,
     {
+        #[cfg(not(feature = "test_feature"))]
         fn foo(&mut self, i: i32, _f: HashMap<String, f32>) -> f64 {
             (i + 1) as f64
         }
