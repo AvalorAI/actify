@@ -27,12 +27,7 @@ where
         self.tx.capacity()
     }
 
-    pub async fn spawn_throttle<C, F>(
-        &self,
-        client: C,
-        call: fn(&C, F),
-        freq: Frequency,
-    ) -> Result<()>
+    pub async fn spawn_throttle<C, F>(&self, client: C, call: fn(&C, F), freq: Frequency) -> Result<()>
     where
         C: Send + Sync + 'static,
         T: Throttled<F>,
@@ -46,30 +41,22 @@ where
     }
 
     pub async fn get(&self) -> Result<T, ActorError> {
-        let res = self
-            .send_job(FnType::Inner(Box::new(Actor::get)), Box::new(()))
-            .await?;
+        let res = self.send_job(FnType::Inner(Box::new(Actor::get)), Box::new(())).await?;
         Ok(*res.downcast().expect(WRONG_RESPONSE))
     }
 
     pub async fn is_none(&self) -> Result<bool, ActorError> {
-        let res = self
-            .send_job(FnType::Inner(Box::new(Actor::is_none)), Box::new(()))
-            .await?;
+        let res = self.send_job(FnType::Inner(Box::new(Actor::is_none)), Box::new(())).await?;
         Ok(*res.downcast().expect(WRONG_RESPONSE))
     }
 
     pub async fn set(&self, val: T) -> Result<(), ActorError> {
-        let res = self
-            .send_job(FnType::Inner(Box::new(Actor::set)), Box::new(val))
-            .await?;
+        let res = self.send_job(FnType::Inner(Box::new(Actor::set)), Box::new(val)).await?;
         Ok(*res.downcast().expect(WRONG_RESPONSE))
     }
 
     pub async fn subscribe(&self) -> Result<broadcast::Receiver<T>, ActorError> {
-        let res = self
-            .send_job(FnType::Inner(Box::new(Actor::subscribe)), Box::new(()))
-            .await?;
+        let res = self.send_job(FnType::Inner(Box::new(Actor::subscribe)), Box::new(())).await?;
         Ok(*res.downcast().expect(WRONG_RESPONSE))
     }
 
@@ -81,12 +68,8 @@ where
         A: Send + 'static,
         R: Send + 'static,
     {
-        let response = self
-            .send_job(FnType::Eval(Box::new(eval_fn)), Box::new(args))
-            .await?;
-        Ok(*response
-            .downcast::<R>()
-            .map_err(|_| ActorError::WrongResponse)?) // Only here is a wrong response propagated, as its part of the API
+        let response = self.send_job(FnType::Eval(Box::new(eval_fn)), Box::new(args)).await?;
+        Ok(*response.downcast::<R>().map_err(|_| ActorError::WrongResponse)?) // Only here is a wrong response propagated, as its part of the API
     }
 }
 
@@ -111,17 +94,9 @@ where
         Handle { tx }
     }
 
-    pub async fn send_job(
-        &self,
-        call: FnType<T>,
-        args: Box<dyn Any + Send>,
-    ) -> Result<Box<dyn Any + Send>, ActorError> {
+    pub async fn send_job(&self, call: FnType<T>, args: Box<dyn Any + Send>) -> Result<Box<dyn Any + Send>, ActorError> {
         let (respond_to, get_result) = oneshot::channel();
-        let job = Job {
-            call,
-            args,
-            respond_to,
-        };
+        let job = Job { call, args, respond_to };
         self.tx.send(job).await?;
         get_result.await?
         // TODO add a timeout on this result await
@@ -129,6 +104,7 @@ where
 }
 
 // ------- The remote actor that runs in a seperate thread ------- //
+#[derive(Debug)]
 pub struct Actor<T> {
     rx: mpsc::Receiver<Job<T>>,
     pub inner: Option<T>,
@@ -140,11 +116,7 @@ where
     T: Clone + Send + 'static,
 {
     fn new(rx: mpsc::Receiver<Job<T>>, broadcast: broadcast::Sender<T>, inner: Option<T>) -> Self {
-        Self {
-            rx,
-            inner,
-            broadcast,
-        }
+        Self { rx, inner, broadcast }
     }
 
     async fn serve(mut self) {
@@ -156,10 +128,7 @@ where
             };
 
             if let Err(_) = job.respond_to.send(res) {
-                log::warn!(
-                    "Actor of type {} failed to respond as the receiver is dropped",
-                    std::any::type_name::<T>()
-                );
+                log::warn!("Actor of type {} failed to respond as the receiver is dropped", std::any::type_name::<T>());
             }
         }
         let inner_type = std::any::type_name::<T>();
@@ -178,9 +147,7 @@ where
         Ok(Box::new(
             self.inner
                 .as_ref()
-                .ok_or(ActorError::NoValueSet(
-                    std::any::type_name::<T>().to_string(),
-                ))?
+                .ok_or(ActorError::NoValueSet(std::any::type_name::<T>().to_string()))?
                 .clone(),
         ))
     }
@@ -193,15 +160,13 @@ where
 
     fn eval(
         &mut self,
-        mut eval_fn: Box<
-            dyn FnMut(&mut T, Box<dyn Any + Send>) -> Result<Box<dyn Any + Send>> + Send + 'static,
-        >,
+        mut eval_fn: Box<dyn FnMut(&mut T, Box<dyn Any + Send>) -> Result<Box<dyn Any + Send>> + Send + 'static>,
         args: Box<dyn Any + Send>,
     ) -> Result<Box<dyn Any + Send>, ActorError> {
         let response = (*eval_fn)(
-            self.inner.as_mut().ok_or(ActorError::NoValueSet(
-                std::any::type_name::<T>().to_string(),
-            ))?,
+            self.inner
+                .as_mut()
+                .ok_or(ActorError::NoValueSet(std::any::type_name::<T>().to_string()))?,
             args,
         )
         .map_err(|e| ActorError::EvalError(e.to_string()))?;
@@ -229,17 +194,10 @@ struct Job<T> {
 }
 
 // Closures are either to be evaluated using actor functions over the inner value, or by custom implementations over specific types
+#[allow(missing_debug_implementations)]
 pub enum FnType<T> {
-    Inner(
-        Box<
-            dyn FnMut(&mut Actor<T>, Box<dyn Any + Send>) -> Result<Box<dyn Any + Send>, ActorError>
-                + Send
-                + 'static,
-        >,
-    ),
-    Eval(
-        Box<dyn FnMut(&mut T, Box<dyn Any + Send>) -> Result<Box<dyn Any + Send>> + Send + 'static>,
-    ),
+    Inner(Box<dyn FnMut(&mut Actor<T>, Box<dyn Any + Send>) -> Result<Box<dyn Any + Send>, ActorError> + Send + 'static>),
+    Eval(Box<dyn FnMut(&mut T, Box<dyn Any + Send>) -> Result<Box<dyn Any + Send>> + Send + 'static>),
 }
 
 impl<T> fmt::Debug for Job<T> {

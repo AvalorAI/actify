@@ -2,7 +2,10 @@ use anyhow::Result;
 use async_trait::async_trait;
 use std::any::Any;
 
-use crate::actors::{ActorError, FnType, Handle, WRONG_ARGS, WRONG_RESPONSE};
+use crate::{
+    actors::{ActorError, WRONG_ARGS, WRONG_RESPONSE},
+    FnType, Handle,
+};
 
 use super::any::Actor;
 
@@ -24,23 +27,17 @@ where
     I: Clone + Send + Sync + 'static,
 {
     async fn push(&self, val: I) -> Result<(), ActorError> {
-        let res = self
-            .send_job(FnType::Inner(Box::new(VecActor::push)), Box::new(val))
-            .await?;
+        let res = self.send_job(FnType::Inner(Box::new(VecActor::push)), Box::new(val)).await?;
         Ok(*res.downcast().expect(WRONG_RESPONSE))
     }
 
     async fn is_empty(&self) -> Result<bool, ActorError> {
-        let res = self
-            .send_job(FnType::Inner(Box::new(VecActor::is_empty)), Box::new(()))
-            .await?;
+        let res = self.send_job(FnType::Inner(Box::new(VecActor::is_empty)), Box::new(())).await?;
         Ok(*res.downcast().expect(WRONG_RESPONSE))
     }
 
     async fn drain(&self) -> Result<Vec<I>, ActorError> {
-        let res = self
-            .send_job(FnType::Inner(Box::new(VecActor::drain)), Box::new(()))
-            .await?;
+        let res = self.send_job(FnType::Inner(Box::new(VecActor::drain)), Box::new(())).await?;
         Ok(*res.downcast().expect(WRONG_RESPONSE))
     }
 }
@@ -61,9 +58,7 @@ where
         let val = *args.downcast().expect(WRONG_ARGS);
         self.inner
             .as_mut()
-            .ok_or(ActorError::NoValueSet(
-                std::any::type_name::<Vec<I>>().to_string(),
-            ))?
+            .ok_or(ActorError::NoValueSet(std::any::type_name::<Vec<I>>().to_string()))?
             .push(val);
         self.broadcast();
         Ok(Box::new(()))
@@ -85,9 +80,7 @@ where
         let contents: Vec<I> = self
             .inner
             .as_mut()
-            .ok_or(ActorError::NoValueSet(
-                std::any::type_name::<Vec<I>>().to_string(),
-            ))?
+            .ok_or(ActorError::NoValueSet(std::any::type_name::<Vec<I>>().to_string()))?
             .drain(..)
             .collect();
         self.broadcast();

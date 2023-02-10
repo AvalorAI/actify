@@ -87,10 +87,7 @@ where
                 Err(e) => match e {
                     RecvError::Closed => break Err(e.into()),
                     RecvError::Lagged(e) => {
-                        let msg = format!(
-                            "Cache of actor type {} lagged {e:?} messages",
-                            std::any::type_name::<T>()
-                        );
+                        let msg = format!("Cache of actor type {} lagged {e:?} messages", std::any::type_name::<T>());
                         if !listen_newest {
                             log::warn!("{msg:?}")
                         } else {
@@ -138,10 +135,7 @@ where
                     TryRecvError::Closed => break Err(e.into()),
                     TryRecvError::Empty => break Ok(None), // If no new value present, return none
                     TryRecvError::Lagged(e) => {
-                        let msg = format!(
-                            "Cache of actor type {} lagged {e:?} messages",
-                            std::any::type_name::<T>()
-                        );
+                        let msg = format!("Cache of actor type {} lagged {e:?} messages", std::any::type_name::<T>());
                         if !listen_newest {
                             log::warn!("{msg:?}")
                         } else {

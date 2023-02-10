@@ -1,0 +1,4 @@
+# See for options: https://rust-lang.github.io/rustfmt/
+max_width=140
+overflow_delimited_expr=true
+fn_call_width=120

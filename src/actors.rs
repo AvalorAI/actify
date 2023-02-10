@@ -2,13 +2,9 @@ use std::fmt::Debug;
 use thiserror::Error;
 use tokio::sync::{broadcast, mpsc, oneshot};
 
-pub mod any;
-pub mod map;
-pub mod vec;
-
-pub use any::{FnType, Handle}; // Reexport for easier reference
-pub use map::MapHandle; // Reexport for easier reference
-pub use vec::VecHandle; // Reexport for easier reference
+pub(crate) mod any;
+pub(crate) mod map;
+pub(crate) mod vec;
 
 const CHANNEL_SIZE: usize = 100;
 const WRONG_ARGS: &str = "Incorrect arguments have been provided for this method";
@@ -40,13 +36,17 @@ impl<T> From<mpsc::error::SendError<T>> for ActorError {
 
 // Convert any actor error to an gRPC internal failure status
 impl From<ActorError> for tonic::Status {
-    fn from(_e: ActorError) -> Self {
-        tonic::Status::internal("Actor model failed")
+    fn from(e: ActorError) -> Self {
+        tonic::Status::from_error(Box::new(e))
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use crate::Handle;
+    use crate::MapHandle;
+    use crate::VecHandle;
+
     use super::*;
     use anyhow::{anyhow, Result};
     use std::any::Any;
@@ -180,10 +180,7 @@ mod tests {
     #[tokio::test]
     async fn eval_empty_actor() {
         let handle = Handle::new();
-        let err = handle
-            .eval::<_, _, i32>(TestVal::heavy_calcs, 10)
-            .await
-            .unwrap_err();
+        let err = handle.eval::<_, _, i32>(TestVal::heavy_calcs, 10).await.unwrap_err();
         assert!(matches!(err, ActorError::NoValueSet(_)))
     }
 
@@ -197,10 +194,7 @@ mod tests {
     #[tokio::test]
     async fn eval_cast_resp_err_actor() {
         let handle = Handle::new_from(TestVal {});
-        let err = handle
-            .eval::<_, _, String>(TestVal::heavy_calcs, 10)
-            .await
-            .unwrap_err();
+        let err = handle.eval::<_, _, String>(TestVal::heavy_calcs, 10).await.unwrap_err();
         assert_eq!(ActorError::WrongResponse, err);
     }
 
@@ -219,9 +213,7 @@ mod tests {
 
     impl TestVal {
         fn heavy_calcs(&mut self, args: Box<dyn Any + Send>) -> Result<Box<dyn Any + Send>> {
-            let val = *args
-                .downcast::<i32>()
-                .map_err(|_| anyhow!("Downcasting the args went wrong"))?;
+            let val = *args.downcast::<i32>().map_err(|_| anyhow!("Downcasting the args went wrong"))?;
             Ok(Box::new(val + 1))
         }
     }
