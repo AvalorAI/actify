@@ -222,6 +222,7 @@ impl<T> fmt::Debug for Job<T> {
 mod tests {
 
     use std::future::Future;
+    use std::marker::PhantomData;
     use std::mem;
 
     use super::*;
@@ -232,8 +233,15 @@ mod tests {
 
     impl SomeTrait for FakeCall {}
 
-    struct TestJob<F> {
+    struct TestJob<'a, Fut, F, T>
+    where
+        T: 'a,
+        F: Fn(&'a mut Actor<T>) -> Fut + Clone + Sync + Send + 'a,
+        Fut: Future<Output = ()> + 'a,
+    {
         call: Option<F>,
+        _t: PhantomData<&'a T>,
+        _fut: PhantomData<Fut>,
     }
 
     trait AsyncCalls {
@@ -242,17 +250,22 @@ mod tests {
         fn get_call(&mut self) -> Self::CallType;
     }
 
-    impl<F> AsyncCalls for TestJob<F>
+    impl<'a, F, Fut, T> AsyncCalls for TestJob<'a, Fut, F, T>
     where
-        F: SomeTrait + 'static,
+        F: Fn(&'a mut Actor<T>) -> Fut + Clone + Sync + Send + 'a,
+        Fut: Future<Output = ()> + 'a,
     {
-        type CallType = Box<dyn SomeTrait>;
+        type CallType = Box<dyn Fn(&'a mut Actor<T>) -> Fut + Sync + Send + 'a>;
 
-        fn get_call(&mut self) -> Box<dyn SomeTrait> {
+        fn get_call(&mut self) -> Self::CallType {
             let call = mem::replace(&mut self.call, None).unwrap();
             Box::new(call)
         }
     }
+
+    // where
+    // F: Fn(&'a mut Actor<T>) -> Fut + Clone + Sync + Send + 'a,
+    // Fut: Future<Output = ()> + 'a,
 
     // impl<F> Call<F> {
     //     fn new<T, Fut>(fn_call: F) -> Self
@@ -283,37 +296,51 @@ mod tests {
 
         let mut job = TestJob {
             call: Some(Actor::my_test),
+            _t: PhantomData,
+            _fut: PhantomData,
         };
 
-        // let _ = (job.get_call())(&mut actor).await;
+        let _ = (job.get_call())(&mut actor).await;
 
         let job = TestJob {
             call: Some(Actor::my_test),
+            _t: PhantomData,
+            _fut: PhantomData,
         };
-        generic_receiver(job).await; // Can pass the job as argument with Generics
+        // generic_receiver(job).await; // Can pass the job as argument with Generics
 
-        let mut job = TestJob { call: Some(FakeCall {}) };
-        let a = job.get_call();
-        dynamic_receiver(Box::new(job)).await; // Can pass the job as trait object with dynamic dispatch
+        // let mut job = TestJob { call: Some(FakeCall {}) };
+        // let a = job.get_call();
+        let mut job = TestJob {
+            call: Some(Actor::my_test),
+            _t: PhantomData,
+            _fut: PhantomData,
+        };
+
+        let _ = (job.get_call())(&mut actor).await;
+        // dynamic_receiver(Box::new(job)).await; // Can pass the job as trait object with dynamic dispatch
 
         // let a = executer(actor, Box::new(job)).await;
     }
 
-    async fn generic_receiver<'a, F, Fut, T: 'a>(_job: TestJob<F>)
-    where
-        F: Fn(&'a mut Actor<T>) -> Fut + Clone + Sync + Send + 'a,
-        Fut: Future<Output = ()> + 'a,
-    {
-    }
+    // async fn generic_receiver<'a, F, Fut, T>(_job: TestJob<'a, F, Fut, T>)
+    // where
+    //     F: Fn(&'a mut Actor<T>) -> Fut + Clone + Sync + Send + 'a,
+    //     Fut: Future<Output = ()> + 'a,
+    // {
+    // }
 
-    // Box<dyn SomeTrait<T>>
-    async fn dynamic_receiver(_job: Box<dyn AsyncCalls<CallType = Box<dyn SomeTrait>>>) {}
+    async fn dynamic_receiver<'a, T, Fut>(_job: Box<dyn AsyncCalls<CallType = Box<dyn Fn(&'a mut Actor<T>) -> Fut + Sync + Send + 'a>>>) {}
+
     // async fn dynamic_receiver<T>(_job: Box<dyn AsyncCalls<CallType = Box<FakeCall<T>>>>) {}
 
-    // async fn executer<Fut, T>(mut actor: Actor<T>, mut job: Box<dyn AsyncCalls<CallType = Box<dyn FnMut(&mut Actor<T>) -> Fut>>>)
-    // where
-    //     Fut: Future<Output = ()>,
-    // {
-    //     let a = (*job.get_call())(&mut actor).await;
-    // }
+    async fn executer<'a, T, Fut>(
+        mut actor: Actor<T>,
+        mut job: Box<dyn AsyncCalls<CallType = Box<dyn Fn(&'a mut Actor<T>) -> Fut + Sync + Send + 'a>>>,
+    ) where
+        Actor<T>: 'static,
+        Fut: Future<Output = ()>,
+    {
+        let _ = (job.get_call())(&mut actor).await;
+    }
 }
