@@ -217,3 +217,103 @@ impl<T> fmt::Debug for Job<T> {
         write!(f, "Job [call: FnType<{inner_type}>, args: Any, respond_to: Sender<Result<Any>, ActorError>]")
     }
 }
+
+#[cfg(test)]
+mod tests {
+
+    use std::future::Future;
+    use std::mem;
+
+    use super::*;
+
+    struct FakeCall {}
+
+    trait SomeTrait {}
+
+    impl SomeTrait for FakeCall {}
+
+    struct TestJob<F> {
+        call: Option<F>,
+    }
+
+    trait AsyncCalls {
+        type CallType;
+
+        fn get_call(&mut self) -> Self::CallType;
+    }
+
+    impl<F> AsyncCalls for TestJob<F>
+    where
+        F: SomeTrait + 'static,
+    {
+        type CallType = Box<dyn SomeTrait>;
+
+        fn get_call(&mut self) -> Box<dyn SomeTrait> {
+            let call = mem::replace(&mut self.call, None).unwrap();
+            Box::new(call)
+        }
+    }
+
+    // impl<F> Call<F> {
+    //     fn new<T, Fut>(fn_call: F) -> Self
+    //     where
+    //         F: FnMut(&mut Actor<T>, Box<dyn Any + Send>) -> Fut + Clone + Sync + Send,
+    //         Fut: Future<Output = Result<Box<dyn Any + Send>, ActorError>>,
+    //     {
+    //         Self { fn_call }
+    //     }
+    // }
+
+    #[derive(Clone)]
+    struct TestStruct {}
+
+    impl Actor<TestStruct> {
+        async fn my_test(&mut self) {
+            println!("Ok!");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_async_calls() {
+        let test_struct = TestStruct {};
+
+        let (_, rx) = mpsc::channel(CHANNEL_SIZE);
+        let (broadcast, _) = broadcast::channel(CHANNEL_SIZE);
+        let mut actor = Actor::new(rx, broadcast, Some(test_struct));
+
+        let mut job = TestJob {
+            call: Some(Actor::my_test),
+        };
+
+        // let _ = (job.get_call())(&mut actor).await;
+
+        let job = TestJob {
+            call: Some(Actor::my_test),
+        };
+        generic_receiver(job).await; // Can pass the job as argument with Generics
+
+        let mut job = TestJob { call: Some(FakeCall {}) };
+        let a = job.get_call();
+        dynamic_receiver(Box::new(job)).await; // Can pass the job as trait object with dynamic dispatch
+
+        // let a = executer(actor, Box::new(job)).await;
+    }
+
+    async fn generic_receiver<'a, F, Fut, T: 'a>(_job: TestJob<F>)
+    where
+        F: Fn(&'a mut Actor<T>) -> Fut + Clone + Sync + Send + 'a,
+        Fut: Future<Output = ()> + 'a,
+    {
+    }
+
+    // Box<dyn SomeTrait<T>>
+    async fn dynamic_receiver(_job: Box<dyn AsyncCalls<CallType = Box<dyn SomeTrait>>>) {}
+    // async fn dynamic_receiver<T>(_job: Box<dyn AsyncCalls<CallType = Box<FakeCall<T>>>>) {}
+
+    // async fn executer<Fut, T>(mut actor: Actor<T>, mut job: Box<dyn AsyncCalls<CallType = Box<dyn FnMut(&mut Actor<T>) -> Fut>>>)
+    // where
+    //     Fut: Future<Output = ()>,
+    // {
+    //     let a = (*job.get_call())(&mut actor).await;
+    // }
+}
