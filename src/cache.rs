@@ -10,9 +10,24 @@ use super::{ActorError, Handle};
 /// A simple caching struct that can be used to locally maintain a synchronized state with an actor
 #[derive(Debug)]
 pub struct Cache<T> {
+    handle: Handle<T>,
     inner: Option<T>,
     rx: broadcast::Receiver<T>,
     has_listenend: bool,
+}
+
+impl<T> Clone for Cache<T>
+where
+    T: Clone + Send + Sync + 'static,
+{
+    fn clone(&self) -> Self {
+        Cache {
+            handle: self.handle.clone(),
+            inner: self.inner.clone(),
+            rx: self.handle._broadcast.subscribe(),
+            has_listenend: self.has_listenend.clone(),
+        }
+    }
 }
 
 impl<T> Cache<T>
@@ -23,6 +38,7 @@ where
         let rx = handle.subscribe().await?;
         let inner = Cache::initialize(&handle).await?;
         Ok(Self {
+            handle,
             inner,
             rx,
             has_listenend: false,

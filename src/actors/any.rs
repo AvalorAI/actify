@@ -13,6 +13,7 @@ use crate::{
 #[derive(Debug, Clone)]
 pub struct Handle<T> {
     tx: mpsc::Sender<Job<T>>,
+    pub(crate) _broadcast: broadcast::Sender<T>,
 }
 
 impl<T> Handle<T>
@@ -89,9 +90,9 @@ where
     fn _new(init: Option<T>) -> Handle<T> {
         let (tx, rx) = mpsc::channel(CHANNEL_SIZE);
         let (broadcast, _) = broadcast::channel(CHANNEL_SIZE);
-        let actor = Actor::new(rx, broadcast, init);
+        let actor = Actor::new(rx, broadcast.clone(), init);
         tokio::spawn(Actor::serve(actor));
-        Handle { tx }
+        Handle { tx, _broadcast: broadcast }
     }
 
     pub async fn send_job(&self, call: FnType<T>, args: Box<dyn Any + Send>) -> Result<Box<dyn Any + Send>, ActorError> {
