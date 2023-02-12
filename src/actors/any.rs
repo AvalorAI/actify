@@ -225,6 +225,8 @@ mod tests {
     use std::marker::PhantomData;
     use std::mem;
 
+    use futures::future::BoxFuture;
+
     use super::*;
 
     struct FakeCall {}
@@ -317,8 +319,10 @@ mod tests {
             _fut: PhantomData,
         };
 
-        let _ = (job.get_call())(&mut actor).await;
+        // let _ = (job.get_call())(&mut actor).await;
         // dynamic_receiver(Box::new(job)).await; // Can pass the job as trait object with dynamic dispatch
+
+        // let a = simple_dynamic(Box::new(Actor::my_test));
 
         // let a = executer(actor, Box::new(job)).await;
     }
@@ -330,17 +334,46 @@ mod tests {
     // {
     // }
 
-    async fn dynamic_receiver<'a, T, Fut>(_job: Box<dyn AsyncCalls<CallType = Box<dyn Fn(&'a mut Actor<T>) -> Fut + Sync + Send + 'a>>>) {}
+    async fn dynamic_receiver<'a, T, Fut>(
+        _job: Box<dyn AsyncCalls<CallType = Box<dyn Fn(&'a mut Actor<T>) -> BoxFuture<()> + Sync + Send + 'a>>>,
+    ) {
+    }
+
+    async fn simple_dynamic<T>(call: Box<dyn for<'a> Fn(&'a mut Actor<T>) -> BoxFuture<()>>) {}
 
     // async fn dynamic_receiver<T>(_job: Box<dyn AsyncCalls<CallType = Box<FakeCall<T>>>>) {}
 
-    async fn executer<'a, T, Fut>(
+    async fn executer<T, Fut>(
         mut actor: Actor<T>,
-        mut job: Box<dyn AsyncCalls<CallType = Box<dyn Fn(&'a mut Actor<T>) -> Fut + Sync + Send + 'a>>>,
-    ) where
-        Actor<T>: 'static,
-        Fut: Future<Output = ()>,
-    {
+        mut job: Box<dyn AsyncCalls<CallType = Box<dyn for<'a> Fn(&'a mut Actor<T>) -> BoxFuture<()> + Sync + Send>>>,
+    ) {
         let _ = (job.get_call())(&mut actor).await;
+    }
+
+    struct S {}
+
+    impl S {
+        async fn test(&self) -> bool {
+            true
+        }
+
+        async fn try_test() {
+            let s = S {};
+            // let b = f1(s, Box::pin(S::test)).await;
+
+            basic_executer(|s: &S| Box::pin(async move { some_async_call(s).await })).await;
+        }
+    }
+
+    async fn some_async_call(s: &S) -> bool {
+        true
+    }
+
+    async fn basic_executer<F>(callback: F) -> bool
+    where
+        F: for<'a> Fn(&'a S) -> BoxFuture<bool>,
+    {
+        let s = S {};
+        callback(&s).await
     }
 }
