@@ -19,7 +19,7 @@
 //! Consider the following example:
 //! ```
 //! # use actor_model::{Handle, actify};
-//! # #[derive(Clone)]
+//! # #[derive(Clone, Debug)]
 //! # struct Greeter {}
 //!
 //! #[actify]
@@ -45,7 +45,7 @@
 //! This roughly desugars to:
 //! ```
 //! # use actor_model::{Handle, actify, ActorError, Actor, FnType};
-//! # #[derive(Clone)]
+//! # #[derive(Clone, Debug)]
 //! # struct Greeter {}
 //! impl Greeter {
 //!     fn say_hi(&self, name: String) -> String {
@@ -122,7 +122,7 @@ pub use throttle::{Frequency, ThrottleBuilder, Throttled};
 
 /// An example struct for the macro tests
 #[allow(dead_code)]
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 struct TestStruct<T> {
     inner_data: T,
 }
@@ -131,14 +131,14 @@ struct TestStruct<T> {
 mod tests {
 
     use super::*;
-    use std::collections::HashMap;
+    use std::{collections::HashMap, fmt::Debug};
 
     use crate as actor_model; // used so that the expanded absolute path functions in this crate
 
     #[actify]
     impl<T> crate::TestStruct<T>
     where
-        T: Clone + Send + Sync + 'static,
+        T: Clone + Debug + Send + Sync + 'static,
     {
         #[cfg(not(feature = "test_feature"))]
         fn foo(&mut self, i: i32, _f: HashMap<String, f32>) -> f64 {
@@ -146,7 +146,10 @@ mod tests {
         }
     }
 
-    impl<T> TestStruct<T> {
+    impl<T> TestStruct<T>
+    where
+        T: Clone + Debug + Send + Sync + 'static,
+    {
         fn bar(&self, i: usize) -> f32 {
             (i + 1) as f32
         }
@@ -160,7 +163,7 @@ mod tests {
     #[async_trait]
     impl<T> ExampleTestStructHandle for Handle<TestStruct<T>>
     where
-        T: Clone + Send + Sync + 'static,
+        T: Clone + Debug + Send + Sync + 'static,
     {
         async fn bar(&self, test: usize) -> Result<f32, ActorError> {
             let res = self
@@ -177,7 +180,7 @@ mod tests {
     #[allow(unused_parens)]
     impl<T> ExampleTestStructActor for Actor<TestStruct<T>>
     where
-        T: Clone + Send + Sync + 'static,
+        T: Clone + Debug + Send + Sync + 'static,
     {
         fn _bar(&mut self, args: Box<dyn std::any::Any + Send>) -> Result<Box<dyn std::any::Any + Send>, ActorError> {
             let (test): (usize) = *args.downcast().expect("Downcasting failed due to an error in the Actify macro");

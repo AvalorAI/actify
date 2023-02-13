@@ -1,4 +1,5 @@
 use anyhow::Result;
+use futures::future::BoxFuture;
 use std::any::Any;
 use std::fmt;
 use std::fmt::Debug;
@@ -11,13 +12,16 @@ use crate::{
 
 // ------- Clonable handle that can be used to remotely execute a closure on the actor ------- //
 #[derive(Debug, Clone)]
-pub struct Handle<T> {
+pub struct Handle<T>
+where
+    T: Clone + Debug + Send + Sync + 'static,
+{
     tx: mpsc::Sender<Job<T>>,
 }
 
 impl<T> Handle<T>
 where
-    T: Clone + Send + Sync + 'static,
+    T: Clone + Debug + Send + Sync + 'static,
 {
     pub async fn create_cache(&self) -> Result<Cache<T>, ActorError> {
         Cache::new(self.clone()).await
@@ -76,7 +80,7 @@ where
 // ------- Seperate implementation of the general functions for the base handle ------- //
 impl<T> Handle<T>
 where
-    T: Clone + Send + Sync + 'static,
+    T: Clone + Debug + Send + Sync + 'static,
 {
     pub fn new() -> Handle<T> {
         Self::_new(None)
@@ -89,8 +93,9 @@ where
     fn _new(init: Option<T>) -> Handle<T> {
         let (tx, rx) = mpsc::channel(CHANNEL_SIZE);
         let (broadcast, _) = broadcast::channel(CHANNEL_SIZE);
-        let actor = Actor::new(rx, broadcast, init);
-        tokio::spawn(Actor::serve(actor));
+        let actor = Actor::new(broadcast, init);
+        let listener = Listener::new(rx, actor);
+        tokio::spawn(Listener::serve(listener));
         Handle { tx }
     }
 
@@ -105,35 +110,37 @@ where
 
 impl<T> Default for Handle<T>
 where
-    T: Clone + Send + Sync + 'static,
+    T: Clone + Debug + Send + Sync + 'static,
 {
     fn default() -> Self {
         Self::new()
     }
 }
 
-// ------- The remote actor that runs in a seperate thread ------- //
 #[derive(Debug)]
-pub struct Actor<T> {
+struct Listener<T>
+where
+    T: Clone + Debug + Send + Sync + 'static,
+{
     rx: mpsc::Receiver<Job<T>>,
-    pub inner: Option<T>,
-    pub broadcast: broadcast::Sender<T>,
+    actor: Actor<T>,
 }
 
-impl<T> Actor<T>
+impl<T> Listener<T>
 where
-    T: Clone + Send + 'static,
+    T: Clone + Debug + Send + Sync + 'static,
 {
-    fn new(rx: mpsc::Receiver<Job<T>>, broadcast: broadcast::Sender<T>, inner: Option<T>) -> Self {
-        Self { rx, inner, broadcast }
+    fn new(rx: mpsc::Receiver<Job<T>>, actor: Actor<T>) -> Self {
+        Self { rx, actor }
     }
 
     async fn serve(mut self) {
         // Execute the function on the inner data
         while let Some(job) = self.rx.recv().await {
             let res = match job.call {
-                FnType::Inner(mut call) => (*call)(&mut self, job.args),
-                FnType::Eval(call) => self.eval(call, job.args),
+                FnType::Inner(mut call) => (*call)(&mut self.actor, job.args),
+                FnType::InnerAsync(call) => call(&mut self.actor, job.args).await,
+                FnType::Eval(call) => self.actor.eval(call, job.args),
             };
 
             if job.respond_to.send(res).is_err() {
@@ -142,6 +149,22 @@ where
         }
         let inner_type = std::any::type_name::<T>();
         log::warn!("Actor of type {inner_type} exited!");
+    }
+}
+
+// ------- The remote actor that runs in a seperate thread ------- //
+#[derive(Debug)]
+pub struct Actor<T> {
+    pub inner: Option<T>,
+    pub broadcast: broadcast::Sender<T>,
+}
+
+impl<T> Actor<T>
+where
+    T: Clone + Send + 'static,
+{
+    fn new(broadcast: broadcast::Sender<T>, inner: Option<T>) -> Self {
+        Self { inner, broadcast }
     }
 
     fn subscribe(&mut self, _args: Box<dyn Any + Send>) -> Result<Box<dyn Any + Send>, ActorError> {
@@ -208,6 +231,7 @@ struct Job<T> {
 #[allow(clippy::type_complexity)]
 pub enum FnType<T> {
     Inner(Box<dyn FnMut(&mut Actor<T>, Box<dyn Any + Send>) -> Result<Box<dyn Any + Send>, ActorError> + Send + 'static>),
+    InnerAsync(Box<dyn Fn(&mut Actor<T>, Box<dyn Any + Send>) -> BoxFuture<Result<Box<dyn Any + Send>, ActorError>> + Send + Sync>),
     Eval(Box<dyn FnMut(&mut T, Box<dyn Any + Send>) -> Result<Box<dyn Any + Send>> + Send + 'static>),
 }
 
@@ -218,17 +242,18 @@ impl<T> fmt::Debug for Job<T> {
     }
 }
 
+#[allow(dead_code)]
 #[cfg(test)]
 mod tests {
 
     use futures::future::BoxFuture;
+    use tokio::time::{sleep, Duration};
 
     use super::*;
 
     #[derive(Clone, Debug)]
     struct S {}
 
-    #[allow(dead_code)]
     struct ExampleJob {
         call: Box<dyn for<'a> Fn(&'a mut S) -> BoxFuture<bool>>,
     }
@@ -274,7 +299,7 @@ mod tests {
     where
         T: Clone + Debug + Send + Sync,
     {
-        call: Box<dyn for<'a> Fn(&'a mut SimpleActor<T>) -> BoxFuture<T>>,
+        call: Box<dyn for<'a> Fn(&'a mut SimpleActor<T>) -> BoxFuture<T> + Send + Sync>,
     }
 
     impl<T> fmt::Debug for SimpleJob<T>
@@ -308,7 +333,7 @@ mod tests {
         }
     }
 
-    struct Listener<T>
+    struct SimpleListener<T>
     where
         T: Clone + Debug + Send + Sync,
     {
@@ -321,6 +346,7 @@ mod tests {
         T: Clone + Debug + Send + Sync,
     {
         inner: T,
+        broadcast: broadcast::Sender<T>,
     }
 
     impl<T> SimpleActor<T>
@@ -334,14 +360,15 @@ mod tests {
         }
     }
 
-    impl<T> Listener<T>
+    impl<T> SimpleListener<T>
     where
         T: Clone + Debug + Send + Sync,
     {
-        async fn process(&mut self) -> T {
-            let job = self.rx.recv().await.unwrap();
+        async fn process(actor: SimpleActor<T>, rx: mpsc::Receiver<SimpleJob<T>>) -> T {
+            let mut listener = SimpleListener { actor, rx };
+            let job = listener.rx.recv().await.unwrap();
             let callback = job.call;
-            callback(&mut self.actor).await
+            callback(&mut listener.actor).await
         }
     }
 
@@ -350,9 +377,12 @@ mod tests {
         S::try_test().await;
         let (tx, rx) = mpsc::channel::<SimpleJob<S>>(CHANNEL_SIZE);
         let handle = SimpleHandle { tx };
-        let actor = SimpleActor { inner: S {} };
-        let mut listener = Listener { actor, rx };
+        let (broadcast, _) = broadcast::channel(CHANNEL_SIZE);
+        let actor = SimpleActor { inner: S {}, broadcast };
+
         handle.get().await;
-        listener.process().await;
+        tokio::spawn(SimpleListener::process(actor, rx));
+
+        sleep(Duration::from_millis(200)).await;
     }
 }
