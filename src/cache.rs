@@ -24,7 +24,7 @@ where
         Cache {
             handle: self.handle.clone(),
             inner: self.inner.clone(),
-            rx: self.handle._broadcast.subscribe(),
+            rx: self.handle.subscribe(),
             has_listenend: self.has_listenend.clone(),
         }
     }
@@ -35,7 +35,7 @@ where
     T: Clone + Send + Sync + 'static,
 {
     pub(crate) async fn new(handle: Handle<T>) -> Result<Self, ActorError> {
-        let rx = handle.subscribe().await?;
+        let rx = handle.subscribe();
         let inner = Cache::initialize(&handle).await?;
         Ok(Self {
             handle,

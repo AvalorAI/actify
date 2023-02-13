@@ -55,7 +55,7 @@ mod tests {
     #[tokio::test]
     async fn receive_val_broadcast() {
         let handle = Handle::new();
-        let mut rx = handle.subscribe().await.unwrap();
+        let mut rx = handle.subscribe();
         handle.set(Some("testing!")).await.unwrap();
         assert_eq!(rx.recv().await.unwrap(), Some("testing!"));
     }

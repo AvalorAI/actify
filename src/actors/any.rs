@@ -13,7 +13,7 @@ use crate::{
 #[derive(Debug, Clone)]
 pub struct Handle<T> {
     tx: mpsc::Sender<Job<T>>,
-    pub(crate) _broadcast: broadcast::Sender<T>,
+    _broadcast: broadcast::Sender<T>, // The handle holds a clone of the broadcast transmitter from the actor for easy subscription
 }
 
 impl<T> Handle<T>
@@ -28,16 +28,13 @@ where
         self.tx.capacity()
     }
 
-    pub async fn spawn_throttle<C, F>(&self, client: C, call: fn(&C, F), freq: Frequency) -> Result<()>
+    pub fn spawn_throttle<C, F>(&self, client: C, call: fn(&C, F), freq: Frequency) -> Result<()>
     where
         C: Send + Sync + 'static,
         T: Throttled<F>,
         F: Clone + Send + Sync + 'static,
     {
-        ThrottleBuilder::<C, T, F>::new(client, call, freq)
-            .attach(self.clone())
-            .await?
-            .spawn()?;
+        ThrottleBuilder::<C, T, F>::new(client, call, freq).attach(self.clone()).spawn()?;
         Ok(())
     }
 
@@ -56,9 +53,8 @@ where
         Ok(*res.downcast().expect(WRONG_RESPONSE))
     }
 
-    pub async fn subscribe(&self) -> Result<broadcast::Receiver<T>, ActorError> {
-        let res = self.send_job(FnType::Inner(Box::new(Actor::subscribe)), Box::new(())).await?;
-        Ok(*res.downcast().expect(WRONG_RESPONSE))
+    pub fn subscribe(&self) -> broadcast::Receiver<T> {
+        self._broadcast.subscribe()
     }
 
     /// Eval messages are closures that only apply to a SINGLE TYPE.
@@ -143,10 +139,6 @@ where
         }
         let inner_type = std::any::type_name::<T>();
         log::warn!("Actor of type {inner_type} exited!");
-    }
-
-    fn subscribe(&mut self, _args: Box<dyn Any + Send>) -> Result<Box<dyn Any + Send>, ActorError> {
-        Ok(Box::new(self.broadcast.subscribe()))
     }
 
     fn is_none(&mut self, _args: Box<dyn Any + Send>) -> Result<Box<dyn Any + Send>, ActorError> {

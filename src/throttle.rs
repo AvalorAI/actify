@@ -159,14 +159,13 @@ where
         self
     }
 
-    pub async fn attach(mut self, handle: Handle<T>) -> Result<Self> {
-        // TODO discuss if this expect is acceptable
-        let receiver = handle.subscribe().await?;
+    pub fn attach(mut self, handle: Handle<T>) -> Self {
+        let receiver = handle.subscribe();
         self.val_rx = Some(receiver);
-        Ok(self)
+        self
     }
 
-    pub async fn attach_rx(mut self, rx: broadcast::Receiver<T>) -> Self {
+    pub fn attach_rx(mut self, rx: broadcast::Receiver<T>) -> Self {
         self.val_rx = Some(rx);
         self
     }
@@ -220,8 +219,6 @@ mod tests {
         // Spawn throttle
         ThrottleBuilder::new(counter.clone(), CounterClient::call, Frequency::OnEvent)
             .attach(handle.clone())
-            .await
-            .unwrap()
             .spawn()
             .unwrap();
 
@@ -289,8 +286,6 @@ mod tests {
         // Spawn throttle
         ThrottleBuilder::new(counter.clone(), CounterClient::call, Frequency::OnEventWhen(Duration::from_millis((timer * 0.55) as u64)))
             .attach(handle.clone())
-            .await
-            .unwrap()
             .spawn()
             .unwrap();
 
@@ -325,8 +320,6 @@ mod tests {
         // Spawn throttle
         ThrottleBuilder::new(counter.clone(), CounterClient::call, Frequency::OnEventWhen(Duration::from_millis((timer * 1.5) as u64)))
             .attach(handle.clone())
-            .await
-            .unwrap()
             .spawn()
             .unwrap();
 
