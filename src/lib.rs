@@ -95,7 +95,7 @@
 //! }
 //! ```
 //!
-//! As references cannot be send to the actor, they are forbidden. All types must be owned:
+//! As referenced arguments cannot be send to the actor, they are forbidden. All arguments must be owned:
 //! ```compile_fail
 //! # struct MyActor {}
 //! #[actor_model::actify]

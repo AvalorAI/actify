@@ -192,6 +192,13 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn async_eval_ok_actor() {
+        let handle = Handle::new_from(TestVal {});
+        let res: i32 = handle.async_eval(TestVal::async_calcs, 10).await.unwrap();
+        assert_eq!(res, 11);
+    }
+
+    #[tokio::test]
     async fn eval_cast_resp_err_actor() {
         let handle = Handle::new_from(TestVal {});
         let err = handle.eval::<_, _, String>(TestVal::heavy_calcs, 10).await.unwrap_err();
@@ -213,6 +220,11 @@ mod tests {
 
     impl TestVal {
         fn heavy_calcs(&mut self, args: Box<dyn Any + Send>) -> Result<Box<dyn Any + Send>> {
+            let val = *args.downcast::<i32>().map_err(|_| anyhow!("Downcasting the args went wrong"))?;
+            Ok(Box::new(val + 1))
+        }
+
+        async fn async_calcs(&mut self, args: Box<dyn Any + Send>) -> Result<Box<dyn Any + Send>> {
             let val = *args.downcast::<i32>().map_err(|_| anyhow!("Downcasting the args went wrong"))?;
             Ok(Box::new(val + 1))
         }

@@ -1,5 +1,5 @@
 use anyhow::Result;
-use futures::future::BoxFuture;
+use futures::{future::BoxFuture, Future};
 use std::any::Any;
 use std::fmt;
 use std::fmt::Debug;
@@ -12,10 +12,7 @@ use crate::{
 
 // ------- Clonable handle that can be used to remotely execute a closure on the actor ------- //
 #[derive(Debug, Clone)]
-pub struct Handle<T>
-where
-    T: Clone + Debug + Send + Sync + 'static,
-{
+pub struct Handle<T> {
     tx: mpsc::Sender<Job<T>>,
 }
 
@@ -74,6 +71,22 @@ where
     {
         let response = self.send_job(FnType::Eval(Box::new(eval_fn)), Box::new(args)).await?;
         Ok(*response.downcast::<R>().map_err(|_| ActorError::WrongResponse)?) // Only here is a wrong response propagated, as its part of the API
+    }
+
+    /// Async eval messages are async closures that only apply to a SINGLE TYPE.
+    /// The actor functions apply to either all actors (any) or those enabled through a trait implementation
+    pub async fn async_eval<'a, F, Fut, A, R>(&self, mut _eval_fn: F, _args: A) -> Result<R, ActorError>
+    where
+        F: FnMut(&'a mut T, Box<dyn Any + Send>) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = Result<Box<dyn Any + Send>>> + Send,
+        A: Send + 'a,
+        R: Send + 'a,
+    {
+        // Does not compile
+        // let job =
+        //     FnType::AsyncEval(Box::new(|s: &mut T, args: Box<dyn Any + Send>| Box::pin(async move { eval_fn(s, Box::new(args)).await })));
+
+        unimplemented!()
     }
 }
 
@@ -139,8 +152,9 @@ where
         while let Some(job) = self.rx.recv().await {
             let res = match job.call {
                 FnType::Inner(mut call) => (*call)(&mut self.actor, job.args),
-                FnType::InnerAsync(call) => call(&mut self.actor, job.args).await,
                 FnType::Eval(call) => self.actor.eval(call, job.args),
+                FnType::InnerAsync(mut call) => call(&mut self.actor, job.args).await,
+                FnType::AsyncEval(call) => self.actor.async_eval(call, job.args).await,
             };
 
             if job.respond_to.send(res).is_err() {
@@ -207,6 +221,24 @@ where
         Ok(response)
     }
 
+    #[allow(clippy::type_complexity)]
+    async fn async_eval(
+        &mut self,
+        mut eval_fn: Box<dyn FnMut(&mut T, Box<dyn Any + Send>) -> BoxFuture<Result<Box<dyn Any + Send>>> + Send + Sync>,
+        args: Box<dyn Any + Send>,
+    ) -> Result<Box<dyn Any + Send>, ActorError> {
+        let response = (*eval_fn)(
+            self.inner
+                .as_mut()
+                .ok_or_else(|| ActorError::NoValueSet(std::any::type_name::<T>().to_string()))?,
+            args,
+        )
+        .await
+        .map_err(|e| ActorError::EvalError(e.to_string()))?;
+        self.broadcast();
+        Ok(response)
+    }
+
     pub fn broadcast(&self) {
         // A broadcast error is not propagated, as otherwise a succesful call could produce an independent broadcast error
         if self.broadcast.receiver_count() > 0 {
@@ -230,9 +262,10 @@ struct Job<T> {
 #[allow(missing_debug_implementations)]
 #[allow(clippy::type_complexity)]
 pub enum FnType<T> {
-    Inner(Box<dyn FnMut(&mut Actor<T>, Box<dyn Any + Send>) -> Result<Box<dyn Any + Send>, ActorError> + Send + 'static>),
-    InnerAsync(Box<dyn Fn(&mut Actor<T>, Box<dyn Any + Send>) -> BoxFuture<Result<Box<dyn Any + Send>, ActorError>> + Send + Sync>),
-    Eval(Box<dyn FnMut(&mut T, Box<dyn Any + Send>) -> Result<Box<dyn Any + Send>> + Send + 'static>),
+    Inner(Box<dyn FnMut(&mut Actor<T>, Box<dyn Any + Send>) -> Result<Box<dyn Any + Send>, ActorError> + Send>),
+    Eval(Box<dyn FnMut(&mut T, Box<dyn Any + Send>) -> Result<Box<dyn Any + Send>> + Send>),
+    InnerAsync(Box<dyn FnMut(&mut Actor<T>, Box<dyn Any + Send>) -> BoxFuture<Result<Box<dyn Any + Send>, ActorError>> + Send + Sync>),
+    AsyncEval(Box<dyn FnMut(&mut T, Box<dyn Any + Send>) -> BoxFuture<Result<Box<dyn Any + Send>>> + Send + Sync>),
 }
 
 impl<T> fmt::Debug for Job<T> {
@@ -330,6 +363,21 @@ mod tests {
             };
 
             self.tx.send(job).await.unwrap();
+        }
+
+        async fn eval<'a, F, Fut, A, R>(&self, mut _eval_fn: F)
+        where
+            F: FnMut(&'a mut SimpleActor<T>) -> Fut + Send + Sync + 'static,
+            Fut: Future<Output = T> + Send,
+            T: 'a,
+        {
+            // This function does not compile, as Fn does not implement copy and the eval_fn is moved in the generator
+            // let job = SimpleJob {
+            //     call: Box::new(move |s: &mut SimpleActor<T>| Box::pin(async move { eval_fn(s).await })),
+            // };
+
+            // self.tx.send(job).await.unwrap();
+            unimplemented!()
         }
     }
 
