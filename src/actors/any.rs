@@ -299,7 +299,6 @@ mod tests {
 
     impl S {
         async fn some_async_call(&mut self) -> bool {
-            println!("some_async_call");
             true
         }
 
@@ -403,7 +402,6 @@ mod tests {
     {
         async fn get(&mut self) -> T {
             let inner = self.inner.clone();
-            println!("inner {:?}", inner);
             inner
         }
     }
