@@ -35,22 +35,30 @@ where
         T: Throttled<F>,
         F: Clone + Send + Sync + 'static,
     {
-        ThrottleBuilder::<C, T, F>::new(client, call, freq).attach(self.clone()).spawn()?;
+        ThrottleBuilder::<C, T, F>::new(client, call, freq)
+            .attach(self.clone())
+            .spawn()?;
         Ok(())
     }
 
     pub async fn get(&self) -> Result<T, ActorError> {
-        let res = self.send_job(FnType::Inner(Box::new(Actor::get)), Box::new(())).await?;
+        let res = self
+            .send_job(FnType::Inner(Box::new(Actor::get)), Box::new(()))
+            .await?;
         Ok(*res.downcast().expect(WRONG_RESPONSE))
     }
 
     pub async fn is_none(&self) -> Result<bool, ActorError> {
-        let res = self.send_job(FnType::Inner(Box::new(Actor::is_none)), Box::new(())).await?;
+        let res = self
+            .send_job(FnType::Inner(Box::new(Actor::is_none)), Box::new(()))
+            .await?;
         Ok(*res.downcast().expect(WRONG_RESPONSE))
     }
 
     pub async fn set(&self, val: T) -> Result<(), ActorError> {
-        let res = self.send_job(FnType::Inner(Box::new(Actor::set)), Box::new(val)).await?;
+        let res = self
+            .send_job(FnType::Inner(Box::new(Actor::set)), Box::new(val))
+            .await?;
         Ok(*res.downcast().expect(WRONG_RESPONSE))
     }
 
@@ -66,13 +74,21 @@ where
         A: Send + 'static,
         R: Send + 'static,
     {
-        let response = self.send_job(FnType::Eval(Box::new(eval_fn)), Box::new(args)).await?;
-        Ok(*response.downcast::<R>().map_err(|_| ActorError::WrongResponse)?) // Only here is a wrong response propagated, as its part of the API
+        let response = self
+            .send_job(FnType::Eval(Box::new(eval_fn)), Box::new(args))
+            .await?;
+        Ok(*response
+            .downcast::<R>()
+            .map_err(|_| ActorError::WrongResponse)?) // Only here is a wrong response propagated, as its part of the API
     }
 
     /// Async eval messages are async closures that only apply to a SINGLE TYPE.
     /// The actor functions apply to either all actors (any) or those enabled through a trait implementation
-    pub async fn async_eval<'a, F, Fut, A, R>(&self, mut _eval_fn: F, _args: A) -> Result<R, ActorError>
+    pub async fn async_eval<'a, F, Fut, A, R>(
+        &self,
+        mut _eval_fn: F,
+        _args: A,
+    ) -> Result<R, ActorError>
     where
         F: FnMut(&'a mut T, Box<dyn Any + Send>) -> Fut + Send + Sync + 'static,
         Fut: Future<Output = Result<Box<dyn Any + Send>>> + Send,
@@ -106,12 +122,23 @@ where
         let actor = Actor::new(broadcast.clone(), init);
         let listener = Listener::new(rx, actor);
         tokio::spawn(Listener::serve(listener));
-        Handle { tx, _broadcast: broadcast }
+        Handle {
+            tx,
+            _broadcast: broadcast,
+        }
     }
 
-    pub async fn send_job(&self, call: FnType<T>, args: Box<dyn Any + Send>) -> Result<Box<dyn Any + Send>, ActorError> {
+    pub async fn send_job(
+        &self,
+        call: FnType<T>,
+        args: Box<dyn Any + Send>,
+    ) -> Result<Box<dyn Any + Send>, ActorError> {
         let (respond_to, get_result) = oneshot::channel();
-        let job = Job { call, args, respond_to };
+        let job = Job {
+            call,
+            args,
+            respond_to,
+        };
         self.tx.send(job).await?;
         get_result.await?
         // TODO add a timeout on this result await
@@ -155,7 +182,10 @@ where
             };
 
             if job.respond_to.send(res).is_err() {
-                log::warn!("Actor of type {} failed to respond as the receiver is dropped", std::any::type_name::<T>());
+                log::warn!(
+                    "Actor of type {} failed to respond as the receiver is dropped",
+                    std::any::type_name::<T>()
+                );
             }
         }
         let inner_type = std::any::type_name::<T>();
@@ -200,7 +230,9 @@ where
     #[allow(clippy::type_complexity)]
     fn eval(
         &mut self,
-        mut eval_fn: Box<dyn FnMut(&mut T, Box<dyn Any + Send>) -> Result<Box<dyn Any + Send>> + Send + 'static>,
+        mut eval_fn: Box<
+            dyn FnMut(&mut T, Box<dyn Any + Send>) -> Result<Box<dyn Any + Send>> + Send + 'static,
+        >,
         args: Box<dyn Any + Send>,
     ) -> Result<Box<dyn Any + Send>, ActorError> {
         let response = (*eval_fn)(
@@ -217,7 +249,11 @@ where
     #[allow(clippy::type_complexity)]
     async fn async_eval(
         &mut self,
-        mut eval_fn: Box<dyn FnMut(&mut T, Box<dyn Any + Send>) -> BoxFuture<Result<Box<dyn Any + Send>>> + Send + Sync>,
+        mut eval_fn: Box<
+            dyn FnMut(&mut T, Box<dyn Any + Send>) -> BoxFuture<Result<Box<dyn Any + Send>>>
+                + Send
+                + Sync,
+        >,
         args: Box<dyn Any + Send>,
     ) -> Result<Box<dyn Any + Send>, ActorError> {
         let response = (*eval_fn)(
@@ -255,10 +291,30 @@ struct Job<T> {
 #[allow(missing_debug_implementations)]
 #[allow(clippy::type_complexity)]
 pub enum FnType<T> {
-    Inner(Box<dyn FnMut(&mut Actor<T>, Box<dyn Any + Send>) -> Result<Box<dyn Any + Send>, ActorError> + Send>),
+    Inner(
+        Box<
+            dyn FnMut(&mut Actor<T>, Box<dyn Any + Send>) -> Result<Box<dyn Any + Send>, ActorError>
+                + Send,
+        >,
+    ),
     Eval(Box<dyn FnMut(&mut T, Box<dyn Any + Send>) -> Result<Box<dyn Any + Send>> + Send>),
-    InnerAsync(Box<dyn FnMut(&mut Actor<T>, Box<dyn Any + Send>) -> BoxFuture<Result<Box<dyn Any + Send>, ActorError>> + Send + Sync>),
-    AsyncEval(Box<dyn FnMut(&mut T, Box<dyn Any + Send>) -> BoxFuture<Result<Box<dyn Any + Send>>> + Send + Sync>),
+    InnerAsync(
+        Box<
+            dyn FnMut(
+                    &mut Actor<T>,
+                    Box<dyn Any + Send>,
+                ) -> BoxFuture<Result<Box<dyn Any + Send>, ActorError>>
+                + Send
+                + Sync,
+        >,
+    ),
+    AsyncEval(
+        Box<
+            dyn FnMut(&mut T, Box<dyn Any + Send>) -> BoxFuture<Result<Box<dyn Any + Send>>>
+                + Send
+                + Sync,
+        >,
+    ),
 }
 
 impl<T> fmt::Debug for Job<T> {
@@ -286,7 +342,9 @@ mod tests {
 
     impl fmt::Debug for ExampleJob {
         fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-            f.debug_struct("ExampleJob").field("call", &"some_call".to_string()).finish()
+            f.debug_struct("ExampleJob")
+                .field("call", &"some_call".to_string())
+                .finish()
         }
     }
 
@@ -297,7 +355,10 @@ mod tests {
 
         async fn try_test() {
             basic_executer(|s: &mut S| Box::pin(async move { S::some_async_call(s).await })).await;
-            dynamic_basic_executer(Box::new(|s: &mut S| Box::pin(async move { S::some_async_call(s).await }))).await;
+            dynamic_basic_executer(Box::new(|s: &mut S| {
+                Box::pin(async move { S::some_async_call(s).await })
+            }))
+            .await;
 
             let job = ExampleJob {
                 call: Box::new(|s: &mut S| Box::pin(async move { S::some_async_call(s).await })),
@@ -315,7 +376,9 @@ mod tests {
         (callback)(&mut s).await
     }
 
-    async fn dynamic_basic_executer(callback: Box<dyn for<'a> Fn(&'a mut S) -> BoxFuture<bool>>) -> bool {
+    async fn dynamic_basic_executer(
+        callback: Box<dyn for<'a> Fn(&'a mut S) -> BoxFuture<bool>>,
+    ) -> bool {
         let mut s = S {};
         callback(&mut s).await
     }
@@ -351,7 +414,9 @@ mod tests {
     {
         async fn get(&self) {
             let job = SimpleJob {
-                call: Box::new(|s: &mut SimpleActor<T>| Box::pin(async move { SimpleActor::<T>::get(s).await })),
+                call: Box::new(|s: &mut SimpleActor<T>| {
+                    Box::pin(async move { SimpleActor::<T>::get(s).await })
+                }),
             };
 
             self.tx.send(job).await.unwrap();
@@ -417,7 +482,10 @@ mod tests {
         let (tx, rx) = mpsc::channel::<SimpleJob<S>>(CHANNEL_SIZE);
         let handle = SimpleHandle { tx };
         let (broadcast, _) = broadcast::channel(CHANNEL_SIZE);
-        let actor = SimpleActor { inner: S {}, broadcast };
+        let actor = SimpleActor {
+            inner: S {},
+            broadcast,
+        };
 
         handle.get().await;
         tokio::spawn(SimpleListener::process(actor, rx));

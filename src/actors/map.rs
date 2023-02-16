@@ -31,19 +31,26 @@ where
     V: Clone + Debug + Send + Sync + 'static,
 {
     async fn get_key(&self, key: K) -> Result<Option<V>, ActorError> {
-        let res = self.send_job(FnType::Inner(Box::new(MapActor::get_key)), Box::new(key)).await?;
+        let res = self
+            .send_job(FnType::Inner(Box::new(MapActor::get_key)), Box::new(key))
+            .await?;
         Ok(*res.downcast().expect(WRONG_RESPONSE))
     }
 
     async fn insert(&self, key: K, val: V) -> Result<Option<V>, ActorError> {
         let res = self
-            .send_job(FnType::Inner(Box::new(MapActor::insert)), Box::new((key, val)))
+            .send_job(
+                FnType::Inner(Box::new(MapActor::insert)),
+                Box::new((key, val)),
+            )
             .await?;
         Ok(*res.downcast().expect(WRONG_RESPONSE))
     }
 
     async fn is_empty(&self) -> Result<bool, ActorError> {
-        let res = self.send_job(FnType::Inner(Box::new(MapActor::is_empty)), Box::new(())).await?;
+        let res = self
+            .send_job(FnType::Inner(Box::new(MapActor::is_empty)), Box::new(()))
+            .await?;
         Ok(*res.downcast().expect(WRONG_RESPONSE))
     }
 }
@@ -66,7 +73,9 @@ where
         let res = self
             .inner
             .as_mut()
-            .ok_or_else(|| ActorError::NoValueSet(std::any::type_name::<HashMap<K, V>>().to_string()))?
+            .ok_or_else(|| {
+                ActorError::NoValueSet(std::any::type_name::<HashMap<K, V>>().to_string())
+            })?
             .get(&val)
             .cloned();
         Ok(Box::new(res))
@@ -77,7 +86,9 @@ where
         let res = self
             .inner
             .as_mut()
-            .ok_or_else(|| ActorError::NoValueSet(std::any::type_name::<HashMap<K, V>>().to_string()))?
+            .ok_or_else(|| {
+                ActorError::NoValueSet(std::any::type_name::<HashMap<K, V>>().to_string())
+            })?
             .insert(key, val);
         self.broadcast();
         Ok(Box::new(res))

@@ -257,14 +257,22 @@ mod tests {
     {
         async fn bar(&self, test: usize, t: F) -> Result<f32, ActorError> {
             let res = self
-                .send_job(FnType::Inner(Box::new(ExampleTestStructActor::<F>::_bar)), Box::new((test, t)))
+                .send_job(
+                    FnType::Inner(Box::new(ExampleTestStructActor::<F>::_bar)),
+                    Box::new((test, t)),
+                )
                 .await?;
-            Ok(*res.downcast().expect("Downcasting failed due to an error in the Actify macro"))
+            Ok(*res
+                .downcast()
+                .expect("Downcasting failed due to an error in the Actify macro"))
         }
     }
 
     trait ExampleTestStructActor<F> {
-        fn _bar(&mut self, args: Box<dyn std::any::Any + Send>) -> Result<Box<dyn std::any::Any + Send>, ActorError>;
+        fn _bar(
+            &mut self,
+            args: Box<dyn std::any::Any + Send>,
+        ) -> Result<Box<dyn std::any::Any + Send>, ActorError>;
     }
 
     #[allow(unused_parens)]
@@ -273,13 +281,20 @@ mod tests {
         T: Clone + Debug + Send + Sync + 'static,
         F: Debug + Send + Sync + 'static,
     {
-        fn _bar(&mut self, args: Box<dyn std::any::Any + Send>) -> Result<Box<dyn std::any::Any + Send>, ActorError> {
-            let (test, f): (usize, F) = *args.downcast().expect("Downcasting failed due to an error in the Actify macro");
+        fn _bar(
+            &mut self,
+            args: Box<dyn std::any::Any + Send>,
+        ) -> Result<Box<dyn std::any::Any + Send>, ActorError> {
+            let (test, f): (usize, F) = *args
+                .downcast()
+                .expect("Downcasting failed due to an error in the Actify macro");
 
             let result: f32 = self
                 .inner
                 .as_mut()
-                .ok_or(ActorError::NoValueSet(std::any::type_name::<TestStruct<T>>().to_string()))?
+                .ok_or(ActorError::NoValueSet(
+                    std::any::type_name::<TestStruct<T>>().to_string(),
+                ))?
                 .bar(test, f);
 
             self.broadcast();

@@ -27,17 +27,23 @@ where
     I: Clone + Debug + Send + Sync + 'static,
 {
     async fn push(&self, val: I) -> Result<(), ActorError> {
-        let res = self.send_job(FnType::Inner(Box::new(VecActor::push)), Box::new(val)).await?;
+        let res = self
+            .send_job(FnType::Inner(Box::new(VecActor::push)), Box::new(val))
+            .await?;
         Ok(*res.downcast().expect(WRONG_RESPONSE))
     }
 
     async fn is_empty(&self) -> Result<bool, ActorError> {
-        let res = self.send_job(FnType::Inner(Box::new(VecActor::is_empty)), Box::new(())).await?;
+        let res = self
+            .send_job(FnType::Inner(Box::new(VecActor::is_empty)), Box::new(()))
+            .await?;
         Ok(*res.downcast().expect(WRONG_RESPONSE))
     }
 
     async fn drain(&self) -> Result<Vec<I>, ActorError> {
-        let res = self.send_job(FnType::Inner(Box::new(VecActor::drain)), Box::new(())).await?;
+        let res = self
+            .send_job(FnType::Inner(Box::new(VecActor::drain)), Box::new(()))
+            .await?;
         Ok(*res.downcast().expect(WRONG_RESPONSE))
     }
 }

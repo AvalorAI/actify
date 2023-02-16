@@ -2,8 +2,8 @@ use proc_macro::TokenStream;
 use proc_macro2::Span;
 use quote::{quote, quote_spanned};
 use syn::{
-    punctuated::Punctuated, spanned::Spanned, token::Comma, FnArg, Ident, ImplItem, ImplItemMethod, ItemImpl, PatIdent, PathSegment,
-    ReturnType, TraitItemMethod, Type,
+    punctuated::Punctuated, spanned::Spanned, token::Comma, FnArg, Ident, ImplItem, ImplItemMethod,
+    ItemImpl, PatIdent, PathSegment, ReturnType, TraitItemMethod, Type,
 };
 
 // TODO only keep feature flag attributes in the trait definitions
@@ -31,7 +31,9 @@ pub fn actify(_attr: TokenStream, item: TokenStream) -> TokenStream {
 /// The body consists of two traits and its implementations:
 /// The handle: code the user interacts with
 /// The actor: code that executes the user-defined method in the actified impl block
-fn parse_macro(impl_block: &mut ItemImpl) -> Result<proc_macro2::TokenStream, proc_macro2::TokenStream> {
+fn parse_macro(
+    impl_block: &mut ItemImpl,
+) -> Result<proc_macro2::TokenStream, proc_macro2::TokenStream> {
     let impl_type = get_impl_type(impl_block)?;
 
     impl_block.generics.make_where_clause(); // Ensures the unwraps are safe
@@ -45,11 +47,13 @@ fn parse_macro(impl_block: &mut ItemImpl) -> Result<proc_macro2::TokenStream, pr
 
     let handle_trait = generate_handle_trait(impl_block, &handle_trait_ident, &generated_methods)?;
 
-    let handle_trait_impl = generate_handle_trait_impl(impl_block, &handle_trait_ident, &generated_methods)?;
+    let handle_trait_impl =
+        generate_handle_trait_impl(impl_block, &handle_trait_ident, &generated_methods)?;
 
     let actor_trait = generate_actor_trait(&actor_trait_ident, &generated_methods)?;
 
-    let actor_trait_impl = generate_actor_trait_impl(impl_block, &actor_trait_ident, &generated_methods)?;
+    let actor_trait_impl =
+        generate_actor_trait_impl(impl_block, &actor_trait_ident, &generated_methods)?;
 
     let result = quote! {
 
@@ -169,7 +173,10 @@ fn generate_actor_trait_method(
     method: &ImplItemMethod,
     attributes: &proc_macro2::TokenStream,
 ) -> Result<proc_macro2::TokenStream, proc_macro2::TokenStream> {
-    let actor_method_ident = syn::Ident::new(&format!("_{}", &method.sig.ident.to_string()), Span::call_site());
+    let actor_method_ident = syn::Ident::new(
+        &format!("_{}", &method.sig.ident.to_string()),
+        Span::call_site(),
+    );
 
     let result = quote! {
         #attributes
@@ -261,7 +268,10 @@ impl GeneratedMethods {
 
     /// A utility function to multiple generated method structs to a single tokenstream
     fn get_handle_trait_impl_methods(methods: &Vec<GeneratedMethods>) -> proc_macro2::TokenStream {
-        let handle_trait_impl_methods = methods.iter().map(|m| m.handle_trait_impl.clone()).collect();
+        let handle_trait_impl_methods = methods
+            .iter()
+            .map(|m| m.handle_trait_impl.clone())
+            .collect();
         GeneratedMethods::flatten_token_stream(handle_trait_impl_methods)
     }
 
@@ -278,7 +288,9 @@ impl GeneratedMethods {
     }
 
     /// A utility function that flattens for instance a vector of trait impl methods to a single token stream
-    fn flatten_token_stream(token_streams: Vec<proc_macro2::TokenStream>) -> proc_macro2::TokenStream {
+    fn flatten_token_stream(
+        token_streams: Vec<proc_macro2::TokenStream>,
+    ) -> proc_macro2::TokenStream {
         let mut flattened_stream = proc_macro2::TokenStream::new();
         for stream in token_streams {
             flattened_stream.extend(stream)
@@ -288,11 +300,18 @@ impl GeneratedMethods {
 }
 
 // Generates and collects the derived methods of each original method in the impl block
-fn generate_all_methods(impl_block: &ItemImpl, actor_trait_ident: &Ident) -> Result<Vec<GeneratedMethods>, proc_macro2::TokenStream> {
+fn generate_all_methods(
+    impl_block: &ItemImpl,
+    actor_trait_ident: &Ident,
+) -> Result<Vec<GeneratedMethods>, proc_macro2::TokenStream> {
     let mut methods = vec![];
     for item in &impl_block.items {
         match item {
-            ImplItem::Method(original_method) => methods.push(generate_methods(&impl_block.self_ty, original_method, actor_trait_ident)?),
+            ImplItem::Method(original_method) => methods.push(generate_methods(
+                &impl_block.self_ty,
+                original_method,
+                actor_trait_ident,
+            )?),
             _ => {}
         }
     }
@@ -312,15 +331,22 @@ fn generate_methods(
     }
     let flattenend_attributes = GeneratedMethods::flatten_token_stream(parsed_attributes);
 
-    let actor_trait_signature = generate_actor_trait_method(original_method, &flattenend_attributes)?;
-    let handle_trait_signature = generate_handle_trait_method(original_method, &flattenend_attributes)?;
+    let actor_trait_signature =
+        generate_actor_trait_method(original_method, &flattenend_attributes)?;
+    let handle_trait_signature =
+        generate_handle_trait_method(original_method, &flattenend_attributes)?;
 
-    let parsed_actor_signature =
-        syn::parse(actor_trait_signature.clone().into()).expect("Parsing the actor trait in the Actify macro failed");
-    let parsed_handle_signature =
-        syn::parse(handle_trait_signature.clone().into()).expect("Parsing the handle trait in the Actify macro failed");
+    let parsed_actor_signature = syn::parse(actor_trait_signature.clone().into())
+        .expect("Parsing the actor trait in the Actify macro failed");
+    let parsed_handle_signature = syn::parse(handle_trait_signature.clone().into())
+        .expect("Parsing the handle trait in the Actify macro failed");
 
-    let actor_method_impl = generate_actor_trait_method_impl(impl_type, &parsed_actor_signature, original_method, &flattenend_attributes)?;
+    let actor_method_impl = generate_actor_trait_method_impl(
+        impl_type,
+        &parsed_actor_signature,
+        original_method,
+        &flattenend_attributes,
+    )?;
     let handle_method_impl = generate_handle_trait_method_impl(
         impl_type,
         &parsed_handle_signature,
@@ -427,7 +453,8 @@ fn get_impl_type(impl_block: &ItemImpl) -> Result<String, proc_macro2::TokenStre
 /// TODO is allowing only the Ident pattern to prohibitive?
 fn transform_args(
     args: &Punctuated<FnArg, Comma>,
-) -> Result<(Punctuated<PatIdent, Comma>, Punctuated<PathSegment, Comma>), proc_macro2::TokenStream> {
+) -> Result<(Punctuated<PatIdent, Comma>, Punctuated<PathSegment, Comma>), proc_macro2::TokenStream>
+{
     // Add all idents to a Punctuated => param1, param2, ...
     let mut input_arg_names: Punctuated<PatIdent, Comma> = Punctuated::new();
     let mut input_arg_types: Punctuated<PathSegment, Comma> = Punctuated::new();
@@ -443,7 +470,11 @@ fn transform_args(
                         })
                     }
                     Type::Path(type_path) => {
-                        let var_type = type_path.path.segments.last().expect("Actify macro expected a valid type");
+                        let var_type = type_path
+                            .path
+                            .segments
+                            .last()
+                            .expect("Actify macro expected a valid type");
                         input_arg_names.push(pat_ident.clone());
                         input_arg_types.push(var_type.clone());
                     }

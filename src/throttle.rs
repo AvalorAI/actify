@@ -178,11 +178,15 @@ where
 
     fn build(self) -> Result<Throttle<C, T, F>> {
         if self.cache.is_none() && self.val_rx.is_none() {
-            return Err(anyhow!("A throttle should be initialized, listen to an update or both"));
+            return Err(anyhow!(
+                "A throttle should be initialized, listen to an update or both"
+            ));
         }
 
         if matches!(self.frequency, Frequency::OnEvent) && self.val_rx.is_none() {
-            return Err(anyhow!("A throttle cannot fire on events if it does not listen to them"));
+            return Err(anyhow!(
+                "A throttle cannot fire on events if it does not listen to them"
+            ));
         }
 
         Ok(Throttle {
@@ -247,10 +251,14 @@ mod tests {
         };
 
         // Spawn throttle
-        ThrottleBuilder::new(counter.clone(), CounterClient::call, Frequency::Interval(Duration::from_millis(timer as u64)))
-            .init(1)
-            .spawn()
-            .unwrap();
+        ThrottleBuilder::new(
+            counter.clone(),
+            CounterClient::call,
+            Frequency::Interval(Duration::from_millis(timer as u64)),
+        )
+        .init(1)
+        .spawn()
+        .unwrap();
 
         for _ in 0..5 {
             interval.tick().await; // Should wait up to exactly 200ms
@@ -284,10 +292,14 @@ mod tests {
         };
 
         // Spawn throttle
-        ThrottleBuilder::new(counter.clone(), CounterClient::call, Frequency::OnEventWhen(Duration::from_millis((timer * 0.55) as u64)))
-            .attach(handle.clone())
-            .spawn()
-            .unwrap();
+        ThrottleBuilder::new(
+            counter.clone(),
+            CounterClient::call,
+            Frequency::OnEventWhen(Duration::from_millis((timer * 0.55) as u64)),
+        )
+        .attach(handle.clone())
+        .spawn()
+        .unwrap();
 
         interval.tick().await; // Should wait up to exactly 200ms
         handle.set(2).await.unwrap(); // Update handle, firing event
@@ -318,10 +330,14 @@ mod tests {
         };
 
         // Spawn throttle
-        ThrottleBuilder::new(counter.clone(), CounterClient::call, Frequency::OnEventWhen(Duration::from_millis((timer * 1.5) as u64)))
-            .attach(handle.clone())
-            .spawn()
-            .unwrap();
+        ThrottleBuilder::new(
+            counter.clone(),
+            CounterClient::call,
+            Frequency::OnEventWhen(Duration::from_millis((timer * 1.5) as u64)),
+        )
+        .attach(handle.clone())
+        .spawn()
+        .unwrap();
 
         interval.tick().await; // Should wait up to exactly 200ms
         handle.set(2).await.unwrap(); // Update handle, firing event
@@ -353,21 +369,33 @@ mod tests {
     #[tokio::test]
     async fn test_throttle_parsing() {
         // Parsing to self should succeed
-        ThrottleBuilder::new(DummyClient {}, DummyClient::call_a, Frequency::Interval(Duration::from_millis(100)))
-            .init(A {})
-            .build()
-            .unwrap();
+        ThrottleBuilder::new(
+            DummyClient {},
+            DummyClient::call_a,
+            Frequency::Interval(Duration::from_millis(100)),
+        )
+        .init(A {})
+        .build()
+        .unwrap();
 
         // Parsing to either B or C should be infered by the compiler
-        ThrottleBuilder::new(DummyClient {}, DummyClient::call_b, Frequency::Interval(Duration::from_millis(100)))
-            .init(A {})
-            .build()
-            .unwrap();
+        ThrottleBuilder::new(
+            DummyClient {},
+            DummyClient::call_b,
+            Frequency::Interval(Duration::from_millis(100)),
+        )
+        .init(A {})
+        .build()
+        .unwrap();
 
-        ThrottleBuilder::new(DummyClient {}, DummyClient::call_c, Frequency::Interval(Duration::from_millis(100)))
-            .init(A {})
-            .build()
-            .unwrap();
+        ThrottleBuilder::new(
+            DummyClient {},
+            DummyClient::call_c,
+            Frequency::Interval(Duration::from_millis(100)),
+        )
+        .init(A {})
+        .build()
+        .unwrap();
     }
 
     #[derive(Debug, Clone)]
