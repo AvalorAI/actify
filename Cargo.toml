@@ -14,6 +14,7 @@ tonic = "0.8"
 log = "0.4"
 env_logger = "0.10"
 actify-macros = { path = "actify-macros" }
+futures = "0.3.26"
 
 [features]
 default = []

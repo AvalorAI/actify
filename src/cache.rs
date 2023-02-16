@@ -18,7 +18,7 @@ pub struct Cache<T> {
 
 impl<T> Clone for Cache<T>
 where
-    T: Clone + Send + Sync + 'static,
+    T: Clone + Debug + Send + Sync + 'static,
 {
     fn clone(&self) -> Self {
         Cache {
@@ -32,7 +32,7 @@ where
 
 impl<T> Cache<T>
 where
-    T: Clone + Send + Sync + 'static,
+    T: Clone + Debug + Send + Sync + 'static,
 {
     pub(crate) async fn new(handle: Handle<T>) -> Result<Self, ActorError> {
         let rx = handle.subscribe();

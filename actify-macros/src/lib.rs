@@ -6,6 +6,10 @@ use syn::{
     ReturnType, TraitItemMethod, Type,
 };
 
+// TODO only keep feature flag attributes in the trait definitions
+// TODO use exhaustive patterns
+// TODO add support for generics in method arguments (collect all generics over the methods, add them to the trait, check trait bounds!)
+
 /// The actify macro expands an impl block of a rust struct to support usage in an actor model.
 /// Effectively, this macro allows to remotely call an actor method through a handle.
 /// By using traits, the methods on the handle have the same signatures, so that type checking is enforced
@@ -39,7 +43,7 @@ fn parse_macro(impl_block: &mut ItemImpl) -> Result<proc_macro2::TokenStream, pr
 
     let generated_methods = generate_all_methods(impl_block, &actor_trait_ident)?;
 
-    let handle_trait = generate_handle_trait(&handle_trait_ident, &generated_methods)?;
+    let handle_trait = generate_handle_trait(impl_block, &handle_trait_ident, &generated_methods)?;
 
     let handle_trait_impl = generate_handle_trait_impl(impl_block, &handle_trait_ident, &generated_methods)?;
 
@@ -76,6 +80,7 @@ fn generate_actor_trait_impl(
     let where_clause = impl_block.generics.where_clause.as_ref().unwrap();
     let result = quote! {
         #[allow(unused_parens)]
+        #[actor_model::async_trait]
         impl #generics #actor_trait for actor_model::Actor<#impl_type> #where_clause
         {
             #methods
@@ -105,13 +110,19 @@ fn generate_actor_trait_method_impl(
         ReturnType::Default => &parsed_unit_type,
     };
 
+    let awaiter = if original_method.sig.asyncness.is_some() {
+        Some(quote! { .await })
+    } else {
+        None
+    };
+
     // The generated method impls downcast the sent arguments originating from the handle back to its original types
     // Then, the arguments are used to call the method on the inner type held by the actor.
     // Optionally, the new actor value is broadcasted to all subscribed listeners
     // Lastly, the result is boxed and sent back to the calling handle
     let result = quote! {
         #attributes
-        fn #actor_method_ident(&mut self, args: Box<dyn std::any::Any + Send>) -> Result<Box<dyn std::any::Any + Send>, actor_model::ActorError> {
+        async fn #actor_method_ident(&mut self, args: Box<dyn std::any::Any + Send>) -> Result<Box<dyn std::any::Any + Send>, actor_model::ActorError> {
             let (#input_arg_names): (#input_arg_types) = *args
             .downcast()
             .expect("Downcasting failed due to an error in the Actify macro");
@@ -122,7 +133,7 @@ fn generate_actor_trait_method_impl(
             .ok_or(actor_model::ActorError::NoValueSet(
                 std::any::type_name::<#impl_type>().to_string(),
             ))?.
-            #fn_ident(#input_arg_names);
+            #fn_ident(#input_arg_names)#awaiter; // if this is async, await it, else do not
 
         self.broadcast(); // TODO make this optional!
 
@@ -141,6 +152,7 @@ fn generate_actor_trait(
     let methods = GeneratedMethods::get_actor_trait_methods(methods);
 
     let result = quote! {
+        #[actor_model::async_trait]
         trait #actor_trait_ident
         {
             #methods
@@ -161,7 +173,7 @@ fn generate_actor_trait_method(
 
     let result = quote! {
         #attributes
-        fn #actor_method_ident(&mut self, args: Box<dyn std::any::Any + Send>) -> Result<Box<dyn std::any::Any + Send>, actor_model::ActorError>;
+        async fn #actor_method_ident(&mut self, args: Box<dyn std::any::Any + Send>) -> Result<Box<dyn std::any::Any + Send>, actor_model::ActorError>;
     };
 
     Ok(result)
@@ -182,7 +194,7 @@ fn generate_handle_trait_impl(
 
     let result = quote! {
         #[actor_model::async_trait]
-        impl #generics #handle_trait for actor_model::Handle<#impl_type> #where_clause
+        impl #generics #handle_trait #generics for actor_model::Handle<#impl_type> #where_clause
         {
             #methods
         }
@@ -196,6 +208,7 @@ fn generate_handle_trait_impl(
 /// 2. sending a job to the actor with the appropriate method that needs to be executed
 /// 3. downcasting the return value to the original type
 fn generate_handle_trait_method_impl(
+    impl_type: &Type,
     method: &TraitItemMethod,
     actor_trait_ident: &Ident,
     actor_method: &TraitItemMethod,
@@ -211,7 +224,11 @@ fn generate_handle_trait_method_impl(
         #signature {
             let res = self
             .send_job(
-                actor_model::FnType::Inner(Box::new(#actor_trait_ident::#actor_method_name)),
+                actor_model::FnType::InnerAsync(
+                    Box::new(
+                        |s: &mut actor_model::Actor<#impl_type>, args: Box<dyn std::any::Any + Send>|
+                        Box::pin(async move { #actor_trait_ident::#actor_method_name(s, args).await }))
+                    ),
                 Box::new((#input_arg_names)),
             )
             .await?;
@@ -304,8 +321,13 @@ fn generate_methods(
         syn::parse(handle_trait_signature.clone().into()).expect("Parsing the handle trait in the Actify macro failed");
 
     let actor_method_impl = generate_actor_trait_method_impl(impl_type, &parsed_actor_signature, original_method, &flattenend_attributes)?;
-    let handle_method_impl =
-        generate_handle_trait_method_impl(&parsed_handle_signature, actor_trait_ident, &parsed_actor_signature, &flattenend_attributes)?;
+    let handle_method_impl = generate_handle_trait_method_impl(
+        impl_type,
+        &parsed_handle_signature,
+        actor_trait_ident,
+        &parsed_actor_signature,
+        &flattenend_attributes,
+    )?;
 
     Ok(GeneratedMethods {
         handle_trait: handle_trait_signature,
@@ -317,14 +339,18 @@ fn generate_methods(
 
 /// This function creates a trait for the Handle, derived from the impl type.
 fn generate_handle_trait(
+    impl_block: &ItemImpl,
     handle_trait_ident: &Ident,
     methods: &Vec<GeneratedMethods>,
 ) -> Result<proc_macro2::TokenStream, proc_macro2::TokenStream> {
     let methods = GeneratedMethods::get_handle_trait_methods(methods);
 
+    let generics = &impl_block.generics;
+    let where_clause = impl_block.generics.where_clause.as_ref().unwrap();
+
     let result = quote! {
         #[actor_model::async_trait]
-        pub trait #handle_trait_ident
+        pub trait #handle_trait_ident #generics #where_clause
         {
             #methods
         }

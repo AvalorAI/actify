@@ -141,7 +141,7 @@ impl<C, T, F> fmt::Debug for ThrottleBuilder<C, T, F> {
 impl<C, T, F> ThrottleBuilder<C, T, F>
 where
     C: Send + Sync + 'static,
-    T: Clone + Throttled<F> + Send + Sync + 'static,
+    T: Clone + Debug + Throttled<F> + Send + Sync + 'static,
     F: Clone + Send + Sync + 'static,
 {
     pub fn new(client: C, call: fn(&C, F), freq: Frequency) -> ThrottleBuilder<C, T, F> {

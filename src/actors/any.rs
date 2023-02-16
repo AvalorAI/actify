@@ -1,4 +1,5 @@
 use anyhow::Result;
+use futures::{future::BoxFuture, Future};
 use std::any::Any;
 use std::fmt;
 use std::fmt::Debug;
@@ -18,7 +19,7 @@ pub struct Handle<T> {
 
 impl<T> Handle<T>
 where
-    T: Clone + Send + Sync + 'static,
+    T: Clone + Debug + Send + Sync + 'static,
 {
     pub async fn create_cache(&self) -> Result<Cache<T>, ActorError> {
         Cache::new(self.clone()).await
@@ -68,12 +69,28 @@ where
         let response = self.send_job(FnType::Eval(Box::new(eval_fn)), Box::new(args)).await?;
         Ok(*response.downcast::<R>().map_err(|_| ActorError::WrongResponse)?) // Only here is a wrong response propagated, as its part of the API
     }
+
+    /// Async eval messages are async closures that only apply to a SINGLE TYPE.
+    /// The actor functions apply to either all actors (any) or those enabled through a trait implementation
+    pub async fn async_eval<'a, F, Fut, A, R>(&self, mut _eval_fn: F, _args: A) -> Result<R, ActorError>
+    where
+        F: FnMut(&'a mut T, Box<dyn Any + Send>) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = Result<Box<dyn Any + Send>>> + Send,
+        A: Send + 'a,
+        R: Send + 'a,
+    {
+        // Does not compile
+        // let job =
+        //     FnType::AsyncEval(Box::new(|s: &mut T, args: Box<dyn Any + Send>| Box::pin(async move { eval_fn(s, Box::new(args)).await })));
+
+        unimplemented!()
+    }
 }
 
 // ------- Seperate implementation of the general functions for the base handle ------- //
 impl<T> Handle<T>
 where
-    T: Clone + Send + Sync + 'static,
+    T: Clone + Debug + Send + Sync + 'static,
 {
     pub fn new() -> Handle<T> {
         Self::_new(None)
@@ -86,8 +103,9 @@ where
     fn _new(init: Option<T>) -> Handle<T> {
         let (tx, rx) = mpsc::channel(CHANNEL_SIZE);
         let (broadcast, _) = broadcast::channel(CHANNEL_SIZE);
-        let actor = Actor::new(rx, broadcast.clone(), init);
-        tokio::spawn(Actor::serve(actor));
+        let actor = Actor::new(broadcast.clone(), init);
+        let listener = Listener::new(rx, actor);
+        tokio::spawn(Listener::serve(listener));
         Handle { tx, _broadcast: broadcast }
     }
 
@@ -102,35 +120,38 @@ where
 
 impl<T> Default for Handle<T>
 where
-    T: Clone + Send + Sync + 'static,
+    T: Clone + Debug + Send + Sync + 'static,
 {
     fn default() -> Self {
         Self::new()
     }
 }
 
-// ------- The remote actor that runs in a seperate thread ------- //
 #[derive(Debug)]
-pub struct Actor<T> {
+struct Listener<T>
+where
+    T: Clone + Debug + Send + Sync + 'static,
+{
     rx: mpsc::Receiver<Job<T>>,
-    pub inner: Option<T>,
-    pub broadcast: broadcast::Sender<T>,
+    actor: Actor<T>,
 }
 
-impl<T> Actor<T>
+impl<T> Listener<T>
 where
-    T: Clone + Send + 'static,
+    T: Clone + Debug + Send + Sync + 'static,
 {
-    fn new(rx: mpsc::Receiver<Job<T>>, broadcast: broadcast::Sender<T>, inner: Option<T>) -> Self {
-        Self { rx, inner, broadcast }
+    fn new(rx: mpsc::Receiver<Job<T>>, actor: Actor<T>) -> Self {
+        Self { rx, actor }
     }
 
     async fn serve(mut self) {
         // Execute the function on the inner data
         while let Some(job) = self.rx.recv().await {
             let res = match job.call {
-                FnType::Inner(mut call) => (*call)(&mut self, job.args),
-                FnType::Eval(call) => self.eval(call, job.args),
+                FnType::Inner(mut call) => (*call)(&mut self.actor, job.args),
+                FnType::Eval(call) => self.actor.eval(call, job.args),
+                FnType::InnerAsync(mut call) => call(&mut self.actor, job.args).await,
+                FnType::AsyncEval(call) => self.actor.async_eval(call, job.args).await,
             };
 
             if job.respond_to.send(res).is_err() {
@@ -139,6 +160,22 @@ where
         }
         let inner_type = std::any::type_name::<T>();
         log::warn!("Actor of type {inner_type} exited!");
+    }
+}
+
+// ------- The remote actor that runs in a seperate thread ------- //
+#[derive(Debug)]
+pub struct Actor<T> {
+    pub inner: Option<T>,
+    pub broadcast: broadcast::Sender<T>,
+}
+
+impl<T> Actor<T>
+where
+    T: Clone + Send + 'static,
+{
+    fn new(broadcast: broadcast::Sender<T>, inner: Option<T>) -> Self {
+        Self { inner, broadcast }
     }
 
     fn is_none(&mut self, _args: Box<dyn Any + Send>) -> Result<Box<dyn Any + Send>, ActorError> {
@@ -177,6 +214,24 @@ where
         Ok(response)
     }
 
+    #[allow(clippy::type_complexity)]
+    async fn async_eval(
+        &mut self,
+        mut eval_fn: Box<dyn FnMut(&mut T, Box<dyn Any + Send>) -> BoxFuture<Result<Box<dyn Any + Send>>> + Send + Sync>,
+        args: Box<dyn Any + Send>,
+    ) -> Result<Box<dyn Any + Send>, ActorError> {
+        let response = (*eval_fn)(
+            self.inner
+                .as_mut()
+                .ok_or_else(|| ActorError::NoValueSet(std::any::type_name::<T>().to_string()))?,
+            args,
+        )
+        .await
+        .map_err(|e| ActorError::EvalError(e.to_string()))?;
+        self.broadcast();
+        Ok(response)
+    }
+
     pub fn broadcast(&self) {
         // A broadcast error is not propagated, as otherwise a succesful call could produce an independent broadcast error
         if self.broadcast.receiver_count() > 0 {
@@ -200,13 +255,173 @@ struct Job<T> {
 #[allow(missing_debug_implementations)]
 #[allow(clippy::type_complexity)]
 pub enum FnType<T> {
-    Inner(Box<dyn FnMut(&mut Actor<T>, Box<dyn Any + Send>) -> Result<Box<dyn Any + Send>, ActorError> + Send + 'static>),
-    Eval(Box<dyn FnMut(&mut T, Box<dyn Any + Send>) -> Result<Box<dyn Any + Send>> + Send + 'static>),
+    Inner(Box<dyn FnMut(&mut Actor<T>, Box<dyn Any + Send>) -> Result<Box<dyn Any + Send>, ActorError> + Send>),
+    Eval(Box<dyn FnMut(&mut T, Box<dyn Any + Send>) -> Result<Box<dyn Any + Send>> + Send>),
+    InnerAsync(Box<dyn FnMut(&mut Actor<T>, Box<dyn Any + Send>) -> BoxFuture<Result<Box<dyn Any + Send>, ActorError>> + Send + Sync>),
+    AsyncEval(Box<dyn FnMut(&mut T, Box<dyn Any + Send>) -> BoxFuture<Result<Box<dyn Any + Send>>> + Send + Sync>),
 }
 
 impl<T> fmt::Debug for Job<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let inner_type = std::any::type_name::<T>();
         write!(f, "Job [call: FnType<{inner_type}>, args: Any, respond_to: Sender<Result<Any>, ActorError>]")
+    }
+}
+
+#[allow(dead_code)]
+#[cfg(test)]
+mod tests {
+
+    use futures::future::BoxFuture;
+    use tokio::time::{sleep, Duration};
+
+    use super::*;
+
+    #[derive(Clone, Debug)]
+    struct S {}
+
+    struct ExampleJob {
+        call: Box<dyn for<'a> Fn(&'a mut S) -> BoxFuture<bool>>,
+    }
+
+    impl fmt::Debug for ExampleJob {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            f.debug_struct("ExampleJob").field("call", &"some_call".to_string()).finish()
+        }
+    }
+
+    impl S {
+        async fn some_async_call(&mut self) -> bool {
+            true
+        }
+
+        async fn try_test() {
+            basic_executer(|s: &mut S| Box::pin(async move { S::some_async_call(s).await })).await;
+            dynamic_basic_executer(Box::new(|s: &mut S| Box::pin(async move { S::some_async_call(s).await }))).await;
+
+            let job = ExampleJob {
+                call: Box::new(|s: &mut S| Box::pin(async move { S::some_async_call(s).await })),
+            };
+            let (tx, _rx) = mpsc::channel(CHANNEL_SIZE);
+            tx.send(job).await.unwrap();
+        }
+    }
+
+    async fn basic_executer<F>(callback: F) -> bool
+    where
+        F: for<'a> Fn(&'a mut S) -> BoxFuture<bool>,
+    {
+        let mut s = S {};
+        (callback)(&mut s).await
+    }
+
+    async fn dynamic_basic_executer(callback: Box<dyn for<'a> Fn(&'a mut S) -> BoxFuture<bool>>) -> bool {
+        let mut s = S {};
+        callback(&mut s).await
+    }
+
+    struct SimpleJob<T>
+    where
+        T: Clone + Debug + Send + Sync,
+    {
+        call: Box<dyn for<'a> Fn(&'a mut SimpleActor<T>) -> BoxFuture<T> + Send + Sync>,
+    }
+
+    impl<T> fmt::Debug for SimpleJob<T>
+    where
+        T: Clone + Debug + Send + Sync,
+    {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            f.debug_struct("SimpleJob")
+                .field("call for ", &std::any::type_name::<T>().to_string())
+                .finish()
+        }
+    }
+
+    struct SimpleHandle<T>
+    where
+        T: Clone + Debug + Send + Sync,
+    {
+        tx: mpsc::Sender<SimpleJob<T>>,
+    }
+
+    impl<T> SimpleHandle<T>
+    where
+        T: Clone + Debug + Send + Sync,
+    {
+        async fn get(&self) {
+            let job = SimpleJob {
+                call: Box::new(|s: &mut SimpleActor<T>| Box::pin(async move { SimpleActor::<T>::get(s).await })),
+            };
+
+            self.tx.send(job).await.unwrap();
+        }
+
+        async fn eval<'a, F, Fut, A, R>(&self, mut _eval_fn: F)
+        where
+            F: FnMut(&'a mut SimpleActor<T>) -> Fut + Send + Sync + 'static,
+            Fut: Future<Output = T> + Send,
+            T: 'a,
+        {
+            // This function does not compile, as Fn does not implement copy and the eval_fn is moved in the generator
+            // let job = SimpleJob {
+            //     call: Box::new(move |s: &mut SimpleActor<T>| Box::pin(async move { eval_fn(s).await })),
+            // };
+
+            // self.tx.send(job).await.unwrap();
+            unimplemented!()
+        }
+    }
+
+    struct SimpleListener<T>
+    where
+        T: Clone + Debug + Send + Sync,
+    {
+        actor: SimpleActor<T>,
+        rx: mpsc::Receiver<SimpleJob<T>>,
+    }
+
+    struct SimpleActor<T>
+    where
+        T: Clone + Debug + Send + Sync,
+    {
+        inner: T,
+        broadcast: broadcast::Sender<T>,
+    }
+
+    impl<T> SimpleActor<T>
+    where
+        T: Clone + Debug + Send + Sync,
+    {
+        async fn get(&mut self) -> T {
+            let inner = self.inner.clone();
+            inner
+        }
+    }
+
+    impl<T> SimpleListener<T>
+    where
+        T: Clone + Debug + Send + Sync,
+    {
+        async fn process(actor: SimpleActor<T>, rx: mpsc::Receiver<SimpleJob<T>>) -> T {
+            let mut listener = SimpleListener { actor, rx };
+            let job = listener.rx.recv().await.unwrap();
+            let callback = job.call;
+            callback(&mut listener.actor).await
+        }
+    }
+
+    #[tokio::test]
+    async fn test_simple_actor() {
+        S::try_test().await;
+        let (tx, rx) = mpsc::channel::<SimpleJob<S>>(CHANNEL_SIZE);
+        let handle = SimpleHandle { tx };
+        let (broadcast, _) = broadcast::channel(CHANNEL_SIZE);
+        let actor = SimpleActor { inner: S {}, broadcast };
+
+        handle.get().await;
+        tokio::spawn(SimpleListener::process(actor, rx));
+
+        sleep(Duration::from_millis(200)).await;
     }
 }

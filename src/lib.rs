@@ -1,27 +1,29 @@
-#![warn(missing_debug_implementations, unreachable_pub)] // TODO enable 'missing_docs'
+#![warn(missing_debug_implementations, unreachable_pub)]
 #![deny(unused_must_use)]
 #![allow(clippy::unit_arg)]
+// TODO enable 'missing_docs'
+// TODO decide wether initializing empty handles is possible or not (not backwords compatible)
 
-//! An intuitive actor model with minimal required boilerplate code.
+//! An intuitive actor model for Rust with minimal boilerplate, no manual messages and typed arguments.
 //!
 //! Actify is an actor model built on [Tokio][tokio] that allows annotating any regular implementation block of your own type with the actify! macro.
 //! By generating the boilerplate code for you, a few key benefits are provided:
 //!
-//! * Async access to an actor through multiple clonable handles
-//! * Type-checked methods on your handles for all methods from the actors
-//! * No need to define message structs or enums
-//! * Atomic changes to the actor as requests are based on channels
+//! * Async actor model build on Tokio and channels
+//! * Access to actors through clonable handles
+//! * Types arguments on the methods from your actor, exposed through the handle
+//! * No need to define message structs or enums!
 //!
 //! [tokio]: https://docs.rs/tokio/latest/tokio/
 //!
 //! # Main functionality of actify!
 //!
-//! Consider the following example:
+//! Consider the following example, in which you want to turn your custom Greeter into an actor:
 //! ```
 //! # use actor_model::{Handle, actify};
-//! # #[derive(Clone)]
+//! # use std::fmt::Debug;
+//! # #[derive(Clone, Debug)]
 //! # struct Greeter {}
-//!
 //! #[actify]
 //! impl Greeter {
 //!     fn say_hi(&self, name: String) -> String {
@@ -34,10 +36,10 @@
 //!     // An actify handle is created and initialized with the Greeter struct
 //!     let handle = Handle::new_from(Greeter {});
 //!
-//!     // Although the say_hi method is implemented on the Greeter, it is automatically made available on its handle through the actify! macro
+//!     // The say_hi method is made available on its handle through the actify! macro
 //!     let greeting = handle.say_hi("Alfred".to_string()).await.unwrap();
 //!
-//!     // The actual implementation of the method is executed asynchronously on the initialized Greeter and returned through the handle
+//!     // The method is executed on the initialized Greeter and returned through the handle
 //!     assert_eq!(greeting, "hi Alfred".to_string())
 //! }
 //! ```
@@ -45,7 +47,7 @@
 //! This roughly desugars to:
 //! ```
 //! # use actor_model::{Handle, actify, ActorError, Actor, FnType};
-//! # #[derive(Clone)]
+//! # #[derive(Clone, Debug)]
 //! # struct Greeter {}
 //! impl Greeter {
 //!     fn say_hi(&self, name: String) -> String {
@@ -95,7 +97,77 @@
 //! }
 //! ```
 //!
-//! As references cannot be send to the actor, they are forbidden. All types must be owned:
+//! ## Async functions in impl blocks
+//! Async function are fully supported, and work as you would expect:
+//! ```
+//! # use actor_model::{Handle, actify};
+//! # use std::fmt::Debug;
+//! # #[derive(Clone, Debug)]
+//! # struct AsyncGreeter {}
+//! #[actify]
+//! impl AsyncGreeter {
+//!     async fn async_hi(&self, name: String) -> String {
+//!         format!("hi {}", name)
+//!     }
+//! }
+//!
+//! #[tokio::main]
+//! async fn main() {
+//!     let handle = Handle::new_from(AsyncGreeter {});
+//!     let greeting = handle.async_hi("Alfred".to_string()).await.unwrap();
+//!     assert_eq!(greeting, "hi Alfred".to_string())
+//! }
+//! ```
+//!
+//! ## Generics in the actor type
+//! Generics in the actor type are fully supported, as long as they implement Clone, Debug, Send, Sync and 'static:
+//! ```
+//! # use actor_model::{Handle, actify};
+//! # use std::fmt::Debug;
+//! # #[derive(Clone, Debug)]
+//! struct GenericGreeter<T> {
+//!     inner: T
+//! }
+//!
+//! #[actify]
+//! impl<T> GenericGreeter<T>
+//! where
+//!     T: Clone + Debug + Send + Sync + 'static,
+//! {
+//!     async fn generic_hi(&self, name: String) -> String {
+//!         format!("hi {} from {:?}", name, self.inner)
+//!     }
+//! }
+//!
+//! #[tokio::main]
+//! async fn main() {
+//!     let handle = Handle::new_from(GenericGreeter { inner: usize::default() });
+//!     let greeting = handle.generic_hi("Alfred".to_string()).await.unwrap();
+//!     assert_eq!(greeting, "hi Alfred from 0".to_string())
+//! }
+//!```
+//!
+//! ## Generics in the method arguments
+//! Unfortunately, passing generics by arguments is not yet supported. It is technically possible, and will be added in the near future.
+//! ```compile_fail
+//! # use actor_model::{Handle, actify};
+//! # use std::fmt::Debug;
+//! # #[derive(Clone, Debug)]
+//! # struct Greeter { }
+//! #[actify]
+//! impl Greeter
+//! {
+//!     async fn generic_hi<F>(&self, name: String, f: F) -> String
+//!     where
+//!         F: Debug + Send + Sync,
+//!     {
+//!         format!("hi {} with {:?}", name, f)
+//!     }
+//! }
+//!```
+//!
+//! ## Passing arguments by reference
+//! As referenced arguments cannot be send to the actor, they are forbidden. All arguments must be owned:
 //! ```compile_fail
 //! # struct MyActor {}
 //! #[actor_model::actify]
@@ -105,6 +177,15 @@
 //!     }
 //! }
 //! ```
+//!
+//! ## Standard actor methods
+//! TODO: add documentation on the standard actor methods like get and set
+//!
+//! ## Atomicity
+//! TODO: add documentation on how to guarantee atomocity by preventing updating actors with gets and sets
+//!
+//! ## Preventing cycles
+//! TODO: add documentation on how to prevent cycles when actors use eachothers handles
 
 mod actors;
 mod cache;
@@ -122,7 +203,7 @@ pub use throttle::{Frequency, ThrottleBuilder, Throttled};
 
 /// An example struct for the macro tests
 #[allow(dead_code)]
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 struct TestStruct<T> {
     inner_data: T,
 }
@@ -131,62 +212,75 @@ struct TestStruct<T> {
 mod tests {
 
     use super::*;
-    use std::collections::HashMap;
+    use std::{collections::HashMap, fmt::Debug};
 
     use crate as actor_model; // used so that the expanded absolute path functions in this crate
 
     #[actify]
     impl<T> crate::TestStruct<T>
     where
-        T: Clone + Send + Sync + 'static,
+        T: Clone + Debug + Send + Sync + 'static,
     {
         #[cfg(not(feature = "test_feature"))]
-        fn foo(&mut self, i: i32, _f: HashMap<String, f32>) -> f64 {
+        fn foo(&mut self, i: i32, _h: HashMap<String, T>) -> f64 {
             (i + 1) as f64
+        }
+
+        async fn baz(&mut self, i: i32) -> f64 {
+            (i + 2) as f64
         }
     }
 
-    impl<T> TestStruct<T> {
-        fn bar(&self, i: usize) -> f32 {
+    impl<T> TestStruct<T>
+    where
+        T: Clone + Debug + Send + Sync + 'static,
+    {
+        // TODO generics in arguments are not supported yet
+        fn bar<F>(&self, i: usize, _f: F) -> f32
+        where
+            F: Debug + Send + Sync,
+        {
             (i + 1) as f32
         }
     }
 
     #[async_trait]
-    trait ExampleTestStructHandle {
-        async fn bar(&self, test: usize) -> Result<f32, ActorError>;
+    trait ExampleTestStructHandle<F> {
+        async fn bar(&self, test: usize, f: F) -> Result<f32, ActorError>;
     }
 
     #[async_trait]
-    impl<T> ExampleTestStructHandle for Handle<TestStruct<T>>
+    impl<T, F> ExampleTestStructHandle<F> for Handle<TestStruct<T>>
     where
-        T: Clone + Send + Sync + 'static,
+        T: Clone + Debug + Send + Sync + 'static,
+        F: Debug + Send + Sync + 'static,
     {
-        async fn bar(&self, test: usize) -> Result<f32, ActorError> {
+        async fn bar(&self, test: usize, t: F) -> Result<f32, ActorError> {
             let res = self
-                .send_job(FnType::Inner(Box::new(ExampleTestStructActor::_bar)), Box::new(test))
+                .send_job(FnType::Inner(Box::new(ExampleTestStructActor::<F>::_bar)), Box::new((test, t)))
                 .await?;
             Ok(*res.downcast().expect("Downcasting failed due to an error in the Actify macro"))
         }
     }
 
-    trait ExampleTestStructActor {
+    trait ExampleTestStructActor<F> {
         fn _bar(&mut self, args: Box<dyn std::any::Any + Send>) -> Result<Box<dyn std::any::Any + Send>, ActorError>;
     }
 
     #[allow(unused_parens)]
-    impl<T> ExampleTestStructActor for Actor<TestStruct<T>>
+    impl<T, F> ExampleTestStructActor<F> for Actor<TestStruct<T>>
     where
-        T: Clone + Send + Sync + 'static,
+        T: Clone + Debug + Send + Sync + 'static,
+        F: Debug + Send + Sync + 'static,
     {
         fn _bar(&mut self, args: Box<dyn std::any::Any + Send>) -> Result<Box<dyn std::any::Any + Send>, ActorError> {
-            let (test): (usize) = *args.downcast().expect("Downcasting failed due to an error in the Actify macro");
+            let (test, f): (usize, F) = *args.downcast().expect("Downcasting failed due to an error in the Actify macro");
 
             let result: f32 = self
                 .inner
                 .as_mut()
                 .ok_or(ActorError::NoValueSet(std::any::type_name::<TestStruct<T>>().to_string()))?
-                .bar(test);
+                .bar(test, f);
 
             self.broadcast();
 
@@ -200,7 +294,8 @@ mod tests {
             inner_data: "Test".to_string(),
         });
 
-        assert_eq!(actor_handle.bar(0).await.unwrap(), 1.);
-        assert_eq!(actor_handle.foo(0, HashMap::new()).await.unwrap(), 1.)
+        assert_eq!(actor_handle.bar(0, String::default()).await.unwrap(), 1.);
+        assert_eq!(actor_handle.foo(0, HashMap::new()).await.unwrap(), 1.);
+        assert_eq!(actor_handle.baz(0).await.unwrap(), 2.);
     }
 }
