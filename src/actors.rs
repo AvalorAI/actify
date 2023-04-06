@@ -34,6 +34,7 @@ impl<T> From<mpsc::error::SendError<T>> for ActorError {
     }
 }
 
+// TODO this should not be part of the actor model lib!
 // Convert any actor error to an gRPC internal failure status
 impl From<ActorError> for tonic::Status {
     fn from(e: ActorError) -> Self {

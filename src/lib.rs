@@ -3,6 +3,18 @@
 #![allow(clippy::unit_arg)]
 // TODO enable 'missing_docs'
 // TODO decide wether initializing empty handles is possible or not (not backwords compatible)
+// TODO enable broadcast with feature + additional attribute
+// TODO add support for generics in method arguments (collect all generics over the methods, add them to the trait, check trait bounds!)
+// TODO only keep feature flag attributes
+// TODO apply exhaustive patterns in the macro
+// TODO extend documents, including standard method implementation
+// TODO refactor cache with seperate initialization and non async constructor & cleaner API
+// TODO debug logs
+// TODO support doc strings attributes & system cfg
+// TODO restructure to correct testing setup with seperate lib (see lazy static or bookmark?)
+// TODO extend with blocking send and blocking recv from Tokio
+// TODO track performance
+// TODO improve span of error msg like "Static method cannot be actified: the method requires a..."
 
 //! An intuitive actor model for Rust with minimal boilerplate, no manual messages and typed arguments.
 //!
@@ -166,6 +178,8 @@
 //! }
 //!```
 //!
+//! TODO: show temporary workaround with PhantomData in the actor struct
+//!
 //! ## Passing arguments by reference
 //! As referenced arguments cannot be send to the actor, they are forbidden. All arguments must be owned:
 //! ```compile_fail
@@ -262,9 +276,7 @@ mod tests {
                     Box::new((test, t)),
                 )
                 .await?;
-            Ok(*res
-                .downcast()
-                .expect("Downcasting failed due to an error in the Actify macro"))
+            Ok(*res.downcast().unwrap())
         }
     }
 
@@ -285,9 +297,7 @@ mod tests {
             &mut self,
             args: Box<dyn std::any::Any + Send>,
         ) -> Result<Box<dyn std::any::Any + Send>, ActorError> {
-            let (test, f): (usize, F) = *args
-                .downcast()
-                .expect("Downcasting failed due to an error in the Actify macro");
+            let (test, f): (usize, F) = *args.downcast().unwrap();
 
             let result: f32 = self
                 .inner

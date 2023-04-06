@@ -6,10 +6,6 @@ use syn::{
     ItemImpl, PatIdent, PathSegment, ReturnType, TraitItemMethod, Type,
 };
 
-// TODO only keep feature flag attributes in the trait definitions
-// TODO use exhaustive patterns
-// TODO add support for generics in method arguments (collect all generics over the methods, add them to the trait, check trait bounds!)
-
 /// The actify macro expands an impl block of a rust struct to support usage in an actor model.
 /// Effectively, this macro allows to remotely call an actor method through a handle.
 /// By using traits, the methods on the handle have the same signatures, so that type checking is enforced
@@ -28,7 +24,7 @@ pub fn actify(_attr: TokenStream, item: TokenStream) -> TokenStream {
 }
 
 /// This function consists of the main body of the macro parsing.
-/// The body consists of two traits and its implementations:
+/// The body consists of two traits and their implementations:
 /// The handle: code the user interacts with
 /// The actor: code that executes the user-defined method in the actified impl block
 fn parse_macro(
@@ -36,33 +32,30 @@ fn parse_macro(
 ) -> Result<proc_macro2::TokenStream, proc_macro2::TokenStream> {
     let impl_type = get_impl_type(impl_block)?;
 
-    impl_block.generics.make_where_clause(); // Ensures the unwraps are safe
+    // Ensure the unwraps are safe
+    impl_block.generics.make_where_clause();
 
-    // TODO what span to use for the new traits?
+    // Create Ident instances for the new traits
     let actor_trait_ident = syn::Ident::new(&format!("{}Actor", impl_type), Span::call_site());
-
     let handle_trait_ident = syn::Ident::new(&format!("{}Handle", impl_type), Span::call_site());
 
+    // Generate methods, traits, and their implementations
     let generated_methods = generate_all_methods(impl_block, &actor_trait_ident)?;
 
     let handle_trait = generate_handle_trait(impl_block, &handle_trait_ident, &generated_methods)?;
-
     let handle_trait_impl =
         generate_handle_trait_impl(impl_block, &handle_trait_ident, &generated_methods)?;
 
     let actor_trait = generate_actor_trait(&actor_trait_ident, &generated_methods)?;
-
     let actor_trait_impl =
         generate_actor_trait_impl(impl_block, &actor_trait_ident, &generated_methods)?;
 
+    // Combine the generated code
     let result = quote! {
-
         #handle_trait // Defines the custom function signatures that should be added to the handle
-
         #handle_trait_impl // Implement the function on the handle, and call the function on the actor
 
         #actor_trait // Defines the custom function wrappers that call the original methods on the actor
-
         #actor_trait_impl // Implement the function on the actor
 
         #impl_block // Extend the original functions
@@ -307,12 +300,18 @@ fn generate_all_methods(
     let mut methods = vec![];
     for item in &impl_block.items {
         match item {
+            ImplItem::Const(_) => {}
             ImplItem::Method(original_method) => methods.push(generate_methods(
                 &impl_block.self_ty,
                 original_method,
                 actor_trait_ident,
             )?),
-            _ => {}
+            ImplItem::Type(_) => {}
+            ImplItem::Macro(_) => {}
+            ImplItem::Verbatim(_) => {}
+
+            #[cfg_attr(test, deny(non_exhaustive_omitted_patterns))]
+            _ => { /* some sane fallback */ }
         }
     }
 
@@ -327,14 +326,17 @@ fn generate_methods(
 ) -> Result<GeneratedMethods, proc_macro2::TokenStream> {
     let mut parsed_attributes = vec![];
     for attribute in &original_method.attrs {
-        parsed_attributes.push(quote! { #attribute });
+        if attribute.path.is_ident("cfg") {
+            parsed_attributes.push(quote! { #attribute });
+        }
     }
-    let flattenend_attributes = GeneratedMethods::flatten_token_stream(parsed_attributes);
+
+    let flattened_attributes = GeneratedMethods::flatten_token_stream(parsed_attributes);
 
     let actor_trait_signature =
-        generate_actor_trait_method(original_method, &flattenend_attributes)?;
+        generate_actor_trait_method(original_method, &flattened_attributes)?;
     let handle_trait_signature =
-        generate_handle_trait_method(original_method, &flattenend_attributes)?;
+        generate_handle_trait_method(original_method, &flattened_attributes)?;
 
     let parsed_actor_signature = syn::parse(actor_trait_signature.clone().into())
         .expect("Parsing the actor trait in the Actify macro failed");
@@ -345,14 +347,14 @@ fn generate_methods(
         impl_type,
         &parsed_actor_signature,
         original_method,
-        &flattenend_attributes,
+        &flattened_attributes,
     )?;
     let handle_method_impl = generate_handle_trait_method_impl(
         impl_type,
         &parsed_handle_signature,
         actor_trait_ident,
         &parsed_actor_signature,
-        &flattenend_attributes,
+        &flattened_attributes,
     )?;
 
     Ok(GeneratedMethods {
@@ -446,7 +448,7 @@ fn get_impl_type(impl_block: &ItemImpl) -> Result<String, proc_macro2::TokenStre
     })
 }
 
-/// This function collects the input arguments    
+/// This function collects the input arguments
 /// 1. Filter the args, so that only typed arguments remain
 /// 2. Check if the ident does not contain a reference
 /// 3. Extract the ident (in case the pattern type is an owned ident)
@@ -460,27 +462,31 @@ fn transform_args(
     let mut input_arg_types: Punctuated<PathSegment, Comma> = Punctuated::new();
 
     for arg in args {
-        if let syn::FnArg::Typed(pat_type) = arg {
-            if let syn::Pat::Ident(pat_ident) = *pat_type.pat.clone() {
-                match &*pat_type.ty {
-                    Type::Reference(_) => {
-                        return Err(quote_spanned! {
-                            pat_type.ty.span() =>
-                            compile_error!("Input arguments of actor model methods must be owned types and not referenced");
-                        })
+        match arg {
+            syn::FnArg::Typed(pat_type) => {
+                if let syn::Pat::Ident(pat_ident) = *pat_type.pat.clone() {
+                    match &*pat_type.ty {
+                        Type::Path(type_path) => {
+                            let var_type = type_path
+                                .path
+                                .segments
+                                .last()
+                                .expect("Actify macro expected a valid type");
+                            input_arg_names.push(pat_ident.clone());
+                            input_arg_types.push(var_type.clone());
+                        }
+                        Type::Reference(_) => {
+                            return Err(quote_spanned! {
+                                pat_type.ty.span() =>
+                                compile_error!("Input arguments of actor model methods must be owned types and not referenced");
+                            })
+                        }
+                        _ => {} // Ignore other types
                     }
-                    Type::Path(type_path) => {
-                        let var_type = type_path
-                            .path
-                            .segments
-                            .last()
-                            .expect("Actify macro expected a valid type");
-                        input_arg_names.push(pat_ident.clone());
-                        input_arg_types.push(var_type.clone());
-                    }
-                    _ => panic!("Actify macro cannot yet handle the type"), // TODO make this an exhaustive pattern as suggested by the Syn crate
                 }
             }
+            #[cfg_attr(test, deny(non_exhaustive_omitted_patterns))]
+            _ => {} // some sane fallback
         }
     }
 
