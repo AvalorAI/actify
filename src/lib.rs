@@ -34,7 +34,7 @@
 //!
 //! Consider the following example, in which you want to turn your custom Greeter into an actor:
 //! ```
-//! # use actor_model::{Handle, actify};
+//! # use actify::{Handle, actify};
 //! # use std::fmt::Debug;
 //! # #[derive(Clone, Debug)]
 //! # struct Greeter {}
@@ -60,7 +60,7 @@
 //!
 //! This roughly desugars to:
 //! ```
-//! # use actor_model::{Handle, actify, ActorError, Actor, FnType};
+//! # use actify::{Handle, actify, ActorError, Actor, FnType};
 //! # #[derive(Clone, Debug)]
 //! # struct Greeter {}
 //! impl Greeter {
@@ -114,7 +114,7 @@
 //! ## Async functions in impl blocks
 //! Async function are fully supported, and work as you would expect:
 //! ```
-//! # use actor_model::{Handle, actify};
+//! # use actify::{Handle, actify};
 //! # use std::fmt::Debug;
 //! # #[derive(Clone, Debug)]
 //! # struct AsyncGreeter {}
@@ -136,7 +136,7 @@
 //! ## Generics in the actor type
 //! Generics in the actor type are fully supported, as long as they implement Clone, Debug, Send, Sync and 'static:
 //! ```
-//! # use actor_model::{Handle, actify};
+//! # use actify::{Handle, actify};
 //! # use std::fmt::Debug;
 //! # #[derive(Clone, Debug)]
 //! struct GenericGreeter<T> {
@@ -164,7 +164,7 @@
 //! ## Generics in the method arguments
 //! Unfortunately, passing generics by arguments is not yet supported. It is technically possible, and will be added in the near future.
 //! ```compile_fail
-//! # use actor_model::{Handle, actify};
+//! # use actify::{Handle, actify};
 //! # use std::fmt::Debug;
 //! # #[derive(Clone, Debug)]
 //! # struct Greeter { }
@@ -186,7 +186,7 @@
 //! As referenced arguments cannot be send to the actor, they are forbidden. All arguments must be owned:
 //! ```compile_fail
 //! # struct MyActor {}
-//! #[actor_model::actify]
+//! #[actify::actify]
 //! impl MyActor {
 //!     fn foo(&self, forbidden_reference: &usize) {
 //!         println!("Hello foo: {}", forbidden_reference);
@@ -230,7 +230,7 @@ mod tests {
     use super::*;
     use std::{collections::HashMap, fmt::Debug};
 
-    use crate as actor_model; // used so that the expanded absolute path functions in this crate
+    use crate as actify; // used so that the expanded absolute path functions in this crate
 
     #[actify]
     impl<T> crate::TestStruct<T>
