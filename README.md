@@ -1,4 +1,6 @@
-# actor-model
+# actify
+
+\*\*
 
 The [actor model](https://en.wikipedia.org/wiki/Actor_model) allows [atomic](https://www.codingem.com/atomic-meaning-in-programming/) access to a single instance of a data type.
 

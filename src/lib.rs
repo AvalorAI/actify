@@ -18,6 +18,8 @@
 
 //! An intuitive actor model for Rust with minimal boilerplate, no manual messages and typed arguments.
 //!
+//! **Note that this crate is under construction. Although used in production, work is done on making an intuitive API, documententation and remaining features. For the time being, this does not follow semantic versioning!**
+//!
 //! Actify is an actor model built on [Tokio][tokio] that allows annotating any regular implementation block of your own type with the actify! macro.
 //! By generating the boilerplate code for you, a few key benefits are provided:
 //!
