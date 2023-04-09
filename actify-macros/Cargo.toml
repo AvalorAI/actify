@@ -2,6 +2,8 @@
 name = "actify-macros"
 version = "0.1.0"
 edition = "2021"
+description = "Actify's procedural macros"
+license = "MIT"
 
 [dependencies]
 quote = "1.0"
