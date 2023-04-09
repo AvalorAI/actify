@@ -1,6 +1,6 @@
 # actify
 
-\*\*
+**Note that this crate is under construction. Although used in production, work is done on making an intuitive API, documententation and remaining features. For the time being, this does not follow semantic versioning!**
 
 The [actor model](https://en.wikipedia.org/wiki/Actor_model) allows [atomic](https://www.codingem.com/atomic-meaning-in-programming/) access to a single instance of a data type.
 
