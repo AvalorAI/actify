@@ -13,7 +13,7 @@ Actify is an [actor model](https://en.wikipedia.org/wiki/Actor_model) built on [
 [mit-badge]: https://img.shields.io/badge/license-MIT-blue.svg
 [mit-url]: https://github.com/AvalorAI/actify/blob/main/LICENSE
 [docs-badge]: https://docs.rs/actify/badge.svg
-[docs-url]: https://docs.rs/actify
+[docs-url]: https://docs.rs/actify/latest/actify/
 
 ## Benefits
 
