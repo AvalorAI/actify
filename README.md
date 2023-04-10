@@ -1,19 +1,47 @@
-# actify
+# Actify
 
 **Note that this crate is under construction. Although used in production, work is done on making an intuitive API, documententation and remaining features. For the time being, this does not follow semantic versioning!**
 
-The [actor model](https://en.wikipedia.org/wiki/Actor_model) allows [atomic](https://www.codingem.com/atomic-meaning-in-programming/) access to a single instance of a data type.
+Actify is an [actor model](https://en.wikipedia.org/wiki/Actor_model) built on [Tokio](https://tokio.rs) that allows annotating any regular implementation block of your own type with the actify! macro.
 
-Each actor holds an arbitrary inner data type, which can be accessed through clonable thread-safe handles.
+[![Crates.io][crates-badge]][crates-url] | [Docs](https://docs.rs/actify/latest/actify/)
 
-Generic methods are get() and set(), but for the inner data type Vec and Hashmap additional methods are provided through the MapHandle and VecHandle trait.
+[crates-url]: https://crates.io/crates/actify
 
-Note that updating an Actor value through sequentially getting, updating and setting breaks any guarantees on atomicity. Hence the eval() method is added, which allows to remote execute a function **within** an actor. A drawback is that all arguments must be cast to a single [any type](https://doc.rust-lang.org/std/any/index.html), which prevents the compiler to do type-checking.
+By generating the boilerplate code for you, a few key benefits are provided:
 
-Additionally, a cache is provided, which can be used to locally synchronize with an actor.
+- Async actor model build on Tokio and channels, which can keep arbitrary owned data types.
+- [Atomic](https://www.codingem.com/atomic-meaning-in-programming/) access and mutation of underlying data through clonable handles
+- Typed arguments and return values on the methods from your actor, exposed through each handle
+- No need to define message structs or enums!
+- Generic methods like get() and set() without using the macro
 
-**Feature request**
+## Example
 
-- General broadcast function from actor, instead of trait impls
-- Macro for implementing type-specific actor functions
-- Drain & Swap functions
+Consider the following example, in which you want to turn your custom Greeter into an actor:
+
+```rust,no_run
+use actify::{Handle, actify};
+
+#[derive(Clone, std::fmt::Debug)]
+struct Greeter {}
+
+#[actify]
+impl Greeter {
+    fn say_hi(&self, name: String) -> String {
+        format!("hi {}", name)
+    }
+}
+
+#[tokio::main]
+async fn main() {
+// An actify handle is created and initialized with the Greeter struct
+let handle = Handle::new_from(Greeter {});
+
+// The say_hi method is made available on its handle through the actify! macro
+let greeting = handle.say_hi("Alfred".to_string()).await.unwrap();
+
+// The method is executed on the initialized Greeter and returned through the handle
+assert_eq!(greeting, "hi Alfred".to_string())
+}
+```
