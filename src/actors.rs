@@ -90,6 +90,16 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_vec_refs_derefs() {
+        let mut actor_vec: ActorVec<i32> = vec![2].into();
+        assert_eq!(vec![2], *actor_vec);
+        let _: &Vec<i32> = actor_vec.as_ref(); // must compile
+        *actor_vec = vec![3];
+        assert_eq!(vec![3], *actor_vec);
+        let _: &Vec<i32> = actor_vec.as_mut(); // must compile
+    }
+
+    #[tokio::test]
     async fn push_to_actor() {
         let handle = Handle::new();
         handle.set(vec![1, 2].into()).await.unwrap();
