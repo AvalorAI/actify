@@ -9,7 +9,7 @@ Actify is an [actor model](https://en.wikipedia.org/wiki/Actor_model) built on [
 [![Docs][docs-badge]][docs-url]
 
 [crates-url]: https://crates.io/crates/actify
-[crates-badge]: https://img.shields.io/crates/v/tokio.svg
+[crates-badge]: https://img.shields.io/crates/v/actify.svg
 [mit-badge]: https://img.shields.io/badge/license-MIT-blue.svg
 [mit-url]: https://github.com/AvalorAI/actify/blob/main/LICENSE
 [docs-badge]: https://docs.rs/actify/badge.svg
