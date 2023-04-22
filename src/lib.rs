@@ -215,7 +215,7 @@ pub use actors::vec::VecHandle;
 pub use actors::ActorError;
 pub use async_trait::async_trait;
 pub use cache::Cache;
-pub use throttle::{Frequency, ThrottleBuilder, Throttled};
+pub use throttle::{Frequency, ThrottleBuilder, ThrottleError, Throttled};
 
 /// An example struct for the macro tests
 #[allow(dead_code)]

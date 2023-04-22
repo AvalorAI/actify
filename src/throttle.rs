@@ -1,10 +1,18 @@
-use anyhow::{anyhow, Result};
 use std::fmt::{self, Debug};
+use thiserror::Error;
 use tokio::sync::broadcast;
 use tokio::sync::broadcast::error::RecvError;
 use tokio::time::{self, Duration, Interval};
 
 use crate::Handle;
+
+#[derive(Error, Debug, PartialEq, Clone)]
+pub enum ThrottleError {
+    #[error("A throttle should be initialized, listen to an update or both")]
+    UselessThrottle,
+    #[error("A throttle cannot fire on events if it does not listen to them")]
+    InvalidFrequency,
+}
 
 /// The Frequency is used to tune the speed of the throttle.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -170,23 +178,19 @@ where
         self
     }
 
-    pub fn spawn(self) -> Result<()> {
+    pub fn spawn(self) -> Result<(), ThrottleError> {
         let mut throttle = self.build()?; // Perform all checks required for a valid throttle
         tokio::spawn(async move { throttle.tick().await });
         Ok(())
     }
 
-    fn build(self) -> Result<Throttle<C, T, F>> {
+    fn build(self) -> Result<Throttle<C, T, F>, ThrottleError> {
         if self.cache.is_none() && self.val_rx.is_none() {
-            return Err(anyhow!(
-                "A throttle should be initialized, listen to an update or both"
-            ));
+            return Err(ThrottleError::UselessThrottle);
         }
 
         if matches!(self.frequency, Frequency::OnEvent) && self.val_rx.is_none() {
-            return Err(anyhow!(
-                "A throttle cannot fire on events if it does not listen to them"
-            ));
+            return Err(ThrottleError::InvalidFrequency);
         }
 
         Ok(Throttle {

@@ -2,6 +2,8 @@ use std::fmt::Debug;
 use thiserror::Error;
 use tokio::sync::{broadcast, mpsc, oneshot};
 
+use crate::ThrottleError;
+
 pub(crate) mod any;
 pub(crate) mod map;
 pub(crate) mod vec;
@@ -14,8 +16,6 @@ const WRONG_RESPONSE: &str = "An incorrect response type for this method has bee
 pub enum ActorError {
     #[error("A request has been received for type {0} while no value is set")]
     NoValueSet(String),
-    #[error("Error from actor function evaluation: {0}")]
-    EvalError(String), // Originates from general eval format
     #[error("Tokio oneshot receiver error")]
     TokioOneshotRecvError(#[from] oneshot::error::RecvError),
     #[error("Tokio mpsc sender error: {0}")]
@@ -26,6 +26,8 @@ pub enum ActorError {
     TokioBroadcastRecvError(#[from] broadcast::error::RecvError),
     #[error("An incorrect response type for this method has been received")]
     WrongResponse,
+    #[error("A throttle error occured")]
+    ThrottleError(#[from] ThrottleError),
 }
 
 impl<T> From<mpsc::error::SendError<T>> for ActorError {
@@ -49,8 +51,6 @@ mod tests {
     use crate::VecHandle;
 
     use super::*;
-    use anyhow::{anyhow, Result};
-    use std::any::Any;
     use std::collections::HashMap;
 
     #[tokio::test]
@@ -176,66 +176,5 @@ mod tests {
         let handle = Handle::new_from(Vec::new());
         handle.push(1).await.unwrap();
         assert_eq!(handle.is_none().await.unwrap(), false);
-    }
-
-    #[tokio::test]
-    async fn eval_empty_actor() {
-        let handle = Handle::new();
-        let err = handle
-            .eval::<_, _, i32>(TestVal::heavy_calcs, 10)
-            .await
-            .unwrap_err();
-        assert!(matches!(err, ActorError::NoValueSet(_)))
-    }
-
-    #[tokio::test]
-    async fn eval_ok_actor() {
-        let handle = Handle::new_from(TestVal {});
-        let res: i32 = handle.eval(TestVal::heavy_calcs, 10).await.unwrap();
-        assert_eq!(res, 11);
-    }
-
-    #[tokio::test]
-    async fn eval_cast_resp_err_actor() {
-        let handle = Handle::new_from(TestVal {});
-        let err = handle
-            .eval::<_, _, String>(TestVal::heavy_calcs, 10)
-            .await
-            .unwrap_err();
-        assert_eq!(ActorError::WrongResponse, err);
-    }
-
-    #[tokio::test]
-    async fn eval_cast_args_err_actor() {
-        let handle = Handle::new_from(TestVal {});
-        let err = handle
-            .eval::<_, _, i32>(TestVal::heavy_calcs, "test".to_string())
-            .await
-            .unwrap_err();
-        assert!(matches!(err, ActorError::EvalError(_)))
-    }
-
-    // #[tokio::test]
-    // async fn async_eval_ok_actor() {
-    //     let handle = Handle::new_from(TestVal {});
-    //     let res: i32 = handle.async_eval(TestVal::async_calcs, 10).await.unwrap();
-    //     assert_eq!(res, 11);
-    // }
-
-    #[derive(Clone, Debug)]
-    struct TestVal {}
-
-    impl TestVal {
-        fn heavy_calcs(&mut self, args: Box<dyn Any + Send>) -> Result<Box<dyn Any + Send>> {
-            let val = *args
-                .downcast::<i32>()
-                .map_err(|_| anyhow!("Downcasting the args went wrong"))?;
-            Ok(Box::new(val + 1))
-        }
-
-        // async fn async_calcs(&mut self, args: Box<dyn Any + Send>) -> Result<Box<dyn Any + Send>> {
-        //     let val = *args.downcast::<i32>().map_err(|_| anyhow!("Downcasting the args went wrong"))?;
-        //     Ok(Box::new(val + 1))
-        // }
     }
 }

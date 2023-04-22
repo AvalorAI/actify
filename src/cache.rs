@@ -1,4 +1,3 @@
-use anyhow::Result;
 use std::fmt::Debug;
 use tokio::sync::broadcast::{
     self,
@@ -34,15 +33,20 @@ impl<T> Cache<T>
 where
     T: Clone + Debug + Send + Sync + 'static,
 {
-    pub(crate) async fn new(handle: Handle<T>) -> Result<Self, ActorError> {
+    pub(crate) async fn new_initialized(handle: Handle<T>) -> Result<Self, ActorError> {
+        let mut cache = Cache::new(handle);
+        cache.initialize().await?;
+        Ok(cache)
+    }
+
+    pub(crate) fn new(handle: Handle<T>) -> Self {
         let rx = handle.subscribe();
-        let inner = Cache::initialize(&handle).await?;
-        Ok(Self {
+        Self {
             handle,
-            inner,
+            inner: None,
             rx,
             has_listenend: false,
-        })
+        }
     }
 
     /// Returns if any new updates are received
@@ -172,10 +176,16 @@ where
     /// The first time a cache is created, it performs a get to initialize the cache
     /// Using this concept, it is ensured that any value set in the actor before subscribing is also included
     /// If the user of the cache listens for the first time, the cache can return immediately with the known result
-    async fn initialize(handle: &Handle<T>) -> Result<Option<T>, ActorError> {
-        match handle.get().await {
-            Ok(val) => Ok(Some(val)),
-            Err(ActorError::NoValueSet(_)) => Ok(None), // Continue to listen
+    async fn initialize(&mut self) -> Result<(), ActorError> {
+        match self.handle.get().await {
+            Ok(val) => {
+                self.inner = Some(val);
+                Ok(())
+            }
+            Err(ActorError::NoValueSet(_)) => {
+                self.inner = None;
+                Ok(())
+            }
             Err(e) => Err(e),
         }
     }
@@ -187,9 +197,18 @@ mod tests {
     use tokio::time::{sleep, Duration};
 
     #[tokio::test]
+    async fn test_unitialized() {
+        let handle = Handle::new_from(1);
+        let mut cache = handle.create_uninitialized_cache();
+        assert_eq!(cache.get_newest().unwrap(), None); // Not initalized, so none although value is set
+        handle.set(2).await.unwrap();
+        assert_eq!(cache.get_newest().unwrap(), Some(2)); // The new value is broadcasted and processed
+    }
+
+    #[tokio::test]
     async fn test_has_updates() {
         let handle = Handle::new_from(1);
-        let cache = handle.create_cache().await.unwrap();
+        let cache = handle.create_initialized_cache().await.unwrap();
         assert_eq!(cache.has_updates(), false);
         handle.set(2).await.unwrap();
         assert_eq!(cache.has_updates(), true);
@@ -198,7 +217,7 @@ mod tests {
     #[tokio::test]
     async fn test_listen_cache() {
         let handle = Handle::new_from(1);
-        let mut cache = handle.create_cache().await.unwrap();
+        let mut cache = handle.create_initialized_cache().await.unwrap();
         _ = cache.listen().await.unwrap(); // First listen returns 10
         handle.set(2).await.unwrap();
         handle.set(3).await.unwrap(); // Not updated yet, as returning oldest value first
@@ -208,7 +227,7 @@ mod tests {
     #[tokio::test]
     async fn test_listen_cache_newest() {
         let handle = Handle::new_from(1);
-        let mut cache = handle.create_cache().await.unwrap();
+        let mut cache = handle.create_initialized_cache().await.unwrap();
         handle.set(2).await.unwrap();
         handle.set(3).await.unwrap();
         assert_eq!(cache.listen_newest().await.unwrap(), 3)
@@ -217,7 +236,7 @@ mod tests {
     #[tokio::test]
     async fn test_immediate_cache_return() {
         let handle = Handle::new_from(1);
-        let mut cache = handle.create_cache().await.unwrap();
+        let mut cache = handle.create_initialized_cache().await.unwrap();
         handle.set(2).await.unwrap(); // Not updated yet, as returning oldest value first
         assert_eq!(cache.listen().await.unwrap(), 1)
     }
@@ -225,7 +244,7 @@ mod tests {
     #[tokio::test]
     async fn test_immediate_cache_return_with_newest() {
         let handle = Handle::new_from(1);
-        let mut cache = handle.create_cache().await.unwrap();
+        let mut cache = handle.create_initialized_cache().await.unwrap();
         handle.set(2).await.unwrap(); // Try to check for any newer
         assert_eq!(cache.listen_newest().await.unwrap(), 2)
     }
@@ -233,7 +252,7 @@ mod tests {
     #[tokio::test]
     async fn test_delayed_cache_return() {
         let handle = Handle::new();
-        let mut cache = handle.create_cache().await.unwrap();
+        let mut cache = handle.create_initialized_cache().await.unwrap();
 
         let res = tokio::select! {
             _ = async {
@@ -250,14 +269,14 @@ mod tests {
     #[tokio::test]
     async fn test_try_listen_none() {
         let handle = Handle::<i32>::new();
-        let mut cache = handle.create_cache().await.unwrap();
+        let mut cache = handle.create_initialized_cache().await.unwrap();
         assert!(cache.try_listen().unwrap().is_none())
     }
 
     #[tokio::test]
     async fn test_try_listen_some() {
         let handle = Handle::new();
-        let mut cache = handle.create_cache().await.unwrap();
+        let mut cache = handle.create_initialized_cache().await.unwrap();
         handle.set(2).await.unwrap(); // Not updated yet, as returning oldest value first
         handle.set(3).await.unwrap();
         assert_eq!(cache.try_listen().unwrap(), Some(2))
@@ -266,7 +285,7 @@ mod tests {
     #[tokio::test]
     async fn test_try_listen_some_newest() {
         let handle = Handle::new();
-        let mut cache = handle.create_cache().await.unwrap();
+        let mut cache = handle.create_initialized_cache().await.unwrap();
         handle.set(2).await.unwrap();
         handle.set(3).await.unwrap();
         assert_eq!(cache.try_listen_newest().unwrap(), Some(3))
