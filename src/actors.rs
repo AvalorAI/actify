@@ -44,9 +44,10 @@ impl From<ActorError> for tonic::Status {
 
 #[cfg(test)]
 mod tests {
+    use crate::ActorVec;
+    use crate::ActorVecHandle;
     use crate::Handle;
     use crate::MapHandle;
-    use crate::VecHandle;
 
     use super::*;
     use anyhow::{anyhow, Result};
@@ -83,7 +84,7 @@ mod tests {
 
     #[tokio::test]
     async fn no_val_set_actor() {
-        let handle = Handle::<Vec<i32>>::new();
+        let handle = Handle::<ActorVec<i32>>::new();
         let err = handle.push(10).await.unwrap_err();
         assert!(matches!(err, ActorError::NoValueSet(_)))
     }
@@ -91,18 +92,18 @@ mod tests {
     #[tokio::test]
     async fn push_to_actor() {
         let handle = Handle::new();
-        handle.set(vec![1, 2]).await.unwrap();
+        handle.set(vec![1, 2].into()).await.unwrap();
         handle.push(100).await.unwrap();
-        assert_eq!(handle.get().await.unwrap(), vec![1, 2, 100]);
+        assert_eq!(handle.get_inner().await.unwrap(), vec![1, 2, 100]);
     }
 
     #[tokio::test]
     async fn drain_actor() {
         let handle = Handle::new();
-        handle.set(vec![1, 2]).await.unwrap();
+        handle.set(vec![1, 2].into()).await.unwrap();
         let res = handle.drain().await.unwrap();
         assert_eq!(res, vec![1, 2]);
-        assert_eq!(handle.get().await.unwrap(), Vec::<i32>::new());
+        assert_eq!(handle.get_inner().await.unwrap(), Vec::<i32>::new());
     }
 
     #[tokio::test]
@@ -167,13 +168,13 @@ mod tests {
 
     #[tokio::test]
     async fn actor_vec_is_empty() {
-        let handle = Handle::new_from(Vec::<i32>::new());
+        let handle = Handle::new_from(ActorVec::<i32>::new());
         assert_eq!(handle.is_empty().await.unwrap(), true);
     }
 
     #[tokio::test]
     async fn actor_vec_is_not_empty() {
-        let handle = Handle::new_from(Vec::new());
+        let handle = Handle::new_from(ActorVec::new());
         handle.push(1).await.unwrap();
         assert_eq!(handle.is_none().await.unwrap(), false);
     }

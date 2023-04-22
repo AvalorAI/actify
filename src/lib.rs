@@ -211,7 +211,7 @@ mod throttle;
 pub use actify_macros::actify;
 pub use actors::any::{Actor, FnType, Handle};
 pub use actors::map::MapHandle;
-pub use actors::vec::VecHandle;
+pub use actors::vec::{ActorVec, ActorVecHandle};
 pub use actors::ActorError;
 pub use async_trait::async_trait;
 pub use cache::Cache;
