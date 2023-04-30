@@ -89,7 +89,6 @@ fn generate_actor_trait_impl(
 
 /// A function that generates the implementation for each method in the actor trait
 fn generate_actor_trait_method_impl(
-    impl_type: &Type,
     method: &TraitItemMethod,
     original_method: &ImplItemMethod,
     attributes: &proc_macro2::TokenStream,
@@ -124,13 +123,7 @@ fn generate_actor_trait_method_impl(
             .downcast()
             .expect("Downcasting failed due to an error in the Actify macro");
 
-            let result: #original_output_type = self
-            .inner
-            .as_mut()
-            .ok_or(actify::ActorError::NoValueSet(
-                std::any::type_name::<#impl_type>().to_string(),
-            ))?.
-            #fn_ident(#input_arg_names)#awaiter; // if this is async, await it, else do not
+            let result: #original_output_type = self.inner.#fn_ident(#input_arg_names)#awaiter; // if this is async, await it, else do not
 
         self.broadcast(); // TODO make this optional!
 
@@ -344,7 +337,6 @@ fn generate_methods(
         .expect("Parsing the handle trait in the Actify macro failed");
 
     let actor_method_impl = generate_actor_trait_method_impl(
-        impl_type,
         &parsed_actor_signature,
         original_method,
         &flattened_attributes,
