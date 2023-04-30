@@ -48,7 +48,7 @@
 //! #[tokio::main]
 //! async fn main() {
 //!     // An actify handle is created and initialized with the Greeter struct
-//!     let handle = Handle::new_from(Greeter {});
+//!     let handle = Handle::new(Greeter {});
 //!
 //!     // The say_hi method is made available on its handle through the actify! macro
 //!     let greeting = handle.say_hi("Alfred".to_string()).await.unwrap();
@@ -98,14 +98,14 @@
 //!         let name: String = *args.downcast().unwrap();
 //!
 //!         // This call is the actual execution of the method from the user-defined impl block, on the struct held by the actor
-//!         let result: String = self.inner.as_mut().unwrap().say_hi(name);  
+//!         let result: String = self.inner.say_hi(name);  
 //!         Ok(Box::new(result))
 //!     }
 //! }
 //!
 //! #[tokio::main]
 //! async fn main() {
-//!     let handle = Handle::new_from(Greeter {});
+//!     let handle = Handle::new(Greeter {});
 //!     let greeting = handle.say_hi("Alfred".to_string()).await.unwrap();
 //!     assert_eq!(greeting, "hi Alfred".to_string())
 //! }
@@ -127,7 +127,7 @@
 //!
 //! #[tokio::main]
 //! async fn main() {
-//!     let handle = Handle::new_from(AsyncGreeter {});
+//!     let handle = Handle::new(AsyncGreeter {});
 //!     let greeting = handle.async_hi("Alfred".to_string()).await.unwrap();
 //!     assert_eq!(greeting, "hi Alfred".to_string())
 //! }
@@ -155,7 +155,7 @@
 //!
 //! #[tokio::main]
 //! async fn main() {
-//!     let handle = Handle::new_from(GenericGreeter { inner: usize::default() });
+//!     let handle = Handle::new(GenericGreeter { inner: usize::default() });
 //!     let greeting = handle.generic_hi("Alfred".to_string()).await.unwrap();
 //!     assert_eq!(greeting, "hi Alfred from 0".to_string())
 //! }
@@ -301,13 +301,7 @@ mod tests {
         ) -> Result<Box<dyn std::any::Any + Send>, ActorError> {
             let (test, f): (usize, F) = *args.downcast().unwrap();
 
-            let result: f32 = self
-                .inner
-                .as_mut()
-                .ok_or(ActorError::NoValueSet(
-                    std::any::type_name::<TestStruct<T>>().to_string(),
-                ))?
-                .bar(test, f);
+            let result: f32 = self.inner.bar(test, f);
 
             self.broadcast();
 
@@ -317,7 +311,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_macro() {
-        let actor_handle = Handle::new_from(TestStruct {
+        let actor_handle = Handle::new(TestStruct {
             inner_data: "Test".to_string(),
         });
 

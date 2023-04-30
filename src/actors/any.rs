@@ -9,7 +9,7 @@ use crate::{
     Cache, Frequency, ThrottleBuilder, Throttled,
 };
 
-// ------- Clonable handle that can be used to remotely execute a closure on the actor ------- //
+/// A clonable handle that can be used to remotely execute a closure on the corresponding actor
 #[derive(Debug, Clone)]
 pub struct Handle<T> {
     tx: mpsc::Sender<Job<T>>,
@@ -20,18 +20,27 @@ impl<T> Handle<T>
 where
     T: Clone + Debug + Send + Sync + 'static,
 {
+    /// Creates an itialized cache that can locally synchronize with the remote actor.
+    /// It does this through subscribing to broadcasted updates from the actor.
+    /// Itialized implies that it initially performs a get(). Therefore any updates before construction are included,
+    /// and a get_newest() always returns the current value.
     pub async fn create_initialized_cache(&self) -> Result<Cache<T>, ActorError> {
         Cache::new_initialized(self.clone()).await
     }
 
+    /// Creates an unitialized cache that can locally synchronize with the remote actor
+    /// It does this through subscribing to broadcasted updates from the actor
+    /// Unitialized implies that it does not initially performs a get(). Therefore any updates before construction are missed.
     pub fn create_uninitialized_cache(&self) -> Cache<T> {
         Cache::new(self.clone())
     }
 
+    /// Returns the current capacity of the channel
     pub fn capacity(&self) -> usize {
         self.tx.capacity()
     }
 
+    /// Spawns a throttle that fires given a specificed [Frequency], given any broadcasted updates by the actor.
     pub fn spawn_throttle<C, F>(
         &self,
         client: C,
@@ -49,6 +58,7 @@ where
         Ok(())
     }
 
+    /// Receives a clone of the current value of the actor
     pub async fn get(&self) -> Result<T, ActorError> {
         let res = self
             .send_job(FnType::Inner(Box::new(Actor::get)), Box::new(()))
@@ -56,13 +66,7 @@ where
         Ok(*res.downcast().expect(WRONG_RESPONSE))
     }
 
-    pub async fn is_none(&self) -> Result<bool, ActorError> {
-        let res = self
-            .send_job(FnType::Inner(Box::new(Actor::is_none)), Box::new(()))
-            .await?;
-        Ok(*res.downcast().expect(WRONG_RESPONSE))
-    }
-
+    /// Overwrites the inner value of the actor with the new value
     pub async fn set(&self, val: T) -> Result<(), ActorError> {
         let res = self
             .send_job(FnType::Inner(Box::new(Actor::set)), Box::new(val))
@@ -70,6 +74,9 @@ where
         Ok(*res.downcast().expect(WRONG_RESPONSE))
     }
 
+    /// Returns a receiver that receives all updated values from the actor
+    /// Note that the inner value might not actually have changed.
+    /// It broadcasts on any method that has a mutable reference to the actor.
     pub fn subscribe(&self) -> broadcast::Receiver<T> {
         self._broadcast.subscribe()
     }
@@ -80,18 +87,10 @@ impl<T> Handle<T>
 where
     T: Clone + Debug + Send + Sync + 'static,
 {
-    pub fn new() -> Handle<T> {
-        Self::_new(None)
-    }
-
-    pub fn new_from(init: T) -> Handle<T> {
-        Self::_new(Some(init))
-    }
-
-    fn _new(init: Option<T>) -> Handle<T> {
+    pub fn new(val: T) -> Handle<T> {
         let (tx, rx) = mpsc::channel(CHANNEL_SIZE);
         let (broadcast, _) = broadcast::channel(CHANNEL_SIZE);
-        let actor = Actor::new(broadcast.clone(), init);
+        let actor = Actor::new(broadcast.clone(), val);
         let listener = Listener::new(rx, actor);
         tokio::spawn(Listener::serve(listener));
         Handle {
@@ -114,15 +113,6 @@ where
         self.tx.send(job).await?;
         get_result.await?
         // TODO add a timeout on this result await
-    }
-}
-
-impl<T> Default for Handle<T>
-where
-    T: Clone + Debug + Send + Sync + 'static,
-{
-    fn default() -> Self {
-        Self::new()
     }
 }
 
@@ -166,7 +156,7 @@ where
 // ------- The remote actor that runs in a seperate thread ------- //
 #[derive(Debug)]
 pub struct Actor<T> {
-    pub inner: Option<T>,
+    pub inner: T,
     pub broadcast: broadcast::Sender<T>,
 }
 
@@ -174,25 +164,16 @@ impl<T> Actor<T>
 where
     T: Clone + Send + 'static,
 {
-    fn new(broadcast: broadcast::Sender<T>, inner: Option<T>) -> Self {
+    fn new(broadcast: broadcast::Sender<T>, inner: T) -> Self {
         Self { inner, broadcast }
     }
 
-    fn is_none(&mut self, _args: Box<dyn Any + Send>) -> Result<Box<dyn Any + Send>, ActorError> {
-        Ok(Box::new(self.inner.is_none()))
-    }
-
     fn get(&mut self, _args: Box<dyn Any + Send>) -> Result<Box<dyn Any + Send>, ActorError> {
-        Ok(Box::new(
-            self.inner
-                .as_ref()
-                .ok_or_else(|| ActorError::NoValueSet(std::any::type_name::<T>().to_string()))?
-                .clone(),
-        ))
+        Ok(Box::new(self.inner.clone()))
     }
 
     fn set(&mut self, args: Box<dyn Any + Send>) -> Result<Box<dyn Any + Send>, ActorError> {
-        self.inner = Some(*args.downcast().expect(WRONG_ARGS));
+        self.inner = *args.downcast().expect(WRONG_ARGS);
         self.broadcast();
         Ok(Box::new(()))
     }
@@ -200,10 +181,8 @@ where
     pub fn broadcast(&self) {
         // A broadcast error is not propagated, as otherwise a succesful call could produce an independent broadcast error
         if self.broadcast.receiver_count() > 0 {
-            if let Some(val) = &self.inner {
-                if let Err(e) = self.broadcast.send(val.clone()) {
-                    log::warn!("Broadcast value error: {:?}", e.to_string());
-                }
+            if let Err(e) = self.broadcast.send(self.inner.clone()) {
+                log::warn!("Broadcast value error: {:?}", e.to_string());
             }
         }
     }
@@ -216,8 +195,17 @@ struct Job<T> {
     respond_to: oneshot::Sender<Result<Box<dyn Any + Send>, ActorError>>,
 }
 
+impl<T> fmt::Debug for Job<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Job")
+            .field("call", &self.call)
+            .field("args", &"Box<dyn Any + Send>")
+            .field("respond_to", &"oneshot::Sender")
+            .finish()
+    }
+}
+
 // Closures are either to be evaluated using actor functions over the inner value, or by custom implementations over specific types
-#[allow(missing_debug_implementations)]
 #[allow(clippy::type_complexity)]
 pub enum FnType<T> {
     Inner(
@@ -238,10 +226,13 @@ pub enum FnType<T> {
     ),
 }
 
-impl<T> fmt::Debug for Job<T> {
+impl<T> fmt::Debug for FnType<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let inner_type = std::any::type_name::<T>();
-        write!(f, "Job [call: FnType<{inner_type}>, args: Any, respond_to: Sender<Result<Any>, ActorError>]")
+        match self {
+            FnType::Inner(_) => write!(f, "FnType::Inner<{inner_type}>"),
+            FnType::InnerAsync(_) => write!(f, "FnType::InnerAsync<{inner_type}>"),
+        }
     }
 }
 

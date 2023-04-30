@@ -9,6 +9,8 @@ pub(crate) mod map;
 pub(crate) mod vec;
 
 const CHANNEL_SIZE: usize = 100;
+
+// Note that these error messages should never occur, unless a mistake has been made in the macro design.
 const WRONG_ARGS: &str = "Incorrect arguments have been provided for this method";
 const WRONG_RESPONSE: &str = "An incorrect response type for this method has been called";
 
@@ -52,12 +54,11 @@ mod tests {
     use crate::ActorVecHandle;
     use crate::Handle;
 
-    use super::*;
     use std::collections::HashMap;
 
     #[tokio::test]
     async fn receive_val_broadcast() {
-        let handle = Handle::new();
+        let handle = Handle::new(None);
         let mut rx = handle.subscribe();
         handle.set(Some("testing!")).await.unwrap();
         assert_eq!(rx.recv().await.unwrap(), Some("testing!"));
@@ -65,29 +66,15 @@ mod tests {
 
     #[tokio::test]
     async fn set_ok_actor() {
-        let handle = Handle::new();
-        handle.set(1).await.unwrap();
+        let handle = Handle::new(None);
+        handle.set(Some(1)).await.unwrap();
     }
 
     #[tokio::test]
     async fn get_ok_actor() {
-        let handle = Handle::new();
-        handle.set(1).await.unwrap();
+        let handle = Handle::new(1);
         let result = handle.get().await;
         assert_eq!(result.unwrap(), 1);
-    }
-
-    #[tokio::test]
-    async fn get_err_actor() {
-        let handle = Handle::<i32>::new();
-        assert!(handle.get().await.is_err());
-    }
-
-    #[tokio::test]
-    async fn no_val_set_actor() {
-        let handle = Handle::<ActorVec<i32>>::new();
-        let err = handle.push(10).await.unwrap_err();
-        assert!(matches!(err, ActorError::NoValueSet(_)))
     }
 
     #[tokio::test]
@@ -116,16 +103,14 @@ mod tests {
 
     #[tokio::test]
     async fn push_to_actor() {
-        let handle = Handle::new();
-        handle.set(vec![1, 2].into()).await.unwrap();
+        let handle = Handle::new(vec![1, 2].into());
         handle.push(100).await.unwrap();
         assert_eq!(handle.get_inner().await.unwrap(), vec![1, 2, 100]);
     }
 
     #[tokio::test]
     async fn drain_actor() {
-        let handle = Handle::new();
-        handle.set(vec![1, 2].into()).await.unwrap();
+        let handle = Handle::new(vec![1, 2].into());
         let res = handle.drain().await.unwrap();
         assert_eq!(res, vec![1, 2]);
         assert_eq!(handle.get_inner().await.unwrap(), Vec::<i32>::new());
@@ -133,16 +118,14 @@ mod tests {
 
     #[tokio::test]
     async fn insert_at_actor() {
-        let handle = Handle::new();
-        handle.set(HashMap::new().into()).await.unwrap();
+        let handle = Handle::new(HashMap::new().into());
         let res = handle.insert("test", 10).await.unwrap();
         assert_eq!(res, None);
     }
 
     #[tokio::test]
     async fn insert_overwrite_at_actor() {
-        let handle = Handle::new();
-        handle.set(HashMap::new().into()).await.unwrap();
+        let handle = Handle::new(HashMap::new().into());
         handle.insert("test", 10).await.unwrap();
         let old_value = handle.insert("test", 20).await.unwrap();
         assert_eq!(old_value, Some(10));
@@ -150,8 +133,7 @@ mod tests {
 
     #[tokio::test]
     async fn get_key_actor() {
-        let handle = Handle::new();
-        handle.set(HashMap::new().into()).await.unwrap();
+        let handle = Handle::new(HashMap::new().into());
         handle.insert("test", 10).await.unwrap();
         let res = handle.get_key("test").await.unwrap();
         assert_eq!(res, Some(10));
@@ -159,48 +141,20 @@ mod tests {
 
     #[tokio::test]
     async fn get_empty_from_actor() {
-        let handle = Handle::new();
-        handle.set(ActorMap::<&str, i32>::new()).await.unwrap();
+        let handle = Handle::new(ActorMap::<&str, i32>::new());
         let res = handle.get_key("test").await.unwrap();
         assert_eq!(res, None);
     }
 
     #[tokio::test]
-    async fn actor_is_none() {
-        let handle = Handle::<i32>::new();
-        assert_eq!(handle.is_none().await.unwrap(), true);
-    }
-
-    #[tokio::test]
-    async fn actor_is_not_none() {
-        let handle = Handle::new();
-        handle.set(1).await.unwrap();
-        assert_eq!(handle.is_none().await.unwrap(), false);
-    }
-
-    #[tokio::test]
     async fn actor_hashmap_is_empty() {
-        let handle = Handle::new_from(ActorMap::<&str, i32>::new());
+        let handle = Handle::new(ActorMap::<&str, i32>::new());
         assert_eq!(handle.is_empty().await.unwrap(), true);
-    }
-
-    #[tokio::test]
-    async fn actor_hashmap_is_not_empty() {
-        let handle = Handle::new_from(HashMap::new().into());
-        handle.insert("test", 1).await.unwrap();
-        assert_eq!(handle.is_none().await.unwrap(), false);
     }
 
     #[tokio::test]
     async fn actor_vec_is_empty() {
-        let handle = Handle::new_from(ActorVec::<i32>::new());
+        let handle = Handle::new(ActorVec::<i32>::new());
         assert_eq!(handle.is_empty().await.unwrap(), true);
-    }
-
-    #[tokio::test]
-    async fn actor_vec_is_not_empty() {
-        let handle = Handle::new_from(ActorVec::new());
-        handle.push(1).await.unwrap();
-        assert_eq!(handle.is_none().await.unwrap(), false);
     }
 }
