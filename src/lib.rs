@@ -210,8 +210,9 @@ mod throttle;
 // Reexport for easier reference
 pub use actify_macros::actify;
 pub use actors::any::{Actor, FnType, Handle};
-pub use actors::map::{ActorMap, ActorMapHandle};
-pub use actors::vec::{ActorVec, ActorVecHandle};
+pub use actors::map::HashMapHandle;
+pub use actors::option::OptionHandle;
+pub use actors::vec::VecHandle;
 pub use actors::ActorError;
 pub use async_trait::async_trait;
 pub use cache::Cache;

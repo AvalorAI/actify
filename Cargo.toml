@@ -17,8 +17,9 @@ tokio = { version = "1.15", features = ["full"] }
 tonic = "0.9"
 log = "0.4"
 env_logger = "0.10"
-actify-macros = "0.2"
 futures = "0.3.26"
+# actify-macros = "0.2"
+actify-macros = { path = "./actify-macros", version = "0.2" }
 
 [features]
 default = []

@@ -6,6 +6,7 @@ use crate::ThrottleError;
 
 pub(crate) mod any;
 pub(crate) mod map;
+pub(crate) mod option;
 pub(crate) mod vec;
 
 const CHANNEL_SIZE: usize = 100;
@@ -48,11 +49,10 @@ impl From<ActorError> for tonic::Status {
 
 #[cfg(test)]
 mod tests {
-    use crate::ActorMap;
-    use crate::ActorMapHandle;
-    use crate::ActorVec;
-    use crate::ActorVecHandle;
     use crate::Handle;
+    use crate::HashMapHandle;
+    use crate::OptionHandle;
+    use crate::VecHandle;
 
     use std::collections::HashMap;
 
@@ -78,47 +78,23 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_vec_refs_derefs() {
-        let mut actor_vec: ActorVec<i32> = vec![2].into();
-        assert_eq!(vec![2], *actor_vec);
-        let _: &Vec<i32> = actor_vec.as_ref(); // must compile
-        *actor_vec = vec![3];
-        assert_eq!(vec![3], *actor_vec);
-        let _: &Vec<i32> = actor_vec.as_mut(); // must compile
-    }
-
-    #[tokio::test]
-    async fn test_map_refs_derefs() {
-        let mut map = HashMap::new();
-        map.insert("test", 10);
-        let mut actor_map: ActorMap<&str, i32> = map.clone().into();
-        assert_eq!(map, *actor_map);
-        let _: &HashMap<&str, i32> = actor_map.as_ref(); // must compile
-        let mut other_map = HashMap::new();
-        other_map.insert("test_2", 12);
-        *actor_map = other_map.clone();
-        assert_eq!(other_map, *actor_map);
-        let _: &HashMap<&str, i32> = actor_map.as_mut(); // must compile
-    }
-
-    #[tokio::test]
     async fn push_to_actor() {
-        let handle = Handle::new(vec![1, 2].into());
+        let handle = Handle::new(vec![1, 2]);
         handle.push(100).await.unwrap();
-        assert_eq!(handle.get_inner().await.unwrap(), vec![1, 2, 100]);
+        assert_eq!(handle.get().await.unwrap(), vec![1, 2, 100]);
     }
 
     #[tokio::test]
     async fn drain_actor() {
-        let handle = Handle::new(vec![1, 2].into());
+        let handle = Handle::new(vec![1, 2]);
         let res = handle.drain().await.unwrap();
         assert_eq!(res, vec![1, 2]);
-        assert_eq!(handle.get_inner().await.unwrap(), Vec::<i32>::new());
+        assert_eq!(handle.get().await.unwrap(), Vec::<i32>::new());
     }
 
     #[tokio::test]
     async fn insert_at_actor() {
-        let handle = Handle::new(HashMap::new().into());
+        let handle = Handle::new(HashMap::new());
         let res = handle.insert("test", 10).await.unwrap();
         assert_eq!(res, None);
     }
@@ -141,20 +117,32 @@ mod tests {
 
     #[tokio::test]
     async fn get_empty_from_actor() {
-        let handle = Handle::new(ActorMap::<&str, i32>::new());
+        let handle = Handle::new(HashMap::<&str, i32>::new());
         let res = handle.get_key("test").await.unwrap();
         assert_eq!(res, None);
     }
 
     #[tokio::test]
     async fn actor_hashmap_is_empty() {
-        let handle = Handle::new(ActorMap::<&str, i32>::new());
-        assert_eq!(handle.is_empty().await.unwrap(), true);
+        let handle = Handle::new(HashMap::<&str, i32>::new());
+        assert!(handle.is_empty().await.unwrap());
     }
 
     #[tokio::test]
     async fn actor_vec_is_empty() {
-        let handle = Handle::new(ActorVec::<i32>::new());
-        assert_eq!(handle.is_empty().await.unwrap(), true);
+        let handle = Handle::new(Vec::<i32>::new());
+        assert!(handle.is_empty().await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn actor_option_is_none() {
+        let handle = Handle::new(Option::<i32>::None);
+        assert!(handle.is_none().await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn actor_option_is_some() {
+        let handle = Handle::new(Some(1));
+        assert_eq!(handle.is_some().await.unwrap(), true);
     }
 }
