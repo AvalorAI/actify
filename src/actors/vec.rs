@@ -1,94 +1,85 @@
-use async_trait::async_trait;
-use std::{any::Any, fmt::Debug};
-
-use crate::{
-    actors::{ActorError, WRONG_ARGS, WRONG_RESPONSE},
-    FnType, Handle,
+use crate as actify;
+use actify_macros::actify;
+use std::{
+    fmt::Debug,
+    ops::{Deref, DerefMut},
 };
 
-use super::any::Actor;
-
-#[async_trait]
-pub trait VecHandle<I>
-where
-    I: Clone + Debug + Send + Sync + 'static,
-{
-    async fn push(&self, val: I) -> Result<(), ActorError>;
-
-    async fn is_empty(&self) -> Result<bool, ActorError>;
-
-    async fn drain(&self) -> Result<Vec<I>, ActorError>;
+#[derive(Clone, Debug)]
+pub struct ActorVec<T> {
+    inner: Vec<T>,
 }
 
-#[async_trait]
-impl<I> VecHandle<I> for Handle<Vec<I>>
+impl<T> ActorVec<T>
 where
-    I: Clone + Debug + Send + Sync + 'static,
+    T: Clone + Debug + Send + Sync + 'static,
 {
-    async fn push(&self, val: I) -> Result<(), ActorError> {
-        let res = self
-            .send_job(FnType::Inner(Box::new(VecActor::push)), Box::new(val))
-            .await?;
-        Ok(*res.downcast().expect(WRONG_RESPONSE))
-    }
-
-    async fn is_empty(&self) -> Result<bool, ActorError> {
-        let res = self
-            .send_job(FnType::Inner(Box::new(VecActor::is_empty)), Box::new(()))
-            .await?;
-        Ok(*res.downcast().expect(WRONG_RESPONSE))
-    }
-
-    async fn drain(&self) -> Result<Vec<I>, ActorError> {
-        let res = self
-            .send_job(FnType::Inner(Box::new(VecActor::drain)), Box::new(()))
-            .await?;
-        Ok(*res.downcast().expect(WRONG_RESPONSE))
+    pub fn new() -> ActorVec<T> {
+        ActorVec { inner: Vec::new() }
     }
 }
 
-trait VecActor {
-    fn push(&mut self, args: Box<dyn Any + Send>) -> Result<Box<dyn Any + Send>, ActorError>;
-
-    fn is_empty(&mut self, args: Box<dyn Any + Send>) -> Result<Box<dyn Any + Send>, ActorError>;
-
-    fn drain(&mut self, args: Box<dyn Any + Send>) -> Result<Box<dyn Any + Send>, ActorError>;
+impl<T> From<Vec<T>> for ActorVec<T> {
+    fn from(vec: Vec<T>) -> ActorVec<T> {
+        ActorVec { inner: vec }
+    }
 }
 
-impl<I> VecActor for Actor<Vec<I>>
+impl<T> Deref for ActorVec<T> {
+    type Target = Vec<T>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.inner
+    }
+}
+
+impl<T> DerefMut for ActorVec<T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.inner
+    }
+}
+
+impl<T> AsRef<Vec<T>> for ActorVec<T> {
+    fn as_ref(&self) -> &Vec<T> {
+        self.deref()
+    }
+}
+
+impl<T> AsMut<Vec<T>> for ActorVec<T> {
+    fn as_mut(&mut self) -> &mut Vec<T> {
+        self.deref_mut()
+    }
+}
+
+#[actify]
+impl<T> ActorVec<T>
 where
-    I: Clone + Debug + Send + Sync + 'static,
+    T: Clone + Debug + Send + Sync + 'static,
 {
-    fn push(&mut self, args: Box<dyn Any + Send>) -> Result<Box<dyn Any + Send>, ActorError> {
-        let val = *args.downcast().expect(WRONG_ARGS);
-        self.inner
-            .as_mut()
-            .ok_or_else(|| ActorError::NoValueSet(std::any::type_name::<Vec<I>>().to_string()))?
-            .push(val);
-        self.broadcast();
-        Ok(Box::new(()))
+    // Sets the complete inner vector. Shorthand for calling .into().set()
+    fn set_inner(&mut self, vec: Vec<T>) {
+        self.inner = vec;
     }
 
-    fn is_empty(&mut self, _args: Box<dyn Any + Send>) -> Result<Box<dyn Any + Send>, ActorError> {
-        if let Some(inner) = &self.inner {
-            if inner.is_empty() {
-                Ok(Box::new(true))
-            } else {
-                Ok(Box::new(false))
-            }
-        } else {
-            Ok(Box::new(true))
-        }
+    // Returns a clone of the inner vector. Shorthand for calling .get().into()
+    fn get_inner(&self) -> Vec<T> {
+        self.inner.clone()
     }
 
-    fn drain(&mut self, _args: Box<dyn Any + Send>) -> Result<Box<dyn Any + Send>, ActorError> {
-        let contents: Vec<I> = self
-            .inner
-            .as_mut()
-            .ok_or_else(|| ActorError::NoValueSet(std::any::type_name::<Vec<I>>().to_string()))?
-            .drain(..)
-            .collect();
-        self.broadcast();
-        Ok(Box::new(contents))
+    /// Appends an element to the back of a collection.
+    fn push(&mut self, value: T) {
+        self.inner.push(value)
+    }
+
+    /// Returns `true` if the vector contains no elements.
+    fn is_empty(&self) -> bool {
+        self.inner.is_empty()
+    }
+
+    /// Removes the complete range from the vector in bulk, and returns it as a new vector
+    fn drain(&mut self) -> Vec<T> {
+        // TODO add actual range as with the std vec
+        // TODO this is currently not possible without supporting generic method arguments
+        self.inner.drain(..).collect()
     }
 }
