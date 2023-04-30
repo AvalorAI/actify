@@ -44,10 +44,11 @@ impl From<ActorError> for tonic::Status {
 
 #[cfg(test)]
 mod tests {
+    use crate::ActorMap;
+    use crate::ActorMapHandle;
     use crate::ActorVec;
     use crate::ActorVecHandle;
     use crate::Handle;
-    use crate::MapHandle;
 
     use super::*;
     use anyhow::{anyhow, Result};
@@ -100,6 +101,20 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_map_refs_derefs() {
+        let mut map = HashMap::new();
+        map.insert("test", 10);
+        let mut actor_map: ActorMap<&str, i32> = map.clone().into();
+        assert_eq!(map, *actor_map);
+        let _: &HashMap<&str, i32> = actor_map.as_ref(); // must compile
+        let mut other_map = HashMap::new();
+        other_map.insert("test_2", 12);
+        *actor_map = other_map.clone();
+        assert_eq!(other_map, *actor_map);
+        let _: &HashMap<&str, i32> = actor_map.as_mut(); // must compile
+    }
+
+    #[tokio::test]
     async fn push_to_actor() {
         let handle = Handle::new();
         handle.set(vec![1, 2].into()).await.unwrap();
@@ -119,7 +134,7 @@ mod tests {
     #[tokio::test]
     async fn insert_at_actor() {
         let handle = Handle::new();
-        handle.set(HashMap::new()).await.unwrap();
+        handle.set(HashMap::new().into()).await.unwrap();
         let res = handle.insert("test", 10).await.unwrap();
         assert_eq!(res, None);
     }
@@ -127,7 +142,7 @@ mod tests {
     #[tokio::test]
     async fn insert_overwrite_at_actor() {
         let handle = Handle::new();
-        handle.set(HashMap::new()).await.unwrap();
+        handle.set(HashMap::new().into()).await.unwrap();
         handle.insert("test", 10).await.unwrap();
         let old_value = handle.insert("test", 20).await.unwrap();
         assert_eq!(old_value, Some(10));
@@ -136,7 +151,7 @@ mod tests {
     #[tokio::test]
     async fn get_key_actor() {
         let handle = Handle::new();
-        handle.set(HashMap::new()).await.unwrap();
+        handle.set(HashMap::new().into()).await.unwrap();
         handle.insert("test", 10).await.unwrap();
         let res = handle.get_key("test").await.unwrap();
         assert_eq!(res, Some(10));
@@ -145,7 +160,7 @@ mod tests {
     #[tokio::test]
     async fn get_empty_from_actor() {
         let handle = Handle::new();
-        handle.set(HashMap::<&str, i32>::new()).await.unwrap();
+        handle.set(ActorMap::<&str, i32>::new()).await.unwrap();
         let res = handle.get_key("test").await.unwrap();
         assert_eq!(res, None);
     }
@@ -165,13 +180,13 @@ mod tests {
 
     #[tokio::test]
     async fn actor_hashmap_is_empty() {
-        let handle = Handle::new_from(HashMap::<&str, i32>::new());
+        let handle = Handle::new_from(ActorMap::<&str, i32>::new());
         assert_eq!(handle.is_empty().await.unwrap(), true);
     }
 
     #[tokio::test]
     async fn actor_hashmap_is_not_empty() {
-        let handle = Handle::new_from(HashMap::new());
+        let handle = Handle::new_from(HashMap::new().into());
         handle.insert("test", 1).await.unwrap();
         assert_eq!(handle.is_none().await.unwrap(), false);
     }

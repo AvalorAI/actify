@@ -1,108 +1,91 @@
+use crate as actify;
+use actify_macros::actify;
 use anyhow::Result;
-use async_trait::async_trait;
 use std::collections::HashMap;
+use std::fmt::Debug;
 use std::hash::Hash;
-use std::{any::Any, fmt::Debug};
+use std::ops::{Deref, DerefMut};
 
-use crate::{
-    actors::{ActorError, WRONG_ARGS, WRONG_RESPONSE},
-    FnType, Handle,
-};
+#[derive(Clone, Debug)]
+pub struct ActorMap<K, V> {
+    inner: HashMap<K, V>,
+}
 
-use super::any::Actor;
-
-#[async_trait]
-pub trait MapHandle<K, V>
+impl<K, V> ActorMap<K, V>
 where
     K: Clone + Debug + Eq + Hash + Send + Sync + 'static,
     V: Clone + Debug + Send + Sync + 'static,
 {
-    async fn get_key(&self, key: K) -> Result<Option<V>, ActorError>;
-
-    async fn insert(&self, key: K, val: V) -> Result<Option<V>, ActorError>;
-
-    async fn is_empty(&self) -> Result<bool, ActorError>;
-}
-
-#[async_trait]
-impl<K, V> MapHandle<K, V> for Handle<HashMap<K, V>>
-where
-    K: Clone + Debug + Eq + Hash + Send + Sync + 'static,
-    V: Clone + Debug + Send + Sync + 'static,
-{
-    async fn get_key(&self, key: K) -> Result<Option<V>, ActorError> {
-        let res = self
-            .send_job(FnType::Inner(Box::new(MapActor::get_key)), Box::new(key))
-            .await?;
-        Ok(*res.downcast().expect(WRONG_RESPONSE))
-    }
-
-    async fn insert(&self, key: K, val: V) -> Result<Option<V>, ActorError> {
-        let res = self
-            .send_job(
-                FnType::Inner(Box::new(MapActor::insert)),
-                Box::new((key, val)),
-            )
-            .await?;
-        Ok(*res.downcast().expect(WRONG_RESPONSE))
-    }
-
-    async fn is_empty(&self) -> Result<bool, ActorError> {
-        let res = self
-            .send_job(FnType::Inner(Box::new(MapActor::is_empty)), Box::new(()))
-            .await?;
-        Ok(*res.downcast().expect(WRONG_RESPONSE))
-    }
-}
-
-trait MapActor {
-    fn get_key(&mut self, args: Box<dyn Any + Send>) -> Result<Box<dyn Any + Send>, ActorError>;
-
-    fn insert(&mut self, args: Box<dyn Any + Send>) -> Result<Box<dyn Any + Send>, ActorError>;
-
-    fn is_empty(&mut self, args: Box<dyn Any + Send>) -> Result<Box<dyn Any + Send>, ActorError>;
-}
-
-impl<K, V> MapActor for Actor<HashMap<K, V>>
-where
-    K: Clone + Debug + Eq + Hash + Send + 'static,
-    V: Clone + Debug + Send + 'static,
-{
-    fn get_key(&mut self, args: Box<dyn Any + Send>) -> Result<Box<dyn Any + Send>, ActorError> {
-        let val = *args.downcast().expect(WRONG_ARGS);
-        let res = self
-            .inner
-            .as_mut()
-            .ok_or_else(|| {
-                ActorError::NoValueSet(std::any::type_name::<HashMap<K, V>>().to_string())
-            })?
-            .get(&val)
-            .cloned();
-        Ok(Box::new(res))
-    }
-
-    fn insert(&mut self, args: Box<dyn Any + Send>) -> Result<Box<dyn Any + Send>, ActorError> {
-        let (key, val) = *args.downcast().expect(WRONG_ARGS);
-        let res = self
-            .inner
-            .as_mut()
-            .ok_or_else(|| {
-                ActorError::NoValueSet(std::any::type_name::<HashMap<K, V>>().to_string())
-            })?
-            .insert(key, val);
-        self.broadcast();
-        Ok(Box::new(res))
-    }
-
-    fn is_empty(&mut self, _args: Box<dyn Any + Send>) -> Result<Box<dyn Any + Send>, ActorError> {
-        if let Some(inner) = &self.inner {
-            if inner.is_empty() {
-                Ok(Box::new(true)) // If map set, but still empty
-            } else {
-                Ok(Box::new(false)) // Any set and filled map
-            }
-        } else {
-            Ok(Box::new(true)) // If none set, its empty
+    pub fn new() -> ActorMap<K, V> {
+        ActorMap {
+            inner: HashMap::new(),
         }
+    }
+}
+
+impl<K, V> From<HashMap<K, V>> for ActorMap<K, V> {
+    fn from(map: HashMap<K, V>) -> ActorMap<K, V> {
+        ActorMap { inner: map }
+    }
+}
+
+impl<K, V> Deref for ActorMap<K, V> {
+    type Target = HashMap<K, V>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.inner
+    }
+}
+
+impl<K, V> DerefMut for ActorMap<K, V> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.inner
+    }
+}
+
+impl<K, V> AsRef<HashMap<K, V>> for ActorMap<K, V> {
+    fn as_ref(&self) -> &HashMap<K, V> {
+        self.deref()
+    }
+}
+
+impl<K, V> AsMut<HashMap<K, V>> for ActorMap<K, V> {
+    fn as_mut(&mut self) -> &mut HashMap<K, V> {
+        self.deref_mut()
+    }
+}
+
+#[actify]
+impl<K, V> ActorMap<K, V>
+where
+    K: Clone + Debug + Eq + Hash + Send + Sync + 'static,
+    V: Clone + Debug + Send + Sync + 'static,
+{
+    // Sets the complete inner hashmap. Shorthand for calling .into().set()
+    fn set_inner(&mut self, map: HashMap<K, V>) {
+        self.inner = map;
+    }
+
+    // Returns a clone of the inner hashmap. Shorthand for calling .get().into()
+    fn get_inner(&self) -> HashMap<K, V> {
+        self.inner.clone()
+    }
+
+    /// Returns a clone of the value corresponding to the key if it exists
+    fn get_key(&self, key: K) -> Option<V> {
+        self.inner.get(&key).cloned()
+    }
+
+    /// Inserts a key-value pair into the map.
+    /// If the map did not have this key present, [`None`] is returned.
+    /// If the map did have this key present, the value is updated, and the old value is returned.
+    /// In that case the key is not updated.
+    fn insert(&mut self, key: K, val: V) -> Option<V> {
+        self.inner.insert(key, val)
+    }
+
+    /// Returns `true` if the map contains no elements.
+    fn is_empty(&self) -> bool {
+        self.inner.is_empty()
     }
 }

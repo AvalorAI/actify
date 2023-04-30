@@ -40,21 +40,15 @@ impl<T> DerefMut for ActorVec<T> {
     }
 }
 
-impl<T> AsRef<T> for ActorVec<T>
-where
-    <ActorVec<T> as Deref>::Target: AsRef<T>,
-{
-    fn as_ref(&self) -> &T {
-        self.deref().as_ref()
+impl<T> AsRef<Vec<T>> for ActorVec<T> {
+    fn as_ref(&self) -> &Vec<T> {
+        self.deref()
     }
 }
 
-impl<T> AsMut<T> for ActorVec<T>
-where
-    <ActorVec<T> as Deref>::Target: AsMut<T>,
-{
-    fn as_mut(&mut self) -> &mut T {
-        self.deref_mut().as_mut()
+impl<T> AsMut<Vec<T>> for ActorVec<T> {
+    fn as_mut(&mut self) -> &mut Vec<T> {
+        self.deref_mut()
     }
 }
 
@@ -63,23 +57,30 @@ impl<T> ActorVec<T>
 where
     T: Clone + Debug + Send + Sync + 'static,
 {
+    // Sets the complete inner vector. Shorthand for calling .into().set()
     fn set_inner(&mut self, vec: Vec<T>) {
         self.inner = vec;
     }
 
+    // Returns a clone of the inner vector. Shorthand for calling .get().into()
     fn get_inner(&self) -> Vec<T> {
         self.inner.clone()
     }
 
+    /// Appends an element to the back of a collection.
     fn push(&mut self, value: T) {
         self.inner.push(value)
     }
 
+    /// Returns `true` if the vector contains no elements.
     fn is_empty(&self) -> bool {
         self.inner.is_empty()
     }
 
+    /// Removes the complete range from the vector in bulk, and returns it as a new vector
     fn drain(&mut self) -> Vec<T> {
-        self.inner.drain(..).collect() // TODO add the range as with the std vec
+        // TODO add actual range as with the std vec
+        // TODO this is currently not possible without supporting generic method arguments
+        self.inner.drain(..).collect()
     }
 }
