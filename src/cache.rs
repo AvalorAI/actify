@@ -24,7 +24,7 @@ where
             handle: self.handle.clone(),
             inner: self.inner.clone(),
             rx: self.handle.subscribe(),
-            has_listenend: self.has_listenend.clone(),
+            has_listenend: self.has_listenend,
         }
     }
 }
@@ -211,7 +211,7 @@ mod tests {
         let cache = handle.create_initialized_cache().await.unwrap();
         assert_eq!(cache.has_updates(), false);
         handle.set(2).await.unwrap();
-        assert_eq!(cache.has_updates(), true);
+        assert!(cache.has_updates());
     }
 
     #[tokio::test]
