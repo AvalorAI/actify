@@ -205,17 +205,16 @@
 
 mod actors;
 mod cache;
+mod extensions;
 mod throttle;
 
 // Reexport for easier reference
 pub use actify_macros::actify;
-pub use actors::any::{Actor, FnType, Handle};
-pub use actors::map::HashMapHandle;
-pub use actors::option::OptionHandle;
-pub use actors::vec::VecHandle;
 pub use actors::ActorError;
+pub use actors::{Actor, FnType, Handle};
 pub use async_trait::async_trait;
 pub use cache::Cache;
+pub use extensions::{map::HashMapHandle, option::OptionHandle, vec::VecHandle};
 pub use throttle::{Frequency, ThrottleBuilder, ThrottleError, Throttled};
 
 /// An example struct for the macro tests
