@@ -371,6 +371,8 @@ fn generate_methods(
     for attribute in &original_method.attrs {
         if attribute.path.is_ident("cfg") {
             parsed_attributes.push(quote! { #attribute });
+        } else if attribute.path.is_ident("doc") {
+            parsed_attributes.push(quote! { #attribute });
         }
     }
 
@@ -414,12 +416,23 @@ fn generate_handle_trait(
     handle_trait_ident: &Ident,
     methods: &Vec<GeneratedMethods>,
 ) -> Result<proc_macro2::TokenStream, proc_macro2::TokenStream> {
+    let mut parsed_attributes = vec![];
+    for attribute in &impl_block.attrs {
+        if attribute.path.is_ident("cfg") {
+            parsed_attributes.push(quote! { #attribute });
+        } else if attribute.path.is_ident("doc") {
+            parsed_attributes.push(quote! { #attribute });
+        }
+    }
+    let flattened_attributes = GeneratedMethods::flatten_token_stream(parsed_attributes);
+
     let methods = GeneratedMethods::get_handle_trait_methods(methods);
 
     let generics = &impl_block.generics;
     let where_clause = impl_block.generics.where_clause.as_ref().unwrap();
 
     let result = quote! {
+        #flattened_attributes
         #[actify::async_trait]
         pub trait #handle_trait_ident #generics #where_clause
         {

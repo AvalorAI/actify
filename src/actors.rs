@@ -46,6 +46,16 @@ pub struct Handle<T> {
     _broadcast: broadcast::Sender<T>, // The handle holds a clone of the broadcast transmitter from the actor for easy subscription
 }
 
+/// Implement default for any inner type that implements default aswell
+impl<T> Default for Handle<T>
+where
+    T: Default + Clone + Debug + Send + Sync + 'static,
+{
+    fn default() -> Self {
+        Handle::new(T::default())
+    }
+}
+
 impl<T> Handle<T>
 where
     T: Clone + Debug + Send + Sync + 'static,
@@ -120,6 +130,7 @@ where
     /// # async fn set_ok_actor() {
     /// let handle = Handle::new(None);
     /// handle.set(Some(1)).await.unwrap();
+    /// assert_eq!(handle.get().await.unwrap(), Some(1));
     /// # }
     /// ```
     pub async fn set(&self, val: T) -> Result<(), ActorError> {
