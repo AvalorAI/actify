@@ -89,6 +89,8 @@ where
     }
 
     fn _new(init: Option<T>) -> Handle<T> {
+        let inner_type = std::any::type_name::<T>();
+        log::trace!("New actor of type {inner_type:?} is spawned");
         let (tx, rx) = mpsc::channel(CHANNEL_SIZE);
         let (broadcast, _) = broadcast::channel(CHANNEL_SIZE);
         let actor = Actor::new(broadcast.clone(), init);
@@ -105,6 +107,7 @@ where
         call: FnType<T>,
         args: Box<dyn Any + Send>,
     ) -> Result<Box<dyn Any + Send>, ActorError> {
+        log::trace!("Sending call {:?}", call);
         let (respond_to, get_result) = oneshot::channel();
         let job = Job {
             call,
@@ -146,20 +149,21 @@ where
     async fn serve(mut self) {
         // Execute the function on the inner data
         while let Some(job) = self.rx.recv().await {
+            log::trace!("Received call {:?}", job.call);
             let res = match job.call {
                 FnType::Inner(mut call) => (*call)(&mut self.actor, job.args),
                 FnType::InnerAsync(mut call) => call(&mut self.actor, job.args).await,
             };
 
             if job.respond_to.send(res).is_err() {
-                log::warn!(
+                log::debug!(
                     "Actor of type {} failed to respond as the receiver is dropped",
                     std::any::type_name::<T>()
                 );
             }
         }
         let inner_type = std::any::type_name::<T>();
-        log::warn!("Actor of type {inner_type} exited!");
+        log::trace!("Actor of type {inner_type} exited!");
     }
 }
 
@@ -199,10 +203,12 @@ where
 
     pub fn broadcast(&self) {
         // A broadcast error is not propagated, as otherwise a succesful call could produce an independent broadcast error
+        let inner_type = std::any::type_name::<T>();
+        log::trace!("Broadcasting updated {inner_type:?}");
         if self.broadcast.receiver_count() > 0 {
             if let Some(val) = &self.inner {
                 if let Err(e) = self.broadcast.send(val.clone()) {
-                    log::warn!("Broadcast value error: {:?}", e.to_string());
+                    log::debug!("Broadcast value error: {:?}", e.to_string());
                 }
             }
         }
@@ -214,6 +220,16 @@ struct Job<T> {
     call: FnType<T>,
     args: Box<dyn Any + Send>,
     respond_to: oneshot::Sender<Result<Box<dyn Any + Send>, ActorError>>,
+}
+
+impl<T: std::fmt::Debug> std::fmt::Debug for Job<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "Job {{ call: {:?}, args: Any, respond_to: Sender<Result<Any>, ActorError> }}",
+            self.call
+        )
+    }
 }
 
 // Closures are either to be evaluated using actor functions over the inner value, or by custom implementations over specific types
@@ -238,10 +254,15 @@ pub enum FnType<T> {
     ),
 }
 
-impl<T> fmt::Debug for Job<T> {
+impl<T> fmt::Debug for FnType<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let variant = match *self {
+            FnType::Inner(_) => "Inner",
+            FnType::InnerAsync(_) => "InnerAsync",
+        };
+
         let inner_type = std::any::type_name::<T>();
-        write!(f, "Job [call: FnType<{inner_type}>, args: Any, respond_to: Sender<Result<Any>, ActorError>]")
+        write!(f, "FnType::{}<{}>", variant, inner_type)
     }
 }
 
