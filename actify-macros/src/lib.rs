@@ -3,7 +3,7 @@ use proc_macro2::Span;
 use quote::{quote, quote_spanned};
 use syn::{
     punctuated::Punctuated, spanned::Spanned, token::Comma, FnArg, Ident, ImplItem, ImplItemMethod,
-    ItemImpl, PatIdent, PathSegment, ReturnType, TraitItemMethod, Type,
+    ItemImpl, PatIdent, PathSegment, Receiver, ReturnType, TraitItemMethod, Type,
 };
 
 /// The actify macro expands an impl block of a rust struct to support usage in an actor model.
@@ -30,14 +30,16 @@ pub fn actify(_attr: TokenStream, item: TokenStream) -> TokenStream {
 fn parse_macro(
     impl_block: &mut ItemImpl,
 ) -> Result<proc_macro2::TokenStream, proc_macro2::TokenStream> {
-    let impl_type = get_impl_type(impl_block)?;
+    let impl_type_string = get_impl_type_ident(&impl_block.self_ty)?;
 
     // Ensure the unwraps are safe
     impl_block.generics.make_where_clause();
 
     // Create Ident instances for the new traits
-    let actor_trait_ident = syn::Ident::new(&format!("{}Actor", impl_type), Span::call_site());
-    let handle_trait_ident = syn::Ident::new(&format!("{}Handle", impl_type), Span::call_site());
+    let actor_trait_ident =
+        syn::Ident::new(&format!("{}Actor", impl_type_string), Span::call_site());
+    let handle_trait_ident =
+        syn::Ident::new(&format!("{}Handle", impl_type_string), Span::call_site());
 
     // Generate methods, traits, and their implementations
     let generated_methods = generate_all_methods(impl_block, &actor_trait_ident)?;
@@ -87,15 +89,56 @@ fn generate_actor_trait_impl(
     Ok(result)
 }
 
+fn is_method_mutable(method: &ImplItemMethod) -> bool {
+    for input in method.sig.inputs.iter() {
+        if let FnArg::Receiver(Receiver {
+            reference: _,
+            mutability,
+            ..
+        }) = input
+        {
+            return mutability.is_some();
+        }
+    }
+    false
+}
+
 /// A function that generates the implementation for each method in the actor trait
 fn generate_actor_trait_method_impl(
-    impl_type: &Type,
+    impl_block: &ItemImpl,
     method: &TraitItemMethod,
     original_method: &ImplItemMethod,
     attributes: &proc_macro2::TokenStream,
 ) -> Result<proc_macro2::TokenStream, proc_macro2::TokenStream> {
     // A tuple of (names): (types) is generated so that the types can be cast & downcast to the Any type for sending to the actor
     let (input_arg_names, input_arg_types) = transform_args(&original_method.sig.inputs)?;
+
+    // Check if it's a trait implementation or a normal implementation
+    // In both cases, use Fully Qualified Syntax
+    let impl_type_ident = get_impl_type_ident(&impl_block.self_ty)?;
+
+    let impl_type = &impl_block.self_ty;
+    let generics = &impl_block.generics;
+
+    let method_call = match &impl_block.trait_ {
+        None => {
+            if generics.params.is_empty() {
+                quote! {
+                    #impl_type_ident
+                }
+            } else {
+                quote! {
+                    // TODO make method getting only the generics used for calling a method, excluding for instance the lifetimes
+                    #impl_type_ident::#generics
+                }
+            }
+        }
+        Some((_, path, _)) => {
+            quote! {
+                <#impl_type as #path>
+            }
+        }
+    };
 
     let actor_method_ident = &method.sig.ident;
     let fn_ident = &original_method.sig.ident;
@@ -113,6 +156,12 @@ fn generate_actor_trait_method_impl(
         None
     };
 
+    let mutability = if is_method_mutable(&original_method) {
+        Some(quote! { mut })
+    } else {
+        None
+    };
+
     // The generated method impls downcast the sent arguments originating from the handle back to its original types
     // Then, the arguments are used to call the method on the inner type held by the actor.
     // Optionally, the new actor value is broadcasted to all subscribed listeners
@@ -124,13 +173,7 @@ fn generate_actor_trait_method_impl(
             .downcast()
             .expect("Downcasting failed due to an error in the Actify macro");
 
-            let result: #original_output_type = self
-            .inner
-            .as_mut()
-            .ok_or(actify::ActorError::NoValueSet(
-                std::any::type_name::<#impl_type>().to_string(),
-            ))?.
-            #fn_ident(#input_arg_names)#awaiter; // if this is async, await it, else do not
+            let result: #original_output_type = #method_call::#fn_ident(&#mutability self.inner, #input_arg_names)#awaiter; // if this is async, await it, else do not
 
         self.broadcast(); // TODO make this optional!
 
@@ -302,7 +345,7 @@ fn generate_all_methods(
         match item {
             ImplItem::Const(_) => {}
             ImplItem::Method(original_method) => methods.push(generate_methods(
-                &impl_block.self_ty,
+                &impl_block,
                 original_method,
                 actor_trait_ident,
             )?),
@@ -320,13 +363,15 @@ fn generate_all_methods(
 
 /// A function collecting the derived methods of a single original method from the impl block
 fn generate_methods(
-    impl_type: &Type,
+    impl_block: &ItemImpl,
     original_method: &ImplItemMethod,
     actor_trait_ident: &Ident,
 ) -> Result<GeneratedMethods, proc_macro2::TokenStream> {
     let mut parsed_attributes = vec![];
     for attribute in &original_method.attrs {
         if attribute.path.is_ident("cfg") {
+            parsed_attributes.push(quote! { #attribute });
+        } else if attribute.path.is_ident("doc") {
             parsed_attributes.push(quote! { #attribute });
         }
     }
@@ -344,13 +389,13 @@ fn generate_methods(
         .expect("Parsing the handle trait in the Actify macro failed");
 
     let actor_method_impl = generate_actor_trait_method_impl(
-        impl_type,
+        &impl_block,
         &parsed_actor_signature,
         original_method,
         &flattened_attributes,
     )?;
     let handle_method_impl = generate_handle_trait_method_impl(
-        impl_type,
+        &impl_block.self_ty,
         &parsed_handle_signature,
         actor_trait_ident,
         &parsed_actor_signature,
@@ -371,12 +416,23 @@ fn generate_handle_trait(
     handle_trait_ident: &Ident,
     methods: &Vec<GeneratedMethods>,
 ) -> Result<proc_macro2::TokenStream, proc_macro2::TokenStream> {
+    let mut parsed_attributes = vec![];
+    for attribute in &impl_block.attrs {
+        if attribute.path.is_ident("cfg") {
+            parsed_attributes.push(quote! { #attribute });
+        } else if attribute.path.is_ident("doc") {
+            parsed_attributes.push(quote! { #attribute });
+        }
+    }
+    let flattened_attributes = GeneratedMethods::flatten_token_stream(parsed_attributes);
+
     let methods = GeneratedMethods::get_handle_trait_methods(methods);
 
     let generics = &impl_block.generics;
     let where_clause = impl_block.generics.where_clause.as_ref().unwrap();
 
     let result = quote! {
+        #flattened_attributes
         #[actify::async_trait]
         pub trait #handle_trait_ident #generics #where_clause
         {
@@ -432,18 +488,18 @@ fn generate_handle_trait_method(
 /// This function verifies the type of impl block that the macro is placed upon.
 /// If the impl is not of the right format, an error is returned
 /// If correct, the type is returned as a String for usage in the trait generation
-fn get_impl_type(impl_block: &ItemImpl) -> Result<String, proc_macro2::TokenStream> {
-    match &*impl_block.self_ty {
+fn get_impl_type_ident(impl_type: &Type) -> Result<Ident, proc_macro2::TokenStream> {
+    match impl_type {
         Type::Path(type_path) => {
             if let Some(last_segment) = type_path.path.segments.last() {
-                return Ok(last_segment.ident.to_string()); // Take the last element from a path like crate:: or super::
+                return Ok(last_segment.ident.clone()); // Take the last element from a path like crate:: or super::
             }
         }
         _ => {} // Do not allow any other types than regular structs
     }
 
     Err(quote_spanned! {
-        impl_block.self_ty.span() =>
+        impl_type.span() =>
         compile_error!("The impl type should be a regular struct");
     })
 }

@@ -1,5 +1,3 @@
 # See for options: https://rust-lang.github.io/rustfmt/
 max_width=100
-overflow_delimited_expr=true
 reorder_imports = true
-wrap_comments = true

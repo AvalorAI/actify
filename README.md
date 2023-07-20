@@ -45,7 +45,7 @@ impl Greeter {
 #[tokio::main]
 async fn main() {
 // An actify handle is created and initialized with the Greeter struct
-let handle = Handle::new_from(Greeter {});
+let handle = Handle::new(Greeter {});
 
 // The say_hi method is made available on its handle through the actify! macro
 let greeting = handle.say_hi("Alfred".to_string()).await.unwrap();

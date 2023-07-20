@@ -213,7 +213,7 @@ mod tests {
     async fn test_on_event() {
         // The Handle update event should be received directly after the interval has passed
         let timer = 200.;
-        let handle = Handle::new_from(1);
+        let handle = Handle::new(1);
         let mut interval = time::interval(Duration::from_millis(timer as u64));
         interval.tick().await; // Completed immediately
 
@@ -284,7 +284,7 @@ mod tests {
         // Throttle interval passes at 1.65 timer, does nothing
 
         let timer = 200.;
-        let handle = Handle::new_from(1);
+        let handle = Handle::new(1);
         let mut interval = time::interval(Duration::from_millis(timer as u64));
         interval.tick().await; // Completed immediately
 
@@ -322,7 +322,7 @@ mod tests {
         // Test terminates before throttle interval passed at 1.5 timer
 
         let timer = 200.;
-        let handle = Handle::new_from(1);
+        let handle = Handle::new(1);
         let mut interval = time::interval(Duration::from_millis(timer as u64));
         interval.tick().await; // Completed immediately
 
