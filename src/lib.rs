@@ -1,6 +1,5 @@
 #![warn(missing_debug_implementations, unreachable_pub)]
 #![deny(unused_must_use)]
-#![allow(clippy::unit_arg)]
 // TODO enable 'missing_docs'
 // TODO decide wether initializing empty handles is possible or not (not backwords compatible)
 // TODO enable broadcast with feature + additional attribute

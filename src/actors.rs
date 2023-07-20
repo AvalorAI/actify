@@ -43,7 +43,9 @@ impl<T> From<mpsc::error::SendError<T>> for ActorError {
 #[derive(Debug, Clone)]
 pub struct Handle<T> {
     tx: mpsc::Sender<Job<T>>,
-    _broadcast: broadcast::Sender<T>, // The handle holds a clone of the broadcast transmitter from the actor for easy subscription
+
+    // The handle holds a clone of the broadcast transmitter from the actor for easy subscription
+    _broadcast: broadcast::Sender<T>,
 }
 
 /// Implement default for any inner type that implements default aswell
@@ -62,7 +64,7 @@ where
 {
     /// Creates an itialized cache that can locally synchronize with the remote actor.
     /// It does this through subscribing to broadcasted updates from the actor.
-    /// Itialized implies that it initially performs a get(). Therefore any updates before construction are included,
+    /// Initialized implies that it initially performs a get(). Therefore any updates before construction are included,
     /// and a get_newest() always returns the current value.
     pub async fn create_initialized_cache(&self) -> Result<Cache<T>, ActorError> {
         Cache::new_initialized(self.clone()).await
