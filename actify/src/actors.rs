@@ -17,8 +17,6 @@ const WRONG_RESPONSE: &str = "An incorrect response type for this method has bee
 
 #[derive(Error, Debug, PartialEq, Clone)]
 pub enum ActorError {
-    #[error("A request has been received for type {0} while no value is set")]
-    NoValueSet(String),
     #[error("Tokio oneshot receiver error")]
     TokioOneshotRecvError(#[from] oneshot::error::RecvError),
     #[error("Tokio mpsc sender error: {0}")]
@@ -27,8 +25,6 @@ pub enum ActorError {
     TokioBroadcastTryRecvError(#[from] broadcast::error::TryRecvError),
     #[error("Tokio broadcast receiver error")]
     TokioBroadcastRecvError(#[from] broadcast::error::RecvError),
-    #[error("An incorrect response type for this method has been received")]
-    WrongResponse,
     #[error("A throttle error occured")]
     ThrottleError(#[from] ThrottleError),
 }

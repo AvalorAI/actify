@@ -177,17 +177,8 @@ where
     /// Using this concept, it is ensured that any value set in the actor before subscribing is also included
     /// If the user of the cache listens for the first time, the cache can return immediately with the known result
     async fn initialize(&mut self) -> Result<(), ActorError> {
-        match self.handle.get().await {
-            Ok(val) => {
-                self.inner = Some(val);
-                Ok(())
-            }
-            Err(ActorError::NoValueSet(_)) => {
-                self.inner = None;
-                Ok(())
-            }
-            Err(e) => Err(e),
-        }
+        self.inner = Some(self.handle.get().await?);
+        Ok(())
     }
 }
 
