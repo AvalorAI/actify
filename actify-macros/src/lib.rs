@@ -2,8 +2,8 @@ use proc_macro::TokenStream;
 use proc_macro2::Span;
 use quote::{quote, quote_spanned};
 use syn::{
-    punctuated::Punctuated, spanned::Spanned, token::Comma, FnArg, Ident, ImplItem, ImplItemMethod,
-    ItemImpl, PatIdent, PathSegment, Receiver, ReturnType, TraitItemMethod, Type,
+    punctuated::Punctuated, spanned::Spanned, token::Comma, FnArg, Ident, ImplItem, ImplItemFn,
+    ItemImpl, PatIdent, PathSegment, Receiver, ReturnType, TraitItemFn, Type,
 };
 
 /// The actify macro expands an impl block of a rust struct to support usage in an actor model.
@@ -18,7 +18,7 @@ pub fn actify(_attr: TokenStream, item: TokenStream) -> TokenStream {
         Err(error) => error,
     };
 
-    // println!("{:?}", result.to_string());
+    // println!("{}", result.to_string());
 
     result.into()
 }
@@ -89,7 +89,7 @@ fn generate_actor_trait_impl(
     Ok(result)
 }
 
-fn is_method_mutable(method: &ImplItemMethod) -> bool {
+fn is_method_mutable(method: &ImplItemFn) -> bool {
     for input in method.sig.inputs.iter() {
         if let FnArg::Receiver(Receiver {
             reference: _,
@@ -106,8 +106,8 @@ fn is_method_mutable(method: &ImplItemMethod) -> bool {
 /// A function that generates the implementation for each method in the actor trait
 fn generate_actor_trait_method_impl(
     impl_block: &ItemImpl,
-    method: &TraitItemMethod,
-    original_method: &ImplItemMethod,
+    method: &TraitItemFn,
+    original_method: &ImplItemFn,
     attributes: &proc_macro2::TokenStream,
 ) -> Result<proc_macro2::TokenStream, proc_macro2::TokenStream> {
     // A tuple of (names): (types) is generated so that the types can be cast & downcast to the Any type for sending to the actor
@@ -144,7 +144,7 @@ fn generate_actor_trait_method_impl(
     let fn_ident = &original_method.sig.ident;
 
     let unit_type = quote! { () };
-    let parsed_unit_type: Box<Type> = Box::new(syn::parse(unit_type.into()).unwrap());
+    let parsed_unit_type = Box::new(syn::parse(unit_type.into()).unwrap());
     let original_output_type = match &original_method.sig.output {
         ReturnType::Type(_, original_output_type) => original_output_type,
         ReturnType::Default => &parsed_unit_type,
@@ -206,7 +206,7 @@ fn generate_actor_trait(
 // It is preceded by _ to mark the difference between the two methods
 // Its signature must be standardized to the any type, to allow it being sent by the handle without using some kind of enum
 fn generate_actor_trait_method(
-    method: &ImplItemMethod,
+    method: &ImplItemFn,
     attributes: &proc_macro2::TokenStream,
 ) -> Result<proc_macro2::TokenStream, proc_macro2::TokenStream> {
     let actor_method_ident = syn::Ident::new(
@@ -252,9 +252,9 @@ fn generate_handle_trait_impl(
 /// 3. downcasting the return value to the original type
 fn generate_handle_trait_method_impl(
     impl_type: &Type,
-    method: &TraitItemMethod,
+    method: &TraitItemFn,
     actor_trait_ident: &Ident,
-    actor_method: &TraitItemMethod,
+    actor_method: &TraitItemFn,
     attributes: &proc_macro2::TokenStream,
 ) -> Result<proc_macro2::TokenStream, proc_macro2::TokenStream> {
     let signature = &method.sig;
@@ -344,7 +344,7 @@ fn generate_all_methods(
     for item in &impl_block.items {
         match item {
             ImplItem::Const(_) => {}
-            ImplItem::Method(original_method) => methods.push(generate_methods(
+            ImplItem::Fn(original_method) => methods.push(generate_methods(
                 &impl_block,
                 original_method,
                 actor_trait_ident,
@@ -364,14 +364,14 @@ fn generate_all_methods(
 /// A function collecting the derived methods of a single original method from the impl block
 fn generate_methods(
     impl_block: &ItemImpl,
-    original_method: &ImplItemMethod,
+    original_method: &ImplItemFn,
     actor_trait_ident: &Ident,
 ) -> Result<GeneratedMethods, proc_macro2::TokenStream> {
     let mut parsed_attributes = vec![];
     for attribute in &original_method.attrs {
-        if attribute.path.is_ident("cfg") {
+        if attribute.path().is_ident("cfg") {
             parsed_attributes.push(quote! { #attribute });
-        } else if attribute.path.is_ident("doc") {
+        } else if attribute.path().is_ident("doc") {
             parsed_attributes.push(quote! { #attribute });
         }
     }
@@ -418,9 +418,9 @@ fn generate_handle_trait(
 ) -> Result<proc_macro2::TokenStream, proc_macro2::TokenStream> {
     let mut parsed_attributes = vec![];
     for attribute in &impl_block.attrs {
-        if attribute.path.is_ident("cfg") {
+        if attribute.path().is_ident("cfg") {
             parsed_attributes.push(quote! { #attribute });
-        } else if attribute.path.is_ident("doc") {
+        } else if attribute.path().is_ident("doc") {
             parsed_attributes.push(quote! { #attribute });
         }
     }
@@ -448,22 +448,29 @@ fn generate_handle_trait(
 /// Second, it is checked if a receiver is present and its mutability is removed as that is unnecessary.
 /// Thirdly, the output type is wrapped in a result. The default type is converted to () in all cases.
 fn generate_handle_trait_method(
-    method: &ImplItemMethod,
+    method: &ImplItemFn,
     attributes: &proc_macro2::TokenStream,
 ) -> Result<proc_macro2::TokenStream, proc_macro2::TokenStream> {
     // Remove any mutability, as a handle is never required to be so even if the actor method is
     let mut modified_method = method.clone();
-    let Some(FnArg::Receiver(receiver)) = modified_method
+
+    if let Some(FnArg::Receiver(receiver)) = modified_method
         .sig
         .inputs
         .iter_mut()
-        .find(|arg| matches!(arg, FnArg::Receiver(_))) else {
-            return Err(quote_spanned! {
-                modified_method.span() =>
-                compile_error!("Static method cannot be actified: the method requires a receiver to the impl type, using either &self or &mut self");
-            });
-        };
-    receiver.mutability = None;
+        .find(|arg| matches!(arg, FnArg::Receiver(_)))
+    {
+        receiver.mutability = None;
+        if let Type::Reference(type_reference) = &mut *receiver.ty {
+            type_reference.mutability = None;
+        }
+    } else {
+        return Err(quote_spanned! {
+            modified_method.span() =>
+            compile_error!("Static method cannot be actified: the method requires a receiver to the impl type, using either &self or &mut self");
+        });
+    }
+
     let modified_inputs = &modified_method.sig.inputs;
 
     let name = &method.sig.ident;
