@@ -1,0 +1,16 @@
+[package]
+name = "actify-test"
+version = "0.1.0"
+edition = "2021"
+description = "An intutive actor model with minimal boilerplate"
+license = "MIT"
+repository = "https://github.com/AvalorAI/actify"
+categories = ["testing"]
+
+[dependencies]
+actify = { version = "0.2.0", path = "../actify"}
+async-trait = "0.1"
+tokio = { version = "1.15", features = ["full"] }
+
+[features]
+default = []

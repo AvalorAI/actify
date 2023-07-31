@@ -156,7 +156,7 @@ fn generate_actor_trait_method_impl(
         None
     };
 
-    let mutability = if is_method_mutable(&original_method) {
+    let mutability = if is_method_mutable(original_method) {
         Some(quote! { mut })
     } else {
         None
@@ -353,7 +353,7 @@ fn generate_all_methods(
             ImplItem::Macro(_) => {}
             ImplItem::Verbatim(_) => {}
 
-            #[cfg_attr(test, deny(non_exhaustive_omitted_patterns))]
+            #[cfg_attr(test, deny(clippy::non_exhaustive_omitted_patterns))]
             _ => { /* some sane fallback */ }
         }
     }
@@ -541,7 +541,7 @@ fn transform_args(
                     }
                 }
             }
-            #[cfg_attr(test, deny(non_exhaustive_omitted_patterns))]
+            #[cfg_attr(test, deny(clippy::non_exhaustive_omitted_patterns))]
             _ => {} // some sane fallback
         }
     }
