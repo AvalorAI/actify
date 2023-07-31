@@ -21,7 +21,7 @@ mod tests {
     where
         T: Clone + Debug + Send + Sync + 'static,
     {
-        #[cfg(not(feature = "test_feature"))]
+        #[cfg(not(feature = "test_feature"))] // TODO should be replaced by os cfg types
         fn foo(&mut self, i: i32, _h: HashMap<String, T>) -> f64 {
             (i + 1) as f64
         }
