@@ -7,7 +7,7 @@ trait ActorVec<T> {
 
     fn is_empty(&self) -> bool;
 
-    fn drain(&mut self) -> Vec<T>;
+    fn drain_all(&mut self) -> Vec<T>;
 }
 
 #[actify]
@@ -58,12 +58,12 @@ where
     /// # #[tokio::test]
     /// # async fn drain_actor() {
     /// let handle = Handle::new(vec![1, 2]);
-    /// let res = handle.drain().await.unwrap();
+    /// let res = handle.drain_all().await.unwrap();
     /// assert_eq!(res, vec![1, 2]);
     /// assert_eq!(handle.get().await.unwrap(), Vec::<i32>::new());
     /// # }
     /// ```
-    fn drain(&mut self) -> Vec<T> {
+    fn drain_all(&mut self) -> Vec<T> {
         // TODO add actual range as with the std vec
         // TODO this is currently not possible without supporting generic method arguments
         self.drain(..).collect()
