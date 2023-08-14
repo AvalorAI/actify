@@ -2,14 +2,14 @@ use std::fmt::Debug;
 use tokio::sync::broadcast::{
     self,
     error::{RecvError, TryRecvError},
+    Receiver,
 };
 
-use super::{ActorError, Handle};
+use super::ActorError;
 
 /// A simple caching struct that can be used to locally maintain a synchronized state with an actor
 #[derive(Debug)]
 pub struct Cache<T> {
-    handle: Handle<T>,
     inner: Option<T>,
     rx: broadcast::Receiver<T>,
     has_listenend: bool,
@@ -21,9 +21,8 @@ where
 {
     fn clone(&self) -> Self {
         Cache {
-            handle: self.handle.clone(),
             inner: self.inner.clone(),
-            rx: self.handle.subscribe(),
+            rx: self.rx.resubscribe(),
             has_listenend: self.has_listenend,
         }
     }
@@ -33,16 +32,14 @@ impl<T> Cache<T>
 where
     T: Clone + Debug + Send + Sync + 'static,
 {
-    pub(crate) async fn new_initialized(handle: Handle<T>) -> Result<Self, ActorError> {
-        let mut cache = Cache::new(handle);
-        cache.initialize().await?;
-        Ok(cache)
+    pub(crate) fn new_initialized(rx: Receiver<T>, init: T) -> Self {
+        let mut cache = Cache::new(rx);
+        cache.inner = Some(init);
+        cache
     }
 
-    pub(crate) fn new(handle: Handle<T>) -> Self {
-        let rx = handle.subscribe();
+    pub(crate) fn new(rx: Receiver<T>) -> Self {
         Self {
-            handle,
             inner: None,
             rx,
             has_listenend: false,
@@ -172,19 +169,11 @@ where
             }
         }
     }
-
-    /// The first time a cache is created, it performs a get to initialize the cache
-    /// Using this concept, it is ensured that any value set in the actor before subscribing is also included
-    /// If the user of the cache listens for the first time, the cache can return immediately with the known result
-    async fn initialize(&mut self) -> Result<(), ActorError> {
-        self.inner = Some(self.handle.get().await?);
-        Ok(())
-    }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::Handle;
     use tokio::time::{sleep, Duration};
 
     #[tokio::test]

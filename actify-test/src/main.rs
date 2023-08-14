@@ -7,7 +7,8 @@ mod tests {
 
     use actify::{actify, Actor, ActorError, FnType, Handle};
     use async_trait::async_trait;
-    use std::{collections::HashMap, fmt::Debug};
+    use std::{collections::HashMap, fmt::Debug, time::Duration};
+    use tokio::time::sleep;
 
     /// An example struct for the macro tests
     #[allow(dead_code)]
@@ -102,5 +103,33 @@ mod tests {
         assert_eq!(actor_handle.bar(0, String::default()).await.unwrap(), 1.);
         assert_eq!(actor_handle.foo(0, HashMap::new()).await.unwrap(), 1.);
         assert_eq!(actor_handle.baz(0).await.unwrap(), 2.);
+    }
+
+    #[tokio::test]
+    async fn test_handle_out_of_scope() {
+        // load_logger();
+
+        let handle_1 = Handle::new(1);
+
+        let mut cache_3 = {
+            let _handle_2 = Handle::new("test");
+            let handle_3 = Handle::new(1.); // This goes out of scope
+            let _handle_1_clone = handle_1.clone();
+            let cache_3 = handle_3.create_initialized_cache().await.unwrap(); // But the cache doesn't
+            cache_3
+        };
+
+        sleep(Duration::from_secs(1)).await;
+
+        // The &str actor should have exited --> watch logs
+        // The f32 should have exited, even though the cache is still in scope!
+        assert!(cache_3.try_listen_newest().is_err()) // This means the cache has no broadcast anymore, so it should exit too
+    }
+
+    #[allow(dead_code)]
+    pub fn load_logger() {
+        env_logger::Builder::new()
+            .filter(None, log::LevelFilter::Info)
+            .init();
     }
 }

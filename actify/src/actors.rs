@@ -63,14 +63,15 @@ where
     /// Initialized implies that it initially performs a get(). Therefore any updates before construction are included,
     /// and a get_newest() always returns the current value.
     pub async fn create_initialized_cache(&self) -> Result<Cache<T>, ActorError> {
-        Cache::new_initialized(self.clone()).await
+        let init = self.get().await?;
+        Ok(Cache::new_initialized(self._broadcast.subscribe(), init))
     }
 
     /// Creates an unitialized cache that can locally synchronize with the remote actor
     /// It does this through subscribing to broadcasted updates from the actor
     /// Unitialized implies that it does not initially performs a get(). Therefore any updates before construction are missed.
     pub fn create_uninitialized_cache(&self) -> Cache<T> {
-        Cache::new(self.clone())
+        Cache::new(self._broadcast.subscribe())
     }
 
     /// Returns the current capacity of the channel
