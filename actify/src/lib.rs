@@ -1,23 +1,8 @@
 #![warn(missing_debug_implementations, unreachable_pub)]
 #![deny(unused_must_use)]
-// TODO enable 'missing_docs'
-// TODO decide wether initializing empty handles is possible or not (not backwords compatible)
-// TODO enable broadcast with feature + additional attribute
-// TODO add support for generics in method arguments (collect all generics over the methods, add them to the trait, check trait bounds!)
-// TODO only keep feature flag attributes
-// TODO apply exhaustive patterns in the macro
-// TODO extend documents, including standard method implementation
-// TODO refactor cache with seperate initialization and non async constructor & cleaner API
-// TODO debug logs
-// TODO support doc strings attributes & system cfg
-// TODO restructure to correct testing setup with seperate lib (see lazy static or bookmark?)
-// TODO extend with blocking send and blocking recv from Tokio
-// TODO track performance
-// TODO improve span of error msg like "Static method cannot be actified: the method requires a..."
-
 //! An intuitive actor model for Rust with minimal boilerplate, no manual messages and typed arguments.
 //!
-//! **Note that this crate is under construction. Although used in production, work is done on making an intuitive API, documententation and remaining features. For the time being, this does not follow semantic versioning!**
+//! **Note that this crate is under construction. Although used in production, work is done on making an intuitive API, documententation and remaining features. Pre 1.0 the API may break at any time!**
 //!
 //! Actify is an actor model built on [Tokio][tokio] that allows annotating any regular implementation block of your own type with the actify! macro.
 //! By generating the boilerplate code for you, a few key benefits are provided:

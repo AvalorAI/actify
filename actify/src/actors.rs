@@ -191,7 +191,6 @@ where
         };
         self.tx.send(job).await?;
         get_result.await?
-        // TODO add a timeout on this result await
     }
 }
 
