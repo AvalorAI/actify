@@ -162,13 +162,17 @@ fn generate_actor_trait_method_impl(
         None
     };
 
+    // Extract generic parameters and where-clause from the method.
+    let generics = &method.sig.generics;
+    let where_clause = &generics.where_clause;
+
     // The generated method impls downcast the sent arguments originating from the handle back to its original types
     // Then, the arguments are used to call the method on the inner type held by the actor.
     // Optionally, the new actor value is broadcasted to all subscribed listeners
     // Lastly, the result is boxed and sent back to the calling handle
     let result = quote! {
         #attributes
-        async fn #actor_method_ident(&mut self, args: Box<dyn std::any::Any + Send>) -> Result<Box<dyn std::any::Any + Send>, actify::ActorError> {
+        async fn #actor_method_ident #generics(&mut self, args: Box<dyn std::any::Any + Send>) -> Result<Box<dyn std::any::Any + Send>, actify::ActorError> #where_clause {
             let (#input_arg_names): (#input_arg_types) = *args
             .downcast()
             .expect("Downcasting failed due to an error in the Actify macro");
@@ -214,9 +218,13 @@ fn generate_actor_trait_method(
         Span::call_site(),
     );
 
+    // Extract generic parameters and where-clause from the method.
+    let generics = &method.sig.generics;
+    let where_clause = &generics.where_clause;
+
     let result = quote! {
         #attributes
-        async fn #actor_method_ident(&mut self, args: Box<dyn std::any::Any + Send>) -> Result<Box<dyn std::any::Any + Send>, actify::ActorError>;
+        async fn #actor_method_ident #generics(&mut self, args: Box<dyn std::any::Any + Send>) -> Result<Box<dyn std::any::Any + Send>, actify::ActorError> #where_clause;
     };
 
     Ok(result)
@@ -262,6 +270,21 @@ fn generate_handle_trait_method_impl(
 
     let actor_method_name = &actor_method.sig.ident;
 
+    // Get just the type parameters from the generics, e.g., T, U
+    let generic_params: Vec<_> = method
+        .sig
+        .generics
+        .params
+        .iter()
+        .filter_map(|param| {
+            if let syn::GenericParam::Type(type_param) = param {
+                Some(&type_param.ident)
+            } else {
+                None
+            }
+        })
+        .collect();
+
     let result = quote! {
         #attributes
         #signature {
@@ -270,7 +293,7 @@ fn generate_handle_trait_method_impl(
                 actify::FnType::InnerAsync(
                     Box::new(
                         |s: &mut actify::Actor<#impl_type>, args: Box<dyn std::any::Any + Send>|
-                        Box::pin(async move { #actor_trait_ident::#actor_method_name(s, args).await }))
+                        Box::pin(async move { #actor_trait_ident::#actor_method_name::<#(#generic_params),*>(s, args).await }))
                     ),
                 Box::new((#input_arg_names)),
             )
@@ -473,18 +496,22 @@ fn generate_handle_trait_method(
 
     let modified_inputs = &modified_method.sig.inputs;
 
+    // Extract generic parameters and where-clause from the method.
+    let generics = &method.sig.generics;
+    let where_clause = &generics.where_clause;
+
     let name = &method.sig.ident;
     let result = match &method.sig.output {
         ReturnType::Default => {
             quote! {
                 #attributes
-                async fn #name(#modified_inputs) -> Result<(), actify::ActorError>;
+                async fn #name #generics(#modified_inputs) -> Result<(), actify::ActorError> #where_clause;
             }
         }
         ReturnType::Type(_, output_type) => {
             quote! {
                 #attributes
-               async fn #name(#modified_inputs) -> Result<#output_type, actify::ActorError>;
+               async fn #name #generics(#modified_inputs) -> Result<#output_type, actify::ActorError> #where_clause;
             }
         }
     };
