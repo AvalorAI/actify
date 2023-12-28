@@ -18,7 +18,7 @@ pub fn actify(_attr: TokenStream, item: TokenStream) -> TokenStream {
         Err(error) => error,
     };
 
-    // println!("{}", result.to_string());
+    // println!("{}", result);
 
     result.into()
 }

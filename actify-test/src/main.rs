@@ -5,7 +5,8 @@ fn main() {}
 #[cfg(test)]
 mod tests {
 
-    use actify::{actify, Handle};
+    use actify::{actify, Handle, VecHandle};
+    use async_trait::async_trait;
     use std::{collections::HashMap, fmt::Debug, time::Duration};
     use tokio::time::sleep;
 
@@ -34,6 +35,47 @@ mod tests {
         }
 
         async fn baz(&mut self, i: i32) -> f64 {
+            (i + 2) as f64
+        }
+    }
+
+    /// Example Extension trait
+    trait TestExt<T> {
+        fn extended_foo(&mut self, i: i32, _h: HashMap<String, T>) -> f64;
+
+        fn extended_bar<F>(&mut self, i: usize, f: F) -> usize
+        where
+            F: Fn(usize) -> usize + Send + Sync + 'static;
+    }
+
+    impl<T> TestExt<T> for TestStruct<T>
+    where
+        T: Clone + Debug + Send + Sync + 'static,
+    {
+        fn extended_foo(&mut self, i: i32, _h: HashMap<String, T>) -> f64 {
+            (i + 1) as f64
+        }
+
+        fn extended_bar<F>(&mut self, i: usize, f: F) -> usize
+        where
+            F: Fn(usize) -> usize + Send + Sync + 'static,
+        {
+            f(i)
+        }
+    }
+
+    /// Example async Extension trait
+    #[async_trait]
+    trait AsyncTestExt<T> {
+        async fn extended_baz(&mut self, i: i32) -> f64;
+    }
+
+    #[async_trait]
+    impl<T> AsyncTestExt<T> for TestStruct<T>
+    where
+        T: Clone + Debug + Send + Sync + 'static,
+    {
+        async fn extended_baz(&mut self, i: i32) -> f64 {
             (i + 2) as f64
         }
     }
@@ -68,6 +110,14 @@ mod tests {
         // The &str actor should have exited --> watch logs
         // The f32 should have exited, even though the cache is still in scope!
         assert!(cache_3.try_listen_newest().is_err()) // This means the cache has no broadcast anymore, so it should exit too
+    }
+
+    #[tokio::test]
+    async fn test_drain_vec() {
+        let actor_handle = Handle::new(vec![1, 2, 3]);
+
+        assert_eq!(actor_handle.drain(1..).await.unwrap(), vec![2, 3]);
+        assert_eq!(actor_handle.get().await.unwrap(), vec![1]);
     }
 
     #[allow(dead_code)]
