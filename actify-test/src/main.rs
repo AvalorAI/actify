@@ -123,7 +123,7 @@ mod tests {
 
         // The &str actor should have exited --> watch logs
         // The f32 should have exited, even though the cache is still in scope!
-        assert!(cache_3.try_listen_newest().is_err()) // This means the cache has no broadcast anymore, so it should exit too
+        assert!(cache_3.try_recv_newest().is_err()) // This means the cache has no broadcast anymore, so it should exit too
     }
 
     #[allow(dead_code)]
