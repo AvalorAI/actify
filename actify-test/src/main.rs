@@ -5,7 +5,7 @@ fn main() {}
 #[cfg(test)]
 mod tests {
 
-    use actify::{actify, Actor, ActorError, FnType, Handle};
+    use actify::{actify, Handle, VecHandle};
     use async_trait::async_trait;
     use std::{collections::HashMap, fmt::Debug, time::Duration};
     use tokio::time::sleep;
@@ -27,70 +27,56 @@ mod tests {
             (i + 1) as f64
         }
 
+        fn bar<F>(&self, i: usize, f: F) -> usize
+        where
+            F: Fn(usize) -> usize + Send + Sync + 'static,
+        {
+            f(i)
+        }
+
         async fn baz(&mut self, i: i32) -> f64 {
             (i + 2) as f64
         }
     }
 
-    impl<T> TestStruct<T>
-    where
-        T: Clone + Debug + Send + Sync + 'static,
-    {
-        // TODO generics in arguments are not supported yet
-        fn bar<F>(&self, i: usize, _f: F) -> f32
+    /// Example Extension trait
+    trait TestExt<T> {
+        fn extended_foo(&mut self, i: i32, _h: HashMap<String, T>) -> f64;
+
+        fn extended_bar<F>(&mut self, i: usize, f: F) -> usize
         where
-            F: Debug + Send + Sync,
+            F: Fn(usize) -> usize + Send + Sync + 'static;
+    }
+
+    impl<T> TestExt<T> for TestStruct<T>
+    where
+        T: Clone + Debug + Send + Sync + 'static,
+    {
+        fn extended_foo(&mut self, i: i32, _h: HashMap<String, T>) -> f64 {
+            (i + 1) as f64
+        }
+
+        fn extended_bar<F>(&mut self, i: usize, f: F) -> usize
+        where
+            F: Fn(usize) -> usize + Send + Sync + 'static,
         {
-            (i + 1) as f32
+            f(i)
         }
     }
 
+    /// Example async Extension trait
     #[async_trait]
-    trait ExampleTestStructHandle<F> {
-        async fn bar(&self, test: usize, f: F) -> Result<f32, ActorError>;
+    trait AsyncTestExt<T> {
+        async fn extended_baz(&mut self, i: i32) -> f64;
     }
 
     #[async_trait]
-    impl<T, F> ExampleTestStructHandle<F> for Handle<TestStruct<T>>
+    impl<T> AsyncTestExt<T> for TestStruct<T>
     where
         T: Clone + Debug + Send + Sync + 'static,
-        F: Debug + Send + Sync + 'static,
     {
-        async fn bar(&self, test: usize, t: F) -> Result<f32, ActorError> {
-            let res = self
-                .send_job(
-                    FnType::Inner(Box::new(ExampleTestStructActor::<F>::_bar)),
-                    Box::new((test, t)),
-                )
-                .await?;
-            Ok(*res.downcast().unwrap())
-        }
-    }
-
-    trait ExampleTestStructActor<F> {
-        fn _bar(
-            &mut self,
-            args: Box<dyn std::any::Any + Send>,
-        ) -> Result<Box<dyn std::any::Any + Send>, ActorError>;
-    }
-
-    #[allow(unused_parens)]
-    impl<T, F> ExampleTestStructActor<F> for Actor<TestStruct<T>>
-    where
-        T: Clone + Debug + Send + Sync + 'static,
-        F: Debug + Send + Sync + 'static,
-    {
-        fn _bar(
-            &mut self,
-            args: Box<dyn std::any::Any + Send>,
-        ) -> Result<Box<dyn std::any::Any + Send>, ActorError> {
-            let (test, f): (usize, F) = *args.downcast().unwrap();
-
-            let result: f32 = self.inner.bar(test, f);
-
-            self.broadcast();
-
-            Ok(Box::new(result))
+        async fn extended_baz(&mut self, i: i32) -> f64 {
+            (i + 2) as f64
         }
     }
 
@@ -100,8 +86,8 @@ mod tests {
             inner_data: "Test".to_string(),
         });
 
-        assert_eq!(actor_handle.bar(0, String::default()).await.unwrap(), 1.);
         assert_eq!(actor_handle.foo(0, HashMap::new()).await.unwrap(), 1.);
+        assert_eq!(actor_handle.bar(5, |i: usize| i + 10).await.unwrap(), 15);
         assert_eq!(actor_handle.baz(0).await.unwrap(), 2.);
     }
 
@@ -124,6 +110,14 @@ mod tests {
         // The &str actor should have exited --> watch logs
         // The f32 should have exited, even though the cache is still in scope!
         assert!(cache_3.try_recv_newest().is_err()) // This means the cache has no broadcast anymore, so it should exit too
+    }
+
+    #[tokio::test]
+    async fn test_drain_vec() {
+        let actor_handle = Handle::new(vec![1, 2, 3]);
+
+        assert_eq!(actor_handle.drain(1..).await.unwrap(), vec![2, 3]);
+        assert_eq!(actor_handle.get().await.unwrap(), vec![1]);
     }
 
     #[allow(dead_code)]

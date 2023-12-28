@@ -8,7 +8,7 @@ repository = "https://github.com/AvalorAI/actify"
 categories = ["testing"]
 
 [dependencies]
-actify = { version = "0.2.0", path = "../actify"}
+actify = { version = "0.3.0", path = "../actify"}
 async-trait = "0.1"
 env_logger = "0.10"
 log = "0.4"

@@ -1,5 +1,6 @@
 use crate as actify;
 use actify_macros::actify;
+use core::ops::RangeBounds;
 use std::fmt::Debug;
 
 trait ActorVec<T> {
@@ -7,7 +8,9 @@ trait ActorVec<T> {
 
     fn is_empty(&self) -> bool;
 
-    fn drain_all(&mut self) -> Vec<T>;
+    fn drain<R>(&mut self, range: R) -> Vec<T>
+    where
+        R: RangeBounds<usize> + Send + Sync + 'static;
 }
 
 #[actify]
@@ -58,14 +61,15 @@ where
     /// # #[tokio::test]
     /// # async fn drain_actor() {
     /// let handle = Handle::new(vec![1, 2]);
-    /// let res = handle.drain_all().await.unwrap();
+    /// let res = handle.drain(..).await.unwrap();
     /// assert_eq!(res, vec![1, 2]);
     /// assert_eq!(handle.get().await.unwrap(), Vec::<i32>::new());
     /// # }
     /// ```
-    fn drain_all(&mut self) -> Vec<T> {
-        // TODO add actual range as with the std vec
-        // TODO this is currently not possible without supporting generic method arguments
-        self.drain(..).collect()
+    fn drain<R>(&mut self, range: R) -> Vec<T>
+    where
+        R: RangeBounds<usize> + Send + Sync + 'static,
+    {
+        self.drain(range).collect()
     }
 }
