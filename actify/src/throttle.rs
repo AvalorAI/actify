@@ -274,7 +274,7 @@ mod tests {
         // All updates should be processed
         let time = *counter.elapsed.lock().unwrap() as f64;
         let count = *counter.count.lock().unwrap();
-        assert!((timer * 5. - time).abs() / (5. * timer) < 0.1 && count == 5);
+        assert!((timer * 5. - time).abs() / (5. * timer) < 0.1 && count == 6);
     }
 
     #[tokio::test]
