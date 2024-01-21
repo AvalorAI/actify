@@ -159,13 +159,7 @@ where
     pub fn subscribe(&self) -> broadcast::Receiver<T> {
         self._broadcast.subscribe()
     }
-}
 
-// ------- Seperate implementation of the general functions for the base handle ------- //
-impl<T> Handle<T>
-where
-    T: Clone + Debug + Send + Sync + 'static,
-{
     pub fn new(val: T) -> Handle<T> {
         let (tx, rx) = mpsc::channel(CHANNEL_SIZE);
         let (broadcast, _) = broadcast::channel(CHANNEL_SIZE);
@@ -176,6 +170,27 @@ where
             tx,
             _broadcast: broadcast,
         }
+    }
+
+    /// Creates a new Handle and initializes a corresponding throttle
+    /// The throttle fires given a specificed [Frequency]
+    pub fn new_throttled<C, F>(
+        val: T,
+        client: C,
+        call: fn(&C, F),
+        freq: Frequency,
+    ) -> Result<Handle<T>, ActorError>
+    where
+        C: Send + Sync + 'static,
+        T: Throttled<F>,
+        F: Clone + Send + Sync + 'static,
+    {
+        let handle = Self::new(val.clone());
+        ThrottleBuilder::<C, T, F>::new(client, call, freq)
+            .attach(handle.clone())
+            .init(val)
+            .spawn()?;
+        Ok(handle)
     }
 
     pub async fn send_job(

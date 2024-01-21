@@ -64,6 +64,8 @@ where
             iv.tick().await; // First tick completes immediately, so ignore by calling prior
         }
 
+        self.execute_call(); // Always execute the call once in case it was initialized
+
         let mut event_processed = true;
         loop {
             // Wait or update cache
