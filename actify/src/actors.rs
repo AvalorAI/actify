@@ -43,6 +43,7 @@ lazy_static! {
     static ref BROADCAST_COUNTS: Mutex<HashMap<String, usize>> = Mutex::new(HashMap::new());
 }
 
+#[cfg(feature = "profiler")]
 /// Returns a Hashmap of all broadcast counts per method
 pub fn get_broadcast_counts() -> HashMap<String, usize> {
     BROADCAST_COUNTS
@@ -51,6 +52,7 @@ pub fn get_broadcast_counts() -> HashMap<String, usize> {
         .unwrap_or_default()
 }
 
+#[cfg(feature = "profiler")]
 /// Returns a sorted Vec of all broadcast counts per method
 pub fn get_sorted_broadcast_counts() -> Vec<(String, usize)> {
     let counts = get_broadcast_counts();
