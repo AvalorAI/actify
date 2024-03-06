@@ -136,8 +136,25 @@ mod tests {
         actor_handle.foo(0, HashMap::new()).await.unwrap();
         assert!(rx.try_recv().is_ok());
 
+        actor_handle.foo(1, HashMap::new()).await.unwrap();
+        assert!(rx.try_recv().is_ok());
+
+        actor_handle
+            .set(TestStruct {
+                inner_data: "Test2".to_string(),
+            })
+            .await
+            .unwrap();
+        assert!(rx.try_recv().is_ok());
+
         actor_handle.baz(0).await.unwrap();
         assert!(rx.try_recv().is_err()); // Nothing
+
+        let counts = actify::get_broadcast_counts();
+        println!("{:?}", counts);
+
+        let sorted_counts = actify::get_sorted_broadcast_counts();
+        println!("{:?}", sorted_counts);
     }
 
     #[allow(dead_code)]

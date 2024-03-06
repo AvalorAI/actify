@@ -35,6 +35,33 @@ impl<T> From<mpsc::error::SendError<T>> for ActorError {
     }
 }
 
+use lazy_static::lazy_static;
+use std::collections::HashMap;
+use std::sync::Mutex;
+
+lazy_static! {
+    static ref BROADCAST_COUNTS: Mutex<HashMap<String, usize>> = Mutex::new(HashMap::new());
+}
+
+/// Returns a Hashmap of all broadcast counts per method
+pub fn get_broadcast_counts() -> HashMap<String, usize> {
+    BROADCAST_COUNTS
+        .lock()
+        .map(|c| c.clone())
+        .unwrap_or_default()
+}
+
+/// Returns a sorted Vec of all broadcast counts per method
+pub fn get_sorted_broadcast_counts() -> Vec<(String, usize)> {
+    let counts = get_broadcast_counts();
+    let mut counts_vec: Vec<(String, usize)> = counts
+        .iter()
+        .map(|(name, &count)| (name.clone(), count))
+        .collect();
+    counts_vec.sort_by(|a, b| b.1.cmp(&a.1));
+    counts_vec
+}
+
 /// A clonable handle that can be used to remotely execute a closure on the corresponding actor
 #[derive(Debug, Clone)]
 pub struct Handle<T> {
@@ -267,11 +294,20 @@ where
 
     fn set(&mut self, args: Box<dyn Any + Send>) -> Result<Box<dyn Any + Send>, ActorError> {
         self.inner = *args.downcast().expect(WRONG_ARGS);
-        self.broadcast();
+        let type_name = format!("{}::set", std::any::type_name::<T>());
+
+        self.broadcast(&type_name);
         Ok(Box::new(()))
     }
 
-    pub fn broadcast(&self) {
+    pub fn broadcast(&self, _method: &str) {
+        #[cfg(feature = "profiler")]
+        {
+            if let Ok(mut counts) = BROADCAST_COUNTS.lock() {
+                *counts.entry(_method.to_string()).or_insert(0) += 1;
+            }
+        }
+
         // A broadcast error is not propagated, as otherwise a succesful call could produce an independent broadcast error
         if self.broadcast.receiver_count() > 0 {
             if let Err(e) = self.broadcast.send(self.inner.clone()) {

@@ -195,6 +195,8 @@ mod throttle;
 // Reexport for easier reference
 pub use actify_macros::{actify, skip_broadcast};
 pub use actors::ActorError;
+#[cfg(feature = "profiler")]
+pub use actors::{get_broadcast_counts, get_sorted_broadcast_counts};
 pub use actors::{Actor, FnType, Handle};
 pub use async_trait::async_trait;
 pub use cache::Cache;

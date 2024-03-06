@@ -147,6 +147,7 @@ fn generate_actor_trait_method_impl(
 
     let actor_method_ident = &method.sig.ident;
     let fn_ident = &original_method.sig.ident;
+    let ident_string = format!("{}::{}", impl_type_ident.to_string(), fn_ident.to_string());
 
     let unit_type = quote! { () };
     let parsed_unit_type = Box::new(syn::parse(unit_type.into()).unwrap());
@@ -180,7 +181,7 @@ fn generate_actor_trait_method_impl(
     let broadcast = if skip_broadcast {
         None
     } else {
-        Some(quote! { self.broadcast(); })
+        Some(quote! { self.broadcast(#ident_string); })
     };
 
     // Extract generic parameters and where-clause from the method.
