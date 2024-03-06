@@ -1,84 +1,88 @@
 //! This workspace is used to test the functionalities of actify as would any user that imports the library
 
+use actify::actify;
+use async_trait::async_trait;
+use std::{collections::HashMap, fmt::Debug};
+
 fn main() {}
+
+/// An example struct for the macro tests
+#[allow(dead_code)]
+#[derive(Clone, Debug)]
+struct TestStruct<T> {
+    inner_data: T,
+}
+
+#[actify]
+impl<T> TestStruct<T>
+where
+    T: Clone + Debug + Send + Sync + 'static,
+{
+    #[cfg(not(feature = "test_feature"))] // TODO should be replaced by os cfg types
+    fn foo(&mut self, i: i32, _h: HashMap<String, T>) -> f64 {
+        (i + 1) as f64
+    }
+
+    fn bar<F>(&self, i: usize, f: F) -> usize
+    where
+        F: Fn(usize) -> usize + Send + Sync + 'static,
+    {
+        f(i)
+    }
+
+    #[actify::skip_broadcast]
+    async fn baz(&mut self, i: i32) -> f64 {
+        (i + 2) as f64
+    }
+}
+
+/// Example Extension trait
+trait TestExt<T> {
+    fn extended_foo(&mut self, i: i32, _h: HashMap<String, T>) -> f64;
+
+    fn extended_bar<F>(&mut self, i: usize, f: F) -> usize
+    where
+        F: Fn(usize) -> usize + Send + Sync + 'static;
+}
+
+impl<T> TestExt<T> for TestStruct<T>
+where
+    T: Clone + Debug + Send + Sync + 'static,
+{
+    fn extended_foo(&mut self, i: i32, _h: HashMap<String, T>) -> f64 {
+        (i + 1) as f64
+    }
+
+    fn extended_bar<F>(&mut self, i: usize, f: F) -> usize
+    where
+        F: Fn(usize) -> usize + Send + Sync + 'static,
+    {
+        f(i)
+    }
+}
+
+/// Example async Extension trait
+#[async_trait]
+trait AsyncTestExt<T> {
+    async fn extended_baz(&mut self, i: i32) -> f64;
+}
+
+#[async_trait]
+impl<T> AsyncTestExt<T> for TestStruct<T>
+where
+    T: Clone + Debug + Send + Sync + 'static,
+{
+    async fn extended_baz(&mut self, i: i32) -> f64 {
+        (i + 2) as f64
+    }
+}
 
 #[cfg(test)]
 mod tests {
-
-    use actify::{actify, Handle, VecHandle};
-    use async_trait::async_trait;
-    use std::{collections::HashMap, fmt::Debug, time::Duration};
+    use super::*;
+    use actify::{Handle, VecHandle};
+    use std::time::Duration;
     use tokio::time::sleep;
-
-    /// An example struct for the macro tests
-    #[allow(dead_code)]
-    #[derive(Clone, Debug)]
-    struct TestStruct<T> {
-        inner_data: T,
-    }
-
-    #[actify]
-    impl<T> TestStruct<T>
-    where
-        T: Clone + Debug + Send + Sync + 'static,
-    {
-        #[cfg(not(feature = "test_feature"))] // TODO should be replaced by os cfg types
-        fn foo(&mut self, i: i32, _h: HashMap<String, T>) -> f64 {
-            (i + 1) as f64
-        }
-
-        fn bar<F>(&self, i: usize, f: F) -> usize
-        where
-            F: Fn(usize) -> usize + Send + Sync + 'static,
-        {
-            f(i)
-        }
-
-        async fn baz(&mut self, i: i32) -> f64 {
-            (i + 2) as f64
-        }
-    }
-
-    /// Example Extension trait
-    trait TestExt<T> {
-        fn extended_foo(&mut self, i: i32, _h: HashMap<String, T>) -> f64;
-
-        fn extended_bar<F>(&mut self, i: usize, f: F) -> usize
-        where
-            F: Fn(usize) -> usize + Send + Sync + 'static;
-    }
-
-    impl<T> TestExt<T> for TestStruct<T>
-    where
-        T: Clone + Debug + Send + Sync + 'static,
-    {
-        fn extended_foo(&mut self, i: i32, _h: HashMap<String, T>) -> f64 {
-            (i + 1) as f64
-        }
-
-        fn extended_bar<F>(&mut self, i: usize, f: F) -> usize
-        where
-            F: Fn(usize) -> usize + Send + Sync + 'static,
-        {
-            f(i)
-        }
-    }
-
-    /// Example async Extension trait
-    #[async_trait]
-    trait AsyncTestExt<T> {
-        async fn extended_baz(&mut self, i: i32) -> f64;
-    }
-
-    #[async_trait]
-    impl<T> AsyncTestExt<T> for TestStruct<T>
-    where
-        T: Clone + Debug + Send + Sync + 'static,
-    {
-        async fn extended_baz(&mut self, i: i32) -> f64 {
-            (i + 2) as f64
-        }
-    }
 
     #[tokio::test]
     async fn test_macro() {
@@ -118,6 +122,22 @@ mod tests {
 
         assert_eq!(actor_handle.drain(1..).await.unwrap(), vec![2, 3]);
         assert_eq!(actor_handle.get().await.unwrap(), vec![1]);
+    }
+
+    #[tokio::test]
+    async fn test_skip_broadcast() {
+        let actor_handle = Handle::new(TestStruct {
+            inner_data: "Test".to_string(),
+        });
+
+        let mut rx = actor_handle.subscribe();
+        assert!(rx.try_recv().is_err()); // Nothing
+
+        actor_handle.foo(0, HashMap::new()).await.unwrap();
+        assert!(rx.try_recv().is_ok());
+
+        actor_handle.baz(0).await.unwrap();
+        assert!(rx.try_recv().is_err()); // Nothing
     }
 
     #[allow(dead_code)]

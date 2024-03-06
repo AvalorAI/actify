@@ -6,6 +6,11 @@ use syn::{
     ItemImpl, PatIdent, PathSegment, Receiver, ReturnType, TraitItemFn, Type,
 };
 
+#[proc_macro_attribute]
+pub fn skip_broadcast(_args: TokenStream, input: TokenStream) -> TokenStream {
+    input
+}
+
 /// The actify macro expands an impl block of a rust struct to support usage in an actor model.
 /// Effectively, this macro allows to remotely call an actor method through a handle.
 /// By using traits, the methods on the handle have the same signatures, so that type checking is enforced
@@ -162,6 +167,22 @@ fn generate_actor_trait_method_impl(
         None
     };
 
+    let skip_broadcast = original_method.attrs.iter().any(|attr| {
+        let segments = attr
+            .path()
+            .segments
+            .pairs()
+            .map(|p| p.into_value().ident.to_string())
+            .collect::<Vec<_>>();
+        segments.contains(&"skip_broadcast".to_string())
+    });
+
+    let broadcast = if skip_broadcast {
+        None
+    } else {
+        Some(quote! { self.broadcast(); })
+    };
+
     // Extract generic parameters and where-clause from the method.
     let generics = &method.sig.generics;
     let where_clause = &generics.where_clause;
@@ -179,7 +200,7 @@ fn generate_actor_trait_method_impl(
 
             let result: #original_output_type = #method_call::#fn_ident(&#mutability self.inner, #input_arg_names)#awaiter; // if this is async, await it, else do not
 
-        self.broadcast(); // TODO make this optional!
+        #broadcast
 
         Ok(Box::new(result))
         }

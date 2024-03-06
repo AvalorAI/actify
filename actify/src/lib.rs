@@ -193,7 +193,7 @@ mod extensions;
 mod throttle;
 
 // Reexport for easier reference
-pub use actify_macros::actify;
+pub use actify_macros::{actify, skip_broadcast};
 pub use actors::ActorError;
 pub use actors::{Actor, FnType, Handle};
 pub use async_trait::async_trait;
