@@ -16,7 +16,7 @@ thiserror = "1.0"
 tokio = { version = "1.15", features = ["full"] }
 log = "0.4"
 futures = "0.3.26"
-# actify-macros = "0.3.1"
+actify-macros = "0.3.1"
 # actify-macros = { path = "../actify-macros", version = "0.3.1" }
 lazy_static = "1.4.0"
 
