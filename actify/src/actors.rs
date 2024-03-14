@@ -168,6 +168,26 @@ where
         Ok(*res.downcast().expect(WRONG_RESPONSE))
     }
 
+    /// Performs a shutdown of the actor
+    /// Any subsequent calls with lead to an error being returned
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use actify::Handle;
+    /// # use tokio;
+    /// # #[tokio::test]
+    /// # async fn shutdown_actor() {
+    /// let handle = Handle::new(1);
+    /// handle.shutdown().await.unwrap();
+    /// assert!(handle.get().await.is_err());
+    /// # }
+    /// ```
+    pub async fn shutdown(&self) -> Result<(), ActorError> {
+        let res = self.send_job(FnType::Shutdown, Box::new(())).await?;
+        Ok(*res.downcast().expect(WRONG_RESPONSE))
+    }
+
     /// Returns a receiver that receives all updated values from the actor
     /// Note that the inner value might not actually have changed.
     /// It broadcasts on any method that has a mutable reference to the actor.
@@ -257,10 +277,16 @@ where
 
     async fn serve(mut self) {
         // Execute the function on the inner data
+        let mut shutdown = false;
         while let Some(job) = self.rx.recv().await {
             let res = match job.call {
                 FnType::Inner(mut call) => (*call)(&mut self.actor, job.args),
                 FnType::InnerAsync(mut call) => call(&mut self.actor, job.args).await,
+                FnType::Shutdown => {
+                    shutdown = true;
+                    _ = job.respond_to.send(Ok(Box::new(())));
+                    break;
+                }
             };
 
             if job.respond_to.send(res).is_err() {
@@ -271,7 +297,11 @@ where
             }
         }
         let inner_type = std::any::type_name::<T>();
-        log::warn!("Actor of type {inner_type} exited!");
+        if shutdown {
+            log::info!("Actor of type {inner_type} has been shutdown");
+        } else {
+            log::warn!("Actor of type {inner_type} exited as all handles are dropped");
+        }
     }
 }
 
@@ -355,6 +385,7 @@ pub enum FnType<T> {
                 + Sync,
         >,
     ),
+    Shutdown,
 }
 
 impl<T> fmt::Debug for FnType<T> {
@@ -363,6 +394,7 @@ impl<T> fmt::Debug for FnType<T> {
         match self {
             FnType::Inner(_) => write!(f, "FnType::Inner<{inner_type}>"),
             FnType::InnerAsync(_) => write!(f, "FnType::InnerAsync<{inner_type}>"),
+            FnType::Shutdown => write!(f, "FnType::Shutdown"),
         }
     }
 }
