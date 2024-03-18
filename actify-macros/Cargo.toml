@@ -4,6 +4,7 @@ version = "0.3.1"
 edition = "2021"
 description = "Actify's procedural macros"
 license = "MIT"
+repository = "https://github.com/AvalorAI/actify"
 
 [dependencies]
 quote = "1.0"
