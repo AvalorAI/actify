@@ -105,7 +105,7 @@ mod tests {
             let _handle_2 = Handle::new("test");
             let handle_3 = Handle::new(1.); // This goes out of scope
             let _handle_1_clone = handle_1.clone();
-            let cache_3 = handle_3.create_initialized_cache().await.unwrap(); // But the cache doesn't
+            let cache_3 = handle_3.create_cache().await.unwrap(); // But the cache doesn't
             cache_3
         };
 

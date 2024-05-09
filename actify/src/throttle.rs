@@ -69,19 +69,32 @@ where
         let mut event_processed = true;
         loop {
             // Wait or update cache
-            let msg = tokio::select!(
+            let received_msg = tokio::select!(
                 _ = Throttle::<C, T, F>::keep_time(&mut interval) => false,
-                Ok(msg) = Throttle::<C, T, F>::check_value(&mut self.val_rx) => {
-                    event_processed = false;
-                    self.update_val(msg);
-                    true
+                res = Throttle::<C, T, F>::check_value(&mut self.val_rx) => {
+                    match res {
+                        Ok(val) => {
+                            event_processed = false;
+                            self.cache = Some(val);
+                            true
+                        }
+                        Err(RecvError::Closed) => {
+                            log::warn!("Attached actor of type {} closed - exiting throttle", std::any::type_name::<T>());
+                            break
+                        }
+                        Err(RecvError::Lagged(nr)) => {
+                            log::warn!("Throttle of type {} lagged {nr} messages", std::any::type_name::<T>());
+                            continue
+                        }
+                    }
+
                 },
             );
 
             match self.frequency {
-                Frequency::OnEvent if msg => self.execute_call(),
-                Frequency::Interval(_) if !msg => self.execute_call(),
-                Frequency::OnEventWhen(_) if !msg && !event_processed => {
+                Frequency::OnEvent if received_msg => self.execute_call(),
+                Frequency::Interval(_) if !received_msg => self.execute_call(),
+                Frequency::OnEventWhen(_) if !received_msg && !event_processed => {
                     event_processed = true;
                     self.execute_call()
                 }
@@ -100,10 +113,6 @@ where
 
         // Perform the call
         (self.call)(&self.client, F::clone(&val));
-    }
-
-    fn update_val(&mut self, val: T) {
-        self.cache = Some(val);
     }
 
     async fn keep_time(interval: &mut Option<Interval>) {
@@ -212,6 +221,40 @@ mod tests {
     use tokio::time::{sleep, Duration, Instant};
 
     #[tokio::test]
+    async fn test_exit_on_shutdown() {
+        let handle = Handle::new(1);
+
+        let counter = CounterClient::new();
+
+        // Spawn throttle
+        ThrottleBuilder::new(
+            counter.clone(),
+            CounterClient::call,
+            Frequency::Interval(Duration::from_millis(10)),
+        )
+        .attach(handle.clone())
+        .spawn()
+        .unwrap();
+
+        handle.set(2).await.unwrap(); // Update handle, firing event
+        sleep(Duration::from_millis(200)).await;
+
+        handle.shutdown().await.unwrap();
+
+        let count_before_drop = *counter.count.lock().unwrap();
+
+        // The throttle will emit a warning and stop
+        drop(handle);
+
+        sleep(Duration::from_millis(200)).await;
+
+        let count_after_drop = *counter.count.lock().unwrap();
+
+        // No updates have arrived even though the frequency is a constant interval, as the throttle has exited
+        assert_eq!(count_before_drop, count_after_drop);
+    }
+
+    #[tokio::test]
     async fn test_on_event() {
         // The Handle update event should be received directly after the interval has passed
         let timer = 200.;
@@ -220,11 +263,7 @@ mod tests {
         interval.tick().await; // Completed immediately
 
         // Start counter
-        let counter = CounterClient {
-            start: Instant::now(),
-            elapsed: Arc::new(Mutex::new(0)),
-            count: Arc::new(Mutex::new(0)),
-        };
+        let counter = CounterClient::new();
 
         // Spawn throttle
         ThrottleBuilder::new(counter.clone(), CounterClient::call, Frequency::OnEvent)
@@ -242,6 +281,43 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_hot_on_event_when() {
+        // The Handle update event should be received directly after the interval has passed
+        let timer = 200.;
+        let handle = Handle::new(1);
+        let mut interval = time::interval(Duration::from_millis(timer as u64));
+        interval.tick().await; // Completed immediately
+
+        // Start counter
+        let counter = CounterClient::new();
+
+        // Spawn throttle
+        ThrottleBuilder::new(
+            counter.clone(),
+            CounterClient::call,
+            Frequency::OnEventWhen(Duration::from_millis(timer as u64)),
+        )
+        .attach(handle.clone())
+        .spawn()
+        .unwrap();
+
+        // Many updates are triggered in quick succesion
+        for i in 0..10 {
+            handle.set(i).await.unwrap();
+            sleep(Duration::from_millis((timer / 10.) as u64)).await;
+        }
+
+        sleep(Duration::from_millis(5)).await;
+
+        let time = *counter.elapsed.lock().unwrap() as f64;
+        let count = *counter.count.lock().unwrap();
+
+        // Still the counter has been invoked 1 time
+        // The interval has not been exceeded between calls, but it did since the last update
+        assert!((timer - time).abs() / timer < 0.1 && count == 1);
+    }
+
+    #[tokio::test]
     async fn test_interval() {
         // The interval passed to the throttle used to send the value each time
 
@@ -250,11 +326,7 @@ mod tests {
         interval.tick().await; // Completed immediately
 
         // Start counter
-        let counter = CounterClient {
-            start: Instant::now(),
-            elapsed: Arc::new(Mutex::new(0)),
-            count: Arc::new(Mutex::new(0)),
-        };
+        let counter = CounterClient::new();
 
         // Spawn throttle
         ThrottleBuilder::new(
@@ -291,11 +363,7 @@ mod tests {
         interval.tick().await; // Completed immediately
 
         // Start counter
-        let counter = CounterClient {
-            start: Instant::now(),
-            elapsed: Arc::new(Mutex::new(0)),
-            count: Arc::new(Mutex::new(0)),
-        };
+        let counter = CounterClient::new();
 
         // Spawn throttle
         ThrottleBuilder::new(
@@ -329,11 +397,7 @@ mod tests {
         interval.tick().await; // Completed immediately
 
         // Start counter
-        let counter = CounterClient {
-            start: Instant::now(),
-            elapsed: Arc::new(Mutex::new(0)),
-            count: Arc::new(Mutex::new(0)),
-        };
+        let counter = CounterClient::new();
 
         // Spawn throttle
         ThrottleBuilder::new(
@@ -353,23 +417,6 @@ mod tests {
         let count = *counter.count.lock().unwrap();
         assert!(count == 0);
         assert_eq!(time, 0);
-    }
-
-    #[derive(Debug, Clone)]
-    struct CounterClient {
-        start: Instant,
-        elapsed: Arc<Mutex<u128>>,
-        count: Arc<Mutex<i32>>,
-    }
-
-    impl CounterClient {
-        fn call(&self, _event: i32) {
-            let mut time = self.elapsed.lock().unwrap();
-            *time = self.start.elapsed().as_millis();
-
-            let mut count = self.count.lock().unwrap();
-            *count += 1;
-        }
     }
 
     #[tokio::test]
@@ -432,5 +479,30 @@ mod tests {
         fn call_a(&self, _event: A) {}
         fn call_b(&self, _event: B) {}
         fn call_c(&self, _event: C) {}
+    }
+
+    #[derive(Debug, Clone)]
+    struct CounterClient {
+        start: Instant,
+        elapsed: Arc<Mutex<u128>>,
+        count: Arc<Mutex<i32>>,
+    }
+
+    impl CounterClient {
+        fn new() -> Self {
+            CounterClient {
+                start: Instant::now(),
+                elapsed: Arc::new(Mutex::new(0)),
+                count: Arc::new(Mutex::new(0)),
+            }
+        }
+
+        fn call(&self, _event: i32) {
+            let mut time = self.elapsed.lock().unwrap();
+            *time = self.start.elapsed().as_millis();
+
+            let mut count = self.count.lock().unwrap();
+            *count += 1;
+        }
     }
 }

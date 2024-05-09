@@ -85,22 +85,27 @@ where
 
 impl<T> Handle<T>
 where
+    T: Clone + Debug + Send + Sync + 'static + Default,
+{
+    /// Creates a cache from a custom value that can locally synchronize with the remote actor
+    /// It does this through subscribing to broadcasted updates from the actor
+    /// As it is not initialized with the current value, any updates before construction are missed.
+    /// In case no updates are processed yet, the default value is returned
+    pub fn create_cache_from_default(&self) -> Cache<T> {
+        Cache::new(self._broadcast.subscribe(), T::default())
+    }
+}
+
+impl<T> Handle<T>
+where
     T: Clone + Debug + Send + Sync + 'static,
 {
     /// Creates an itialized cache that can locally synchronize with the remote actor.
     /// It does this through subscribing to broadcasted updates from the actor.
-    /// Initialized implies that it initially performs a get(). Therefore any updates before construction are included,
-    /// and a get_newest() always returns the current value.
-    pub async fn create_initialized_cache(&self) -> Result<Cache<T>, ActorError> {
+    /// As it is initialized with the current value, any updates before construction are included
+    pub async fn create_cache(&self) -> Result<Cache<T>, ActorError> {
         let init = self.get().await?;
-        Ok(Cache::new_initialized(self._broadcast.subscribe(), init))
-    }
-
-    /// Creates an unitialized cache that can locally synchronize with the remote actor
-    /// It does this through subscribing to broadcasted updates from the actor
-    /// Unitialized implies that it does not initially performs a get(). Therefore any updates before construction are missed.
-    pub fn create_uninitialized_cache(&self) -> Cache<T> {
-        Cache::new(self._broadcast.subscribe())
+        Ok(Cache::new(self._broadcast.subscribe(), init))
     }
 
     /// Returns the current capacity of the channel
