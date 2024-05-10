@@ -74,7 +74,7 @@ where
                     self.inner = val;
 
                     // If only interested in the newest, and more updates are available, process those first
-                    if self.rx.is_empty() {
+                    if !self.rx.is_empty() {
                         continue;
                     }
                     return Ok(self.get_current());
@@ -236,6 +236,7 @@ mod tests {
     async fn test_recv_cache_newest() {
         let handle = Handle::new(1);
         let mut cache = handle.create_cache().await.unwrap();
+        assert_eq!(cache.recv_newest().await.unwrap(), &1);
         handle.set(2).await.unwrap();
         handle.set(3).await.unwrap();
         assert_eq!(cache.recv_newest().await.unwrap(), &3)
@@ -318,6 +319,7 @@ mod tests {
     async fn test_try_recv_some_newest() {
         let handle = Handle::new(1);
         let mut cache = handle.create_cache().await.unwrap();
+        assert_eq!(cache.try_recv_newest().unwrap(), Some(&1));
         handle.set(2).await.unwrap();
         handle.set(3).await.unwrap(); // Returned, as newest value first
         assert_eq!(cache.try_recv_newest().unwrap(), Some(&3))
