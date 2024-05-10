@@ -101,7 +101,7 @@ mod tests {
 
         let handle_1 = Handle::new(1);
 
-        let mut cache_3 = {
+        let cache_3 = {
             let _handle_2 = Handle::new("test");
             let handle_3 = Handle::new(1.); // This goes out of scope
             let _handle_1_clone = handle_1.clone();
