@@ -406,17 +406,17 @@ mod tests {
     #[tokio::test]
     #[ignore]
     async fn test_sequential_recv() {
-        // TODO This test still fails. What is the expected behavior?
+        // TODO This test only succeeds because of explicit dropping. Otherwise it does not. What is expected?
         let handle = Handle::new(1);
         let cache = handle.create_cache().await.unwrap();
         handle.set(2).await.unwrap();
         handle.set(3).await.unwrap();
         let first = cache.recv().await.unwrap();
         assert_eq!(*first, 1);
-        // drop(first);
+        drop(first);
         let second = cache.recv().await.unwrap();
         assert_eq!(*second, 2);
-        // drop(second);
+        drop(second);
         let third = cache.recv().await.unwrap();
         assert_eq!(*third, 3);
     }
