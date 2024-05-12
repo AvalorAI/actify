@@ -263,44 +263,23 @@ impl<'a, T> Borrow<T> for Ref<'a, T> {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::{Arc, RwLock};
-
     use crate::Handle;
     use tokio::time::{sleep, Duration};
 
-    #[derive(Debug, Clone, Default)]
-    struct ComplexStruct {}
-
-    impl ComplexStruct {
-        fn some_fn(&self) -> i32 {
-            2
-        }
-    }
-
     #[tokio::test]
     async fn ref_test() {
+        #[derive(Debug, Clone, Default)]
+        struct ComplexStruct {}
+
+        impl ComplexStruct {
+            fn some_fn(&self) -> i32 {
+                2
+            }
+        }
+
         let handle = Handle::new(ComplexStruct {});
         let cache = handle.create_cache_from_default();
         assert_eq!(cache.get_newest().some_fn(), 2); // Not initalized, so default although value is set
-    }
-
-    #[tokio::test]
-    async fn tinker_test() {
-        let a = Arc::new(RwLock::new(0));
-        {
-            if let Ok(mut e) = a.try_write() {
-                *e = 1;
-            }
-        }
-        let b = { &*a.read().unwrap() };
-        {
-            if let Ok(mut d) = a.try_write() {
-                *d = 2;
-            }
-        }
-        let c = { &*a.read().unwrap() };
-        println!("b {:?}", b);
-        println!("c {:?}", c);
     }
 
     #[tokio::test]
