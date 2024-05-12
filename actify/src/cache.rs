@@ -1,5 +1,7 @@
 use std::{
+    borrow::Borrow,
     fmt::Debug,
+    ops::Deref,
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc, Mutex, RwLock, RwLockReadGuard,
@@ -53,21 +55,21 @@ where
 
     /// Returns the newest value available, even if the channel is closed
     /// Note that when the cache is initialized with a default value, this might return the default while the actor has a different value
-    pub fn get_newest(&self) -> RwLockReadGuard<T> {
+    pub fn get_newest(&self) -> Ref<T> {
         _ = self.try_recv_newest(); // Update if possible
         self.get_current()
     }
 
     /// Returns the current value held by the cache, without synchronizing with the actor
-    pub fn get_current(&self) -> RwLockReadGuard<T> {
-        self.inner.read().unwrap()
+    pub fn get_current(&self) -> Ref<T> {
+        self.inner.read().unwrap().into()
     }
 
     /// Receive the newest updated value broadcasted by the actor, discarding any older messages.
     /// The first time it will return its current value immediately
     /// After that, it might wait indefinitely for a new update
     /// Note that when the cache is initialized with a default value, this might return the default while the actor has a different value
-    pub async fn recv_newest(&self) -> Result<RwLockReadGuard<T>, CacheRecvNewestError> {
+    pub async fn recv_newest(&self) -> Result<Ref<T>, CacheRecvNewestError> {
         // If requesting a value for the first time, it returns immediately
         if self.first_request.load(Ordering::SeqCst) {
             self.first_request.store(false, Ordering::SeqCst);
@@ -107,7 +109,7 @@ where
     /// The first time it will return its current value immediately
     /// After that, it might wait indefinitely for a new update
     /// Note that when the cache is initialized with a default value, this might return the default while the actor has a different value
-    pub async fn recv(&self) -> Result<RwLockReadGuard<T>, CacheRecvError> {
+    pub async fn recv(&self) -> Result<Ref<T>, CacheRecvError> {
         // If requesting a value for the first time, it returns immediately
         if self.first_request.load(Ordering::SeqCst) {
             self.first_request.store(false, Ordering::SeqCst);
@@ -132,7 +134,7 @@ where
     /// The first time it will return its initialized value, even if no updates are present.
     /// After that, lacking updates will return None.
     /// Note that when the cache is initialized with a default value, this might return None while the actor has a value
-    pub fn try_recv_newest(&self) -> Result<Option<RwLockReadGuard<T>>, CacheRecvNewestError> {
+    pub fn try_recv_newest(&self) -> Result<Option<Ref<T>>, CacheRecvNewestError> {
         if let Ok(mut inner) = self.inner.try_write() {
             loop {
                 let mut rx = self.rx.lock().unwrap();
@@ -180,7 +182,7 @@ where
     /// The first time it will return its initialized value, even if no updates are present.
     /// After that, lacking updates will return None.
     /// Note that when the cache is initialized with a default value, this might return None while the actor has a value
-    pub fn try_recv(&self) -> Result<Option<RwLockReadGuard<T>>, CacheRecvError> {
+    pub fn try_recv(&self) -> Result<Option<Ref<T>>, CacheRecvError> {
         // If requesting a value for the first time, it returns immediately
         if self.first_request.load(Ordering::SeqCst) {
             self.first_request.store(false, Ordering::SeqCst);
@@ -228,12 +230,59 @@ pub enum CacheRecvNewestError {
     Closed,
 }
 
+#[derive(Debug)]
+pub struct Ref<'a, T> {
+    guard: RwLockReadGuard<'a, T>,
+}
+
+impl<'a, T> From<RwLockReadGuard<'a, T>> for Ref<'a, T> {
+    fn from(guard: RwLockReadGuard<'a, T>) -> Self {
+        Ref { guard }
+    }
+}
+
+impl<'a, T> AsRef<T> for Ref<'a, T> {
+    fn as_ref(&self) -> &T {
+        &*self
+    }
+}
+
+impl<'a, T> Deref for Ref<'a, T> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        &*self.guard
+    }
+}
+
+impl<'a, T> Borrow<T> for Ref<'a, T> {
+    fn borrow(&self) -> &T {
+        &*self.guard
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::{Arc, RwLock};
 
     use crate::Handle;
     use tokio::time::{sleep, Duration};
+
+    #[derive(Debug, Clone, Default)]
+    struct ComplexStruct {}
+
+    impl ComplexStruct {
+        fn some_fn(&self) -> i32 {
+            2
+        }
+    }
+
+    #[tokio::test]
+    async fn ref_test() {
+        let handle = Handle::new(ComplexStruct {});
+        let cache = handle.create_cache_from_default();
+        assert_eq!(cache.get_newest().some_fn(), 2); // Not initalized, so default although value is set
+    }
 
     #[tokio::test]
     async fn tinker_test() {
