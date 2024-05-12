@@ -405,7 +405,25 @@ mod tests {
 
     #[tokio::test]
     #[ignore]
-    async fn test_nested_get_newest() {
+    async fn test_sequential_recv() {
+        // TODO This test still fails. What is the expected behavior?
+        let handle = Handle::new(1);
+        let cache = handle.create_cache().await.unwrap();
+        handle.set(2).await.unwrap();
+        handle.set(3).await.unwrap();
+        let first = cache.recv().await.unwrap();
+        assert_eq!(*first, 1);
+        // drop(first);
+        let second = cache.recv().await.unwrap();
+        assert_eq!(*second, 2);
+        // drop(second);
+        let third = cache.recv().await.unwrap();
+        assert_eq!(*third, 3);
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn test_nested_try_recv() {
         // TODO This test still fails. What is the expected behavior?
         let handle = Handle::new(1);
         let cache = handle.create_cache().await.unwrap();
