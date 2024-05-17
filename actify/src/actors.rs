@@ -337,18 +337,20 @@ where
         Ok(Box::new(()))
     }
 
-    pub fn broadcast(&self, _method: &str) {
+    pub fn broadcast(&self, method: &str) {
         #[cfg(feature = "profiler")]
         {
             if let Ok(mut counts) = BROADCAST_COUNTS.lock() {
-                *counts.entry(_method.to_string()).or_insert(0) += 1;
+                *counts.entry(method.to_string()).or_insert(0) += 1;
             }
         }
 
         // A broadcast error is not propagated, as otherwise a succesful call could produce an independent broadcast error
         if self.broadcast.receiver_count() > 0 {
-            if let Err(e) = self.broadcast.send(self.inner.clone()) {
-                log::warn!("Broadcast value error: {:?}", e.to_string());
+            if let Err(_) = self.broadcast.send(self.inner.clone()) {
+                log::warn!(
+                    "Failed to broadcast update for {method:?} because there are no active receivers"
+                );
             }
         }
     }
