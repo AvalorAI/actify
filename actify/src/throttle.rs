@@ -221,6 +221,22 @@ mod tests {
     use tokio::time::{sleep, Duration, Instant};
 
     #[tokio::test]
+    async fn test_first_shot() {
+        let handle = Handle::new(1);
+        let counter = CounterClient::new();
+
+        // Spawn throttle that should only activate once on creation
+        handle
+            .spawn_throttle(counter.clone(), CounterClient::call, Frequency::OnEvent)
+            .await
+            .unwrap();
+        sleep(Duration::from_millis(200)).await;
+
+        let count = *counter.count.lock().unwrap();
+        assert_eq!(count, 1)
+    }
+
+    #[tokio::test]
     async fn test_exit_on_shutdown() {
         let handle = Handle::new(1);
 
