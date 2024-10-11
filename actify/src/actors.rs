@@ -114,7 +114,7 @@ where
     }
 
     /// Spawns a throttle that fires given a specificed [Frequency], given any broadcasted updates by the actor.
-    pub fn spawn_throttle<C, F>(
+    pub async fn spawn_throttle<C, F>(
         &self,
         client: C,
         call: fn(&C, F),
@@ -125,8 +125,10 @@ where
         T: Throttled<F>,
         F: Clone + Send + Sync + 'static,
     {
+        let val = self.get().await?;
         ThrottleBuilder::<C, T, F>::new(client, call, freq)
             .attach(self.clone())
+            .init(val)
             .spawn()?;
         Ok(())
     }
