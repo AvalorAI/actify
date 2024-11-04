@@ -2,20 +2,19 @@ use crate as actify;
 use actify_macros::actify;
 use std::collections::HashSet;
 use std::fmt::Debug;
+use std::hash::Hash;
 
-trait ActorMap<V> {
-    fn insert(&mut self, val: V) -> bool;
+trait ActorMap<K> {
+    fn insert(&mut self, val: K) -> bool;
 
     fn is_empty(&self) -> bool;
 }
 
 #[actify]
-impl<V> ActorMap<V> for HashSet<V>
+impl<K> ActorMap<K> for HashSet<K>
 where
-    V: Clone + Debug + Send + Sync + 'static,
+    K: Clone + Debug + Eq + Hash + Send + Sync + 'static,
 {
-    /// Inserts a value into the set.
-    ///
     /// Adds a value to the set.
     /// Returns whether the value was newly inserted. That is:
     /// - If the set did not previously contain this value, true is returned.
@@ -41,7 +40,7 @@ where
     /// assert_eq!(res, false);
     /// # }
     /// ```
-    fn insert(&mut self, val: V) -> bool {
+    fn insert(&mut self, val: K) -> bool {
         self.insert(val)
     }
 
