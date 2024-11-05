@@ -82,7 +82,7 @@
 //!         let name: String = *args.downcast().unwrap();
 //!
 //!         // This call is the actual execution of the method from the user-defined impl block, on the struct held by the actor
-//!         let result: String = self.inner.say_hi(name);  
+//!         let result: String = self.inner.say_hi(name);
 //!         Ok(Box::new(result))
 //!     }
 //! }
@@ -198,7 +198,9 @@ pub use actors::ActorError;
 pub use actors::{Actor, FnType, Handle};
 pub use async_trait::async_trait;
 pub use cache::{Cache, CacheRecvError, CacheRecvNewestError};
-pub use extensions::{map::HashMapHandle, option::OptionHandle, vec::VecHandle};
+pub use extensions::{
+    map::HashMapHandle, option::OptionHandle, set::HashSetHandle, vec::VecHandle,
+};
 pub use throttle::{Frequency, ThrottleBuilder, ThrottleError, Throttled};
 
 #[cfg(feature = "profiler")]
