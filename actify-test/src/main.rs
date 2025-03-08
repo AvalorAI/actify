@@ -18,9 +18,19 @@ impl<T> TestStruct<T>
 where
     T: Clone + Debug + Send + Sync + 'static,
 {
-    #[cfg(not(feature = "test_feature"))] // TODO should be replaced by os cfg types
+    #[cfg(target_os = "linux")]
     fn foo(&mut self, i: i32, _h: HashMap<String, T>) -> f64 {
         (i + 1) as f64
+    }
+
+    #[cfg(target_os = "windows")]
+    fn foo(&mut self, i: i32, _h: HashMap<String, T>) -> f64 {
+        (i + 2) as f64
+    }
+
+    #[cfg(target_os = "macos")]
+    fn foo(&mut self, i: i32, _h: HashMap<String, T>) -> f64 {
+        (i + 3) as f64
     }
 
     fn bar<F>(&self, i: usize, f: F) -> usize
@@ -34,8 +44,15 @@ where
     async fn baz(&mut self, i: i32) -> f64 {
         (i + 2) as f64
     }
+
+    fn mut_test(&self, mut arg: String) {
+        println!("{arg}");
+        arg = "mutated".to_string();
+        println!("{arg}")
+    }
 }
 
+#[allow(dead_code)]
 /// Example Extension trait
 trait TestExt<T> {
     fn extended_foo(&mut self, i: i32, _h: HashMap<String, T>) -> f64;
@@ -61,6 +78,7 @@ where
     }
 }
 
+#[allow(dead_code)]
 /// Example async Extension trait
 #[async_trait]
 trait AsyncTestExt<T> {
