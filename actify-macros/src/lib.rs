@@ -287,8 +287,23 @@ fn generate_handle_trait_method_impl(
     actor_method: &TraitItemFn,
     attributes: &proc_macro2::TokenStream,
 ) -> Result<proc_macro2::TokenStream, proc_macro2::TokenStream> {
-    let signature = &method.sig;
+    let mut signature = method.sig.clone();
     let (input_arg_names, _) = transform_args(&method.sig.inputs)?;
+
+    // Remove the mutability in the handle arguments.
+    // Whatever mutability is assigned to the underlying method, is not required in the handle
+    // Otherwise, this will falsely generate a "variable does not need to be mutable" warning for the handle
+    // The reason this works, is that the owned value is just passed along, and can therefore be defined as mut in the method itself
+    for arg in signature.inputs.iter_mut() {
+        match arg {
+            syn::FnArg::Typed(pat_type) => {
+                if let syn::Pat::Ident(ref mut pat_ident) = *pat_type.pat {
+                    pat_ident.mutability = None;
+                }
+            }
+            _ => {}
+        }
+    }
 
     let actor_method_name = &actor_method.sig.ident;
 
@@ -576,7 +591,7 @@ fn transform_args(
     for arg in args {
         match arg {
             syn::FnArg::Typed(pat_type) => {
-                if let syn::Pat::Ident(pat_ident) = *pat_type.pat.clone() {
+                if let syn::Pat::Ident(mut pat_ident) = *pat_type.pat.clone() {
                     match &*pat_type.ty {
                         Type::Path(type_path) => {
                             let var_type = type_path
@@ -584,6 +599,10 @@ fn transform_args(
                                 .segments
                                 .last()
                                 .expect("Actify macro expected a valid type");
+                            // Remove any mutability, as the argument is never mutated before passing and always owned.
+                            // It can safely be removed even if the underlying method has signature method(mut arg: type)
+                            // This prevents issues where the args are passed to the method, as "method(mut arg)" is not allowed
+                            pat_ident.mutability = None;
                             input_arg_names.push(pat_ident.clone());
                             input_arg_types.push(var_type.clone());
                         }
