@@ -118,7 +118,12 @@ where
     /// ```
     pub async fn get(&self) -> T {
         let res = self
-            .send_job(FnType::Inner(Box::new(Actor::get)), Box::new(()))
+            .send_job(
+                Box::new(|s: &mut Actor<T>, args: Box<dyn std::any::Any + Send>| {
+                    Box::pin(async move { Actor::get(s, args).await })
+                }),
+                Box::new(()),
+            )
             .await;
         *res.downcast().expect(WRONG_RESPONSE)
     }
@@ -139,28 +144,13 @@ where
     /// ```
     pub async fn set(&self, val: T) {
         let res = self
-            .send_job(FnType::Inner(Box::new(Actor::set)), Box::new(val))
+            .send_job(
+                Box::new(|s: &mut Actor<T>, args: Box<dyn std::any::Any + Send>| {
+                    Box::pin(async move { Actor::set(s, args).await })
+                }),
+                Box::new(val),
+            )
             .await;
-        *res.downcast().expect(WRONG_RESPONSE)
-    }
-
-    /// Performs a shutdown of the actor
-    /// Any subsequent calls with lead to an error being returned
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// # use actify::Handle;
-    /// # use tokio;
-    /// # #[tokio::test]
-    /// # async fn shutdown_actor() {
-    /// let handle = Handle::new(1);
-    /// handle.shutdown().await.unwrap();
-    /// assert!(handle.get().await.is_err());
-    /// # }
-    /// ```
-    pub async fn shutdown(&self) {
-        let res = self.send_job(FnType::Shutdown, Box::new(())).await;
         *res.downcast().expect(WRONG_RESPONSE)
     }
 
@@ -212,7 +202,7 @@ where
 
     pub async fn send_job(
         &self,
-        call: FnType<T>,
+        call: ActorMethod<T>,
         args: Box<dyn Any + Send>,
     ) -> Box<dyn Any + Send> {
         let (respond_to, get_result) = oneshot::channel();
@@ -255,30 +245,15 @@ where
 
     async fn serve(mut self) {
         // Execute the function on the inner data
-        let mut shutdown = false;
-        while let Some(job) = self.rx.recv().await {
-            let res = match job.call {
-                FnType::Inner(mut call) => (*call)(&mut self.actor, job.args),
-                FnType::InnerAsync(mut call) => call(&mut self.actor, job.args).await,
-                FnType::Shutdown => {
-                    shutdown = true;
-                    _ = job.respond_to.send(Box::new(()));
-                    break;
-                }
-            };
+        while let Some(mut job) = self.rx.recv().await {
+            let res = (*job.call)(&mut self.actor, job.args).await;
 
             if job.respond_to.send(res).is_err() {
-                log::warn!(
+                log::debug!(
                     "Actor of type {} failed to respond as the receiver is dropped",
                     std::any::type_name::<T>()
                 );
             }
-        }
-        let inner_type = std::any::type_name::<T>();
-        if shutdown {
-            log::info!("Actor of type {inner_type} has been shutdown");
-        } else {
-            log::warn!("Actor of type {inner_type} exited as all handles are dropped");
         }
     }
 }
@@ -298,11 +273,11 @@ where
         Self { inner, broadcast }
     }
 
-    fn get(&mut self, _args: Box<dyn Any + Send>) -> Box<dyn Any + Send> {
+    async fn get(&mut self, _args: Box<dyn Any + Send>) -> Box<dyn Any + Send> {
         Box::new(self.inner.clone())
     }
 
-    fn set(&mut self, args: Box<dyn Any + Send>) -> Box<dyn Any + Send> {
+    async fn set(&mut self, args: Box<dyn Any + Send>) -> Box<dyn Any + Send> {
         self.inner = *args.downcast().expect(WRONG_ARGS);
         let type_name = format!("{}::set", std::any::type_name::<T>());
 
@@ -331,7 +306,7 @@ where
 
 // ------- Job struct that holds the closure, arguments and a response channel for the actor ------- //
 struct Job<T> {
-    call: FnType<T>,
+    call: ActorMethod<T>,
     args: Box<dyn Any + Send>,
     respond_to: oneshot::Sender<Box<dyn Any + Send>>,
 }
@@ -339,34 +314,16 @@ struct Job<T> {
 impl<T> fmt::Debug for Job<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Job")
-            .field("call", &self.call)
+            .field(
+                "call",
+                &format!("ActorMethod<{}>", std::any::type_name::<T>()),
+            )
             .field("args", &"Box<dyn Any + Send>")
             .field("respond_to", &"oneshot::Sender")
             .finish()
     }
 }
 
-// Closures are either to be evaluated using actor functions over the inner value, or by custom implementations over specific types
-#[allow(clippy::type_complexity)]
-pub enum FnType<T> {
-    Inner(Box<dyn FnMut(&mut Actor<T>, Box<dyn Any + Send>) -> Box<dyn Any + Send> + Send>),
-    InnerAsync(
-        Box<
-            dyn FnMut(&mut Actor<T>, Box<dyn Any + Send>) -> BoxFuture<Box<dyn Any + Send>>
-                + Send
-                + Sync,
-        >,
-    ),
-    Shutdown,
-}
-
-impl<T> fmt::Debug for FnType<T> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let inner_type = std::any::type_name::<T>();
-        match self {
-            FnType::Inner(_) => write!(f, "FnType::Inner<{inner_type}>"),
-            FnType::InnerAsync(_) => write!(f, "FnType::InnerAsync<{inner_type}>"),
-            FnType::Shutdown => write!(f, "FnType::Shutdown"),
-        }
-    }
-}
+type ActorMethod<T> = Box<
+    dyn FnMut(&mut Actor<T>, Box<dyn Any + Send>) -> BoxFuture<Box<dyn Any + Send>> + Send + Sync,
+>;

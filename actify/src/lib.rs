@@ -44,7 +44,7 @@
 //!
 //! This roughly desugars to:
 //! ```
-//! # use actify::{Handle, actify, Actor, FnType};
+//! # use actify::{Handle, actify, Actor};
 //! # #[derive(Clone, Debug)]
 //! # struct Greeter {}
 //! impl Greeter {
@@ -64,21 +64,27 @@
 //! impl GreeterHandle for Handle<Greeter> {
 //!     async fn say_hi(&self, name: String) -> String {
 //!         let res = self
-//!             .send_job(FnType::Inner(Box::new(GreeterActor::_say_hi)), Box::new(name))
+//!             .send_job(
+//!                         Box::new(|s: &mut Actor<Greeter>, args: Box<dyn std::any::Any + Send>| {
+//!                     Box::pin(async move { GreeterActor::_say_hi(s, args).await })
+//!                 }),
+//!                 Box::new(name),
+//!             )
 //!             .await;
+//!
 //!         *res.downcast().unwrap()
 //!     }
 //! }
 //!
 //! // Defines the wrappers that execute the original methods on the struct in the actor
 //! trait GreeterActor {
-//!     fn _say_hi(&mut self, args: Box<dyn std::any::Any + Send>) -> Box<dyn std::any::Any + Send>;
+//!     async fn _say_hi(&mut self, args: Box<dyn std::any::Any + Send>) -> Box<dyn std::any::Any + Send>;
 //! }
 //!
 //! // Implements the methods on the actor for this specific type
 //! impl GreeterActor for Actor<Greeter>
 //! {
-//!     fn _say_hi(&mut self, args: Box<dyn std::any::Any + Send>) -> Box<dyn std::any::Any + Send> {
+//!     async fn _say_hi(&mut self, args: Box<dyn std::any::Any + Send>) -> Box<dyn std::any::Any + Send> {
 //!         let name: String = *args.downcast().unwrap();
 //!
 //!         // This call is the actual execution of the method from the user-defined impl block, on the struct held by the actor
@@ -194,7 +200,7 @@ mod throttle;
 
 // Reexport for easier reference
 pub use actify_macros::{actify, skip_broadcast};
-pub use actors::{Actor, FnType, Handle};
+pub use actors::{Actor, Handle};
 pub use async_trait::async_trait;
 pub use cache::{Cache, CacheRecvError, CacheRecvNewestError};
 pub use extensions::{

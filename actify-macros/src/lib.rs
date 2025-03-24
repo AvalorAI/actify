@@ -327,11 +327,9 @@ fn generate_handle_trait_method_impl(
         #signature {
             let res = self
             .send_job(
-                actify::FnType::InnerAsync(
-                    Box::new(
-                        |s: &mut actify::Actor<#impl_type>, args: Box<dyn std::any::Any + Send>|
-                        Box::pin(async move { #actor_trait_ident::#actor_method_name::<#(#generic_params),*>(s, args).await }))
-                    ),
+                Box::new(
+                    |s: &mut actify::Actor<#impl_type>, args: Box<dyn std::any::Any + Send>|
+                    Box::pin(async move { #actor_trait_ident::#actor_method_name::<#(#generic_params),*>(s, args).await })),
                 Box::new((#input_arg_names)),
             )
             .await;
