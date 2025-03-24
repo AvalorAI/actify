@@ -201,7 +201,7 @@ pub use cache::{Cache, CacheRecvError, CacheRecvNewestError};
 pub use extensions::{
     map::HashMapHandle, option::OptionHandle, set::HashSetHandle, vec::VecHandle,
 };
-pub use throttle::{Frequency, ThrottleBuilder, ThrottleError, Throttled};
+pub use throttle::{Frequency, Throttle, Throttled};
 
 #[cfg(feature = "profiler")]
 pub use actors::{get_broadcast_counts, get_sorted_broadcast_counts};

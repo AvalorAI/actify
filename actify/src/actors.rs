@@ -5,9 +5,8 @@ use std::fmt::Debug;
 use thiserror::Error;
 use tokio::sync::{broadcast, mpsc, oneshot};
 
-use crate::{Cache, Frequency, ThrottleBuilder, Throttled};
-
-use crate::ThrottleError;
+use crate::throttle::Throttle;
+use crate::{Cache, Frequency, Throttled};
 
 const CHANNEL_SIZE: usize = 100;
 
@@ -25,8 +24,6 @@ pub enum ActorError {
     TokioBroadcastTryRecvError(#[from] broadcast::error::TryRecvError),
     #[error("Tokio broadcast receiver error")]
     TokioBroadcastRecvError(#[from] broadcast::error::RecvError),
-    #[error("A throttle error occured")]
-    ThrottleError(#[from] ThrottleError),
 }
 
 impl<T> From<mpsc::error::SendError<T>> for ActorError {
@@ -125,11 +122,8 @@ where
         T: Throttled<F>,
         F: Clone + Send + Sync + 'static,
     {
-        let val = self.get().await?;
-        ThrottleBuilder::<C, T, F>::new(client, call, freq)
-            .attach(self.clone())
-            .init(val)
-            .spawn()?;
+        let current = self.get().await?;
+        Throttle::spawn_from_handle(client, call, freq, self.clone(), Some(current));
         Ok(())
     }
 
@@ -242,10 +236,7 @@ where
         F: Clone + Send + Sync + 'static,
     {
         let handle = Self::new(val.clone());
-        ThrottleBuilder::<C, T, F>::new(client, call, freq)
-            .attach(handle.clone())
-            .init(val)
-            .spawn()?;
+        Throttle::spawn_from_handle(client, call, freq, handle.clone(), Some(val));
         Ok(handle)
     }
 

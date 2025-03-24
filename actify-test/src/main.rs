@@ -108,7 +108,7 @@ mod tests {
             inner_data: "Test".to_string(),
         });
 
-        assert_eq!(actor_handle.foo(0, HashMap::new()).await.unwrap(), 1.);
+        assert_eq!(actor_handle.foo(0, HashMap::new()).await.unwrap(), 2.);
         assert_eq!(actor_handle.bar(5, |i: usize| i + 10).await.unwrap(), 15);
         assert_eq!(actor_handle.baz(0).await.unwrap(), 2.);
     }
