@@ -35,7 +35,7 @@
 //!     let handle = Handle::new(Greeter {});
 //!
 //!     // The say_hi method is made available on its handle through the actify! macro
-//!     let greeting = handle.say_hi("Alfred".to_string()).await.unwrap();
+//!     let greeting = handle.say_hi("Alfred".to_string()).await;
 //!
 //!     // The method is executed on the initialized Greeter and returned through the handle
 //!     assert_eq!(greeting, "hi Alfred".to_string())
@@ -44,7 +44,7 @@
 //!
 //! This roughly desugars to:
 //! ```
-//! # use actify::{Handle, actify, ActorError, Actor, FnType};
+//! # use actify::{Handle, actify, Actor, FnType};
 //! # #[derive(Clone, Debug)]
 //! # struct Greeter {}
 //! impl Greeter {
@@ -56,41 +56,41 @@
 //! // Defines the custom function signatures that should be added to the handle
 //! #[async_trait::async_trait]
 //! pub trait GreeterHandle {
-//!     async fn say_hi(&self, name: String) -> Result<String, ActorError>;
+//!     async fn say_hi(&self, name: String) -> String;
 //! }
 //!
 //! // Implements the methods on the handle, and calls the generated method for the actor
 //! #[async_trait::async_trait]
 //! impl GreeterHandle for Handle<Greeter> {
-//!     async fn say_hi(&self, name: String) -> Result<String, ActorError> {
+//!     async fn say_hi(&self, name: String) -> String {
 //!         let res = self
 //!             .send_job(FnType::Inner(Box::new(GreeterActor::_say_hi)), Box::new(name))
-//!             .await?;
-//!         Ok(*res.downcast().unwrap())
+//!             .await;
+//!         *res.downcast().unwrap()
 //!     }
 //! }
 //!
 //! // Defines the wrappers that execute the original methods on the struct in the actor
 //! trait GreeterActor {
-//!     fn _say_hi(&mut self, args: Box<dyn std::any::Any + Send>) -> Result<Box<dyn std::any::Any + Send>, ActorError>;
+//!     fn _say_hi(&mut self, args: Box<dyn std::any::Any + Send>) -> Box<dyn std::any::Any + Send>;
 //! }
 //!
 //! // Implements the methods on the actor for this specific type
 //! impl GreeterActor for Actor<Greeter>
 //! {
-//!     fn _say_hi(&mut self, args: Box<dyn std::any::Any + Send>) -> Result<Box<dyn std::any::Any + Send>, ActorError> {
+//!     fn _say_hi(&mut self, args: Box<dyn std::any::Any + Send>) -> Box<dyn std::any::Any + Send> {
 //!         let name: String = *args.downcast().unwrap();
 //!
 //!         // This call is the actual execution of the method from the user-defined impl block, on the struct held by the actor
 //!         let result: String = self.inner.say_hi(name);
-//!         Ok(Box::new(result))
+//!         Box::new(result)
 //!     }
 //! }
 //!
 //! #[tokio::main]
 //! async fn main() {
 //!     let handle = Handle::new(Greeter {});
-//!     let greeting = handle.say_hi("Alfred".to_string()).await.unwrap();
+//!     let greeting = handle.say_hi("Alfred".to_string()).await;
 //!     assert_eq!(greeting, "hi Alfred".to_string())
 //! }
 //! ```
@@ -112,7 +112,7 @@
 //! #[tokio::main]
 //! async fn main() {
 //!     let handle = Handle::new(AsyncGreeter {});
-//!     let greeting = handle.async_hi("Alfred".to_string()).await.unwrap();
+//!     let greeting = handle.async_hi("Alfred".to_string()).await;
 //!     assert_eq!(greeting, "hi Alfred".to_string())
 //! }
 //! ```
@@ -140,7 +140,7 @@
 //! #[tokio::main]
 //! async fn main() {
 //!     let handle = Handle::new(GenericGreeter { inner: usize::default() });
-//!     let greeting = handle.generic_hi("Alfred".to_string()).await.unwrap();
+//!     let greeting = handle.generic_hi("Alfred".to_string()).await;
 //!     assert_eq!(greeting, "hi Alfred from 0".to_string())
 //! }
 //!```
@@ -194,7 +194,6 @@ mod throttle;
 
 // Reexport for easier reference
 pub use actify_macros::{actify, skip_broadcast};
-pub use actors::ActorError;
 pub use actors::{Actor, FnType, Handle};
 pub use async_trait::async_trait;
 pub use cache::{Cache, CacheRecvError, CacheRecvNewestError};

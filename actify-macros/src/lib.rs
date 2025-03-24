@@ -194,7 +194,7 @@ fn generate_actor_trait_method_impl(
     // Lastly, the result is boxed and sent back to the calling handle
     let result = quote! {
         #attributes
-        async fn #actor_method_ident #generics(&mut self, args: Box<dyn std::any::Any + Send>) -> Result<Box<dyn std::any::Any + Send>, actify::ActorError> #where_clause {
+        async fn #actor_method_ident #generics(&mut self, args: Box<dyn std::any::Any + Send>) -> Box<dyn std::any::Any + Send> #where_clause {
             let (#input_arg_names): (#input_arg_types) = *args
             .downcast()
             .expect("Downcasting failed due to an error in the Actify macro");
@@ -203,7 +203,7 @@ fn generate_actor_trait_method_impl(
 
         #broadcast
 
-        Ok(Box::new(result))
+        Box::new(result)
         }
     };
 
@@ -246,7 +246,7 @@ fn generate_actor_trait_method(
 
     let result = quote! {
         #attributes
-        async fn #actor_method_ident #generics(&mut self, args: Box<dyn std::any::Any + Send>) -> Result<Box<dyn std::any::Any + Send>, actify::ActorError> #where_clause;
+        async fn #actor_method_ident #generics(&mut self, args: Box<dyn std::any::Any + Send>) -> Box<dyn std::any::Any + Send> #where_clause;
     };
 
     Ok(result)
@@ -334,11 +334,11 @@ fn generate_handle_trait_method_impl(
                     ),
                 Box::new((#input_arg_names)),
             )
-            .await?;
+            .await;
 
-            Ok(*res
-                .downcast()
-                .expect("Downcasting failed due to an error in the Actify macro"))
+            *res
+            .downcast()
+            .expect("Downcasting failed due to an error in the Actify macro")
         }
     };
 
@@ -506,7 +506,6 @@ fn generate_handle_trait(
 /// This method creates a copy of the original method on the actor, but modifies some parts to make it suitable for the handle.
 /// First, all methods to the handle are async by default, to allow communication with the actor.
 /// Second, it is checked if a receiver is present and its mutability is removed as that is unnecessary.
-/// Thirdly, the output type is wrapped in a result. The default type is converted to () in all cases.
 fn generate_handle_trait_method(
     method: &ImplItemFn,
     attributes: &proc_macro2::TokenStream,
@@ -542,13 +541,13 @@ fn generate_handle_trait_method(
         ReturnType::Default => {
             quote! {
                 #attributes
-                async fn #name #generics(#modified_inputs) -> Result<(), actify::ActorError> #where_clause;
+                async fn #name #generics(#modified_inputs) #where_clause;
             }
         }
         ReturnType::Type(_, output_type) => {
             quote! {
                 #attributes
-               async fn #name #generics(#modified_inputs) -> Result<#output_type, actify::ActorError> #where_clause;
+               async fn #name #generics(#modified_inputs) -> #output_type #where_clause;
             }
         }
     };

@@ -186,8 +186,7 @@ mod tests {
         // Spawn throttle that should only activate once on creation
         handle
             .spawn_throttle(counter.clone(), CounterClient::call, Frequency::OnEvent)
-            .await
-            .unwrap();
+            .await;
         sleep(Duration::from_millis(200)).await;
 
         let count = *counter.count.lock().unwrap();
@@ -245,7 +244,7 @@ mod tests {
         );
 
         interval.tick().await; // Should wait up to exactly 200ms
-        handle.set(2).await.unwrap(); // Update handle, firing event
+        handle.set(2).await; // Update handle, firing event
         sleep(Duration::from_millis(10)).await; // Allow call to be executed to happen
 
         let time = *counter.elapsed.lock().unwrap() as f64;
@@ -275,7 +274,7 @@ mod tests {
 
         // Many updates are triggered in quick succesion
         for i in 0..10 {
-            handle.set(i).await.unwrap();
+            handle.set(i).await;
             sleep(Duration::from_millis((timer / 10.) as u64)).await;
         }
 
@@ -345,7 +344,7 @@ mod tests {
         );
 
         interval.tick().await; // Should wait up to exactly 200ms
-        handle.set(2).await.unwrap(); // Update handle, firing event
+        handle.set(2).await; // Update handle, firing event
         interval.tick().await;
 
         // Update should be received directly after the interval
@@ -378,7 +377,7 @@ mod tests {
         );
 
         interval.tick().await; // Should wait up to exactly 200ms
-        handle.set(2).await.unwrap(); // Update handle, firing event
+        handle.set(2).await; // Update handle, firing event
 
         // Update should not be processed
         let time = *counter.elapsed.lock().unwrap();
