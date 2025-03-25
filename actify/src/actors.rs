@@ -222,7 +222,7 @@ where
             .expect("A panic occured in the Actor");
 
         // The receiver for the result will only return an error if the response sender is dropped. Again, this is only possible if a panic occured
-        get_result.await.expect("The response sender dropped")
+        get_result.await.expect("A panic occured in the Actor")
     }
 }
 
@@ -327,3 +327,26 @@ impl<T> fmt::Debug for Job<T> {
 type ActorMethod<T> = Box<
     dyn FnMut(&mut Actor<T>, Box<dyn Any + Send>) -> BoxFuture<Box<dyn Any + Send>> + Send + Sync,
 >;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate as actify;
+
+    #[tokio::test]
+    #[should_panic]
+    async fn test_handle_panic() {
+        let handle = Handle::new(PanicStruct {});
+        handle.panic().await;
+    }
+
+    #[derive(Debug, Clone)]
+    struct PanicStruct {}
+
+    #[actify_macros::actify]
+    impl PanicStruct {
+        fn panic(&self) {
+            panic!()
+        }
+    }
+}
