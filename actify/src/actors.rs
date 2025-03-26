@@ -296,7 +296,7 @@ where
         // A broadcast error is not propagated, as otherwise a succesful call could produce an independent broadcast error
         if self.broadcast.receiver_count() > 0 {
             if let Err(_) = self.broadcast.send(self.inner.clone()) {
-                log::warn!(
+                log::debug!(
                     "Failed to broadcast update for {method:?} because there are no active receivers"
                 );
             }
