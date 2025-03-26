@@ -209,66 +209,66 @@ mod tests {
         let handle = Handle::new(1);
         let mut cache = handle.create_cache_from_default();
         assert_eq!(cache.get_newest(), &0); // Not initalized, so default although value is set
-        handle.set(2).await.unwrap();
+        handle.set(2).await;
         assert_eq!(cache.get_newest(), &2); // The new value is broadcasted and processed
     }
 
     #[tokio::test]
     async fn test_has_updates() {
         let handle = Handle::new(1);
-        let cache = handle.create_cache().await.unwrap();
+        let cache = handle.create_cache().await;
         assert_eq!(cache.has_updates(), false);
-        handle.set(2).await.unwrap();
+        handle.set(2).await;
         assert!(cache.has_updates());
     }
 
     #[tokio::test]
     async fn test_recv_cache() {
         let handle = Handle::new(1);
-        let mut cache = handle.create_cache().await.unwrap();
+        let mut cache = handle.create_cache().await;
         assert_eq!(cache.recv().await.unwrap(), &1);
-        handle.set(2).await.unwrap();
-        handle.set(3).await.unwrap(); // Not returned yet, as returning oldest value first
+        handle.set(2).await;
+        handle.set(3).await; // Not returned yet, as returning oldest value first
         assert_eq!(cache.recv().await.unwrap(), &2)
     }
 
     #[tokio::test]
     async fn test_recv_cache_newest() {
         let handle = Handle::new(1);
-        let mut cache = handle.create_cache().await.unwrap();
+        let mut cache = handle.create_cache().await;
         assert_eq!(cache.recv_newest().await.unwrap(), &1);
-        handle.set(2).await.unwrap();
-        handle.set(3).await.unwrap();
+        handle.set(2).await;
+        handle.set(3).await;
         assert_eq!(cache.recv_newest().await.unwrap(), &3)
     }
 
     #[tokio::test]
     async fn test_immediate_cache_return() {
         let handle = Handle::new(1);
-        let mut cache = handle.create_cache().await.unwrap();
-        handle.set(2).await.unwrap(); // Not returned yet, as returning oldest value first
+        let mut cache = handle.create_cache().await;
+        handle.set(2).await; // Not returned yet, as returning oldest value first
         assert_eq!(cache.recv().await.unwrap(), &1)
     }
 
     #[tokio::test]
     async fn test_immediate_cache_return_with_newest() {
         let handle = Handle::new(1);
-        let mut cache = handle.create_cache().await.unwrap();
-        handle.set(2).await.unwrap();
+        let mut cache = handle.create_cache().await;
+        handle.set(2).await;
         assert_eq!(cache.recv_newest().await.unwrap(), &2)
     }
 
     #[tokio::test]
     async fn test_delayed_cache_return() {
         let handle = Handle::new(2);
-        let mut cache = handle.create_cache().await.unwrap();
+        let mut cache = handle.create_cache().await;
 
         cache.recv().await.unwrap(); // First listen exits immediately
 
         tokio::select! {
             _ = async {
                 sleep(Duration::from_millis(200)).await;
-                handle.set(10).await.unwrap();
+                handle.set(10).await;
                 sleep(Duration::from_millis(200)).await; // Allow recv to exit
             } => panic!("Timeout"),
             res = cache.recv() => assert_eq!(res.unwrap(), &10)
@@ -278,7 +278,7 @@ mod tests {
     #[tokio::test]
     async fn test_try_recv() {
         let handle = Handle::new(2);
-        let mut cache = handle.create_cache().await.unwrap();
+        let mut cache = handle.create_cache().await;
         assert_eq!(cache.try_recv().unwrap(), Some(&2));
         assert!(cache.try_recv().unwrap().is_none())
     }
@@ -293,7 +293,7 @@ mod tests {
     #[tokio::test]
     async fn test_try_recv_newest() {
         let handle = Handle::new(2);
-        let mut cache = handle.create_cache().await.unwrap();
+        let mut cache = handle.create_cache().await;
         assert_eq!(cache.try_recv_newest().unwrap(), Some(&2)); // Returns the initialized value directly
         assert!(cache.try_recv_newest().unwrap().is_none())
     }
@@ -308,20 +308,20 @@ mod tests {
     #[tokio::test]
     async fn test_try_recv_some() {
         let handle = Handle::new(1);
-        let mut cache = handle.create_cache().await.unwrap();
+        let mut cache = handle.create_cache().await;
         assert_eq!(cache.try_recv().unwrap(), Some(&1));
-        handle.set(2).await.unwrap();
-        handle.set(3).await.unwrap(); // Not returned, as returning oldes value first
+        handle.set(2).await;
+        handle.set(3).await; // Not returned, as returning oldes value first
         assert_eq!(cache.try_recv().unwrap(), Some(&2))
     }
 
     #[tokio::test]
     async fn test_try_recv_some_newest() {
         let handle = Handle::new(1);
-        let mut cache = handle.create_cache().await.unwrap();
+        let mut cache = handle.create_cache().await;
         assert_eq!(cache.try_recv_newest().unwrap(), Some(&1));
-        handle.set(2).await.unwrap();
-        handle.set(3).await.unwrap(); // Returned, as newest value first
+        handle.set(2).await;
+        handle.set(3).await; // Returned, as newest value first
         assert_eq!(cache.try_recv_newest().unwrap(), Some(&3))
     }
 }

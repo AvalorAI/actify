@@ -108,9 +108,9 @@ mod tests {
             inner_data: "Test".to_string(),
         });
 
-        assert_eq!(actor_handle.foo(0, HashMap::new()).await.unwrap(), 1.);
-        assert_eq!(actor_handle.bar(5, |i: usize| i + 10).await.unwrap(), 15);
-        assert_eq!(actor_handle.baz(0).await.unwrap(), 2.);
+        assert_eq!(actor_handle.foo(0, HashMap::new()).await, 2.);
+        assert_eq!(actor_handle.bar(5, |i: usize| i + 10).await, 15);
+        assert_eq!(actor_handle.baz(0).await, 2.);
     }
 
     #[tokio::test]
@@ -123,7 +123,7 @@ mod tests {
             let _handle_2 = Handle::new("test");
             let handle_3 = Handle::new(1.); // This goes out of scope
             let _handle_1_clone = handle_1.clone();
-            let cache_3 = handle_3.create_cache().await.unwrap(); // But the cache doesn't
+            let cache_3 = handle_3.create_cache().await; // But the cache doesn't
             cache_3
         };
 
@@ -138,8 +138,8 @@ mod tests {
     async fn test_drain_vec() {
         let actor_handle = Handle::new(vec![1, 2, 3]);
 
-        assert_eq!(actor_handle.drain(1..).await.unwrap(), vec![2, 3]);
-        assert_eq!(actor_handle.get().await.unwrap(), vec![1]);
+        assert_eq!(actor_handle.drain(1..).await, vec![2, 3]);
+        assert_eq!(actor_handle.get().await, vec![1]);
     }
 
     #[tokio::test]
@@ -151,21 +151,20 @@ mod tests {
         let mut rx = actor_handle.subscribe();
         assert!(rx.try_recv().is_err()); // Nothing
 
-        actor_handle.foo(0, HashMap::new()).await.unwrap();
+        actor_handle.foo(0, HashMap::new()).await;
         assert!(rx.try_recv().is_ok());
 
-        actor_handle.foo(1, HashMap::new()).await.unwrap();
+        actor_handle.foo(1, HashMap::new()).await;
         assert!(rx.try_recv().is_ok());
 
         actor_handle
             .set(TestStruct {
                 inner_data: "Test2".to_string(),
             })
-            .await
-            .unwrap();
+            .await;
         assert!(rx.try_recv().is_ok());
 
-        actor_handle.baz(0).await.unwrap();
+        actor_handle.baz(0).await;
         assert!(rx.try_recv().is_err()); // Nothing
 
         let counts = actify::get_broadcast_counts();

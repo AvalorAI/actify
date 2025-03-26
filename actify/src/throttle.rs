@@ -1,18 +1,9 @@
 use std::fmt::{self, Debug};
-use thiserror::Error;
 use tokio::sync::broadcast;
 use tokio::sync::broadcast::error::RecvError;
 use tokio::time::{self, Duration, Interval};
 
 use crate::Handle;
-
-#[derive(Error, Debug, PartialEq, Clone)]
-pub enum ThrottleError {
-    #[error("A throttle should be initialized, listen to an update or both")]
-    UselessThrottle,
-    #[error("A throttle cannot fire on events if it does not listen to them")]
-    InvalidFrequency,
-}
 
 /// The Frequency is used to tune the speed of the throttle.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -40,19 +31,64 @@ impl<T: Clone> Throttled<T> for T {
     }
 }
 
-struct Throttle<C, T, F> {
+pub struct Throttle<C, T, F> {
     frequency: Frequency,
     client: C,
     call: fn(&C, F),
     val_rx: Option<broadcast::Receiver<T>>,
-    cache: Option<T>,
+    current_val: Option<T>,
+}
+
+impl<C, T, F> fmt::Debug for Throttle<C, T, F> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Throttle")
+            .field("frequency", &self.frequency)
+            .field("client", &std::any::type_name::<C>().to_string())
+            .field("call", &std::any::type_name::<fn(&C, F)>().to_string())
+            .field("val_rx", &self.val_rx)
+            .field(
+                "current_val",
+                &std::any::type_name::<Option<T>>().to_string(),
+            )
+            .finish()
+    }
 }
 
 impl<C, T, F> Throttle<C, T, F>
 where
-    T: Clone + Throttled<F>,
-    F: Clone,
+    C: Send + Sync + 'static,
+    T: Clone + Debug + Throttled<F> + Send + Sync + 'static,
+    F: Clone + Send + Sync + 'static,
 {
+    pub fn spawn_from_handle(
+        client: C,
+        call: fn(&C, F),
+        frequency: Frequency,
+        handle: Handle<T>,
+        init: Option<T>,
+    ) {
+        let val_rx = handle.subscribe();
+        let mut throttle = Throttle {
+            frequency,
+            client,
+            call,
+            val_rx: Some(val_rx),
+            current_val: init,
+        };
+        tokio::spawn(async move { throttle.tick().await });
+    }
+
+    pub fn spawn_interval(client: C, call: fn(&C, F), interval: Duration, val: T) {
+        let mut throttle = Throttle {
+            frequency: Frequency::Interval(interval),
+            client,
+            call,
+            val_rx: None,
+            current_val: Some(val),
+        };
+        tokio::spawn(async move { throttle.tick().await });
+    }
+
     async fn tick(&mut self) {
         let mut interval = match self.frequency {
             Frequency::OnEvent => None,
@@ -75,15 +111,15 @@ where
                     match res {
                         Ok(val) => {
                             event_processed = false;
-                            self.cache = Some(val);
+                            self.current_val = Some(val);
                             true
                         }
                         Err(RecvError::Closed) => {
-                            log::warn!("Attached actor of type {} closed - exiting throttle", std::any::type_name::<T>());
+                            log::debug!("Attached actor of type {} closed - exiting throttle", std::any::type_name::<T>());
                             break
                         }
                         Err(RecvError::Lagged(nr)) => {
-                            log::warn!("Throttle of type {} lagged {nr} messages", std::any::type_name::<T>());
+                            log::debug!("Throttle of type {} lagged {nr} messages", std::any::type_name::<T>());
                             continue
                         }
                     }
@@ -105,7 +141,7 @@ where
 
     fn execute_call(&self) {
         // Either parse the value to a different type F, or to itself when T = F
-        let val = if let Some(inner) = &self.cache {
+        let val = if let Some(inner) = &self.current_val {
             inner.parse()
         } else {
             return; // If cache empty, skip call
@@ -136,84 +172,6 @@ where
     }
 }
 
-/// The throttle builder helps build a throttle to execute a method on the current state of an actor, based on the [`Frequency`](crate::Frequency).
-pub struct ThrottleBuilder<C, T, F> {
-    frequency: Frequency,
-    client: C,
-    call: fn(&C, F),
-    val_rx: Option<broadcast::Receiver<T>>,
-    cache: Option<T>,
-}
-
-impl<C, T, F> fmt::Debug for ThrottleBuilder<C, T, F> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("ThrottleBuilder")
-            .field("frequency", &self.frequency)
-            .field("client", &std::any::type_name::<C>().to_string())
-            .field("call", &std::any::type_name::<fn(&C, F)>().to_string())
-            .field("val_rx", &self.val_rx)
-            .field("cache", &std::any::type_name::<Option<T>>().to_string())
-            .finish()
-    }
-}
-
-impl<C, T, F> ThrottleBuilder<C, T, F>
-where
-    C: Send + Sync + 'static,
-    T: Clone + Debug + Throttled<F> + Send + Sync + 'static,
-    F: Clone + Send + Sync + 'static,
-{
-    pub fn new(client: C, call: fn(&C, F), freq: Frequency) -> ThrottleBuilder<C, T, F> {
-        ThrottleBuilder {
-            frequency: freq,
-            client,
-            call,
-            val_rx: None,
-            cache: None,
-        }
-    }
-
-    pub fn init(mut self, val: T) -> Self {
-        self.cache = Some(val);
-        self
-    }
-
-    pub fn attach(mut self, handle: Handle<T>) -> Self {
-        let receiver = handle.subscribe();
-        self.val_rx = Some(receiver);
-        self
-    }
-
-    pub fn attach_rx(mut self, rx: broadcast::Receiver<T>) -> Self {
-        self.val_rx = Some(rx);
-        self
-    }
-
-    pub fn spawn(self) -> Result<(), ThrottleError> {
-        let mut throttle = self.build()?; // Perform all checks required for a valid throttle
-        tokio::spawn(async move { throttle.tick().await });
-        Ok(())
-    }
-
-    fn build(self) -> Result<Throttle<C, T, F>, ThrottleError> {
-        if self.cache.is_none() && self.val_rx.is_none() {
-            return Err(ThrottleError::UselessThrottle);
-        }
-
-        if matches!(self.frequency, Frequency::OnEvent) && self.val_rx.is_none() {
-            return Err(ThrottleError::InvalidFrequency);
-        }
-
-        Ok(Throttle {
-            frequency: self.frequency,
-            client: self.client,
-            call: self.call,
-            val_rx: self.val_rx,
-            cache: self.cache,
-        })
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -228,8 +186,7 @@ mod tests {
         // Spawn throttle that should only activate once on creation
         handle
             .spawn_throttle(counter.clone(), CounterClient::call, Frequency::OnEvent)
-            .await
-            .unwrap();
+            .await;
         sleep(Duration::from_millis(200)).await;
 
         let count = *counter.count.lock().unwrap();
@@ -243,26 +200,22 @@ mod tests {
         let counter = CounterClient::new();
 
         // Spawn throttle
-        ThrottleBuilder::new(
+        Throttle::spawn_from_handle(
             counter.clone(),
             CounterClient::call,
-            Frequency::Interval(Duration::from_millis(10)),
-        )
-        .attach(handle.clone())
-        .spawn()
-        .unwrap();
+            Frequency::Interval(Duration::from_millis(100)),
+            handle.clone(),
+            None,
+        );
 
-        handle.set(2).await.unwrap(); // Update handle, firing event
-        sleep(Duration::from_millis(200)).await;
-
-        handle.shutdown().await.unwrap();
+        sleep(Duration::from_millis(500)).await;
 
         let count_before_drop = *counter.count.lock().unwrap();
 
-        // The throttle will emit a warning and stop
+        // The throttle will stop, as no handles are present anymore
         drop(handle);
 
-        sleep(Duration::from_millis(200)).await;
+        sleep(Duration::from_millis(500)).await;
 
         let count_after_drop = *counter.count.lock().unwrap();
 
@@ -282,13 +235,16 @@ mod tests {
         let counter = CounterClient::new();
 
         // Spawn throttle
-        ThrottleBuilder::new(counter.clone(), CounterClient::call, Frequency::OnEvent)
-            .attach(handle.clone())
-            .spawn()
-            .unwrap();
+        Throttle::spawn_from_handle(
+            counter.clone(),
+            CounterClient::call,
+            Frequency::OnEvent,
+            handle.clone(),
+            None,
+        );
 
         interval.tick().await; // Should wait up to exactly 200ms
-        handle.set(2).await.unwrap(); // Update handle, firing event
+        handle.set(2).await; // Update handle, firing event
         sleep(Duration::from_millis(10)).await; // Allow call to be executed to happen
 
         let time = *counter.elapsed.lock().unwrap() as f64;
@@ -308,18 +264,17 @@ mod tests {
         let counter = CounterClient::new();
 
         // Spawn throttle
-        ThrottleBuilder::new(
+        Throttle::spawn_from_handle(
             counter.clone(),
             CounterClient::call,
             Frequency::OnEventWhen(Duration::from_millis(timer as u64)),
-        )
-        .attach(handle.clone())
-        .spawn()
-        .unwrap();
+            handle.clone(),
+            None,
+        );
 
         // Many updates are triggered in quick succesion
         for i in 0..10 {
-            handle.set(i).await.unwrap();
+            handle.set(i).await;
             sleep(Duration::from_millis((timer / 10.) as u64)).await;
         }
 
@@ -345,14 +300,12 @@ mod tests {
         let counter = CounterClient::new();
 
         // Spawn throttle
-        ThrottleBuilder::new(
+        Throttle::spawn_interval(
             counter.clone(),
             CounterClient::call,
-            Frequency::Interval(Duration::from_millis(timer as u64)),
-        )
-        .init(1)
-        .spawn()
-        .unwrap();
+            Duration::from_millis(timer as u64),
+            1,
+        );
 
         for _ in 0..5 {
             interval.tick().await; // Should wait up to exactly 200ms
@@ -382,17 +335,16 @@ mod tests {
         let counter = CounterClient::new();
 
         // Spawn throttle
-        ThrottleBuilder::new(
+        Throttle::spawn_from_handle(
             counter.clone(),
             CounterClient::call,
             Frequency::OnEventWhen(Duration::from_millis((timer * 0.55) as u64)),
-        )
-        .attach(handle.clone())
-        .spawn()
-        .unwrap();
+            handle.clone(),
+            None,
+        );
 
         interval.tick().await; // Should wait up to exactly 200ms
-        handle.set(2).await.unwrap(); // Update handle, firing event
+        handle.set(2).await; // Update handle, firing event
         interval.tick().await;
 
         // Update should be received directly after the interval
@@ -416,17 +368,16 @@ mod tests {
         let counter = CounterClient::new();
 
         // Spawn throttle
-        ThrottleBuilder::new(
+        Throttle::spawn_from_handle(
             counter.clone(),
             CounterClient::call,
             Frequency::OnEventWhen(Duration::from_millis((timer * 1.5) as u64)),
-        )
-        .attach(handle.clone())
-        .spawn()
-        .unwrap();
+            handle.clone(),
+            None,
+        );
 
         interval.tick().await; // Should wait up to exactly 200ms
-        handle.set(2).await.unwrap(); // Update handle, firing event
+        handle.set(2).await; // Update handle, firing event
 
         // Update should not be processed
         let time = *counter.elapsed.lock().unwrap();
@@ -438,33 +389,27 @@ mod tests {
     #[tokio::test]
     async fn test_throttle_parsing() {
         // Parsing to self should succeed
-        ThrottleBuilder::new(
+        Throttle::spawn_interval(
             DummyClient {},
             DummyClient::call_a,
-            Frequency::Interval(Duration::from_millis(100)),
-        )
-        .init(A {})
-        .build()
-        .unwrap();
+            Duration::from_millis(100),
+            A {},
+        );
 
         // Parsing to either B or C should be infered by the compiler
-        ThrottleBuilder::new(
+        Throttle::spawn_interval(
             DummyClient {},
             DummyClient::call_b,
-            Frequency::Interval(Duration::from_millis(100)),
-        )
-        .init(A {})
-        .build()
-        .unwrap();
+            Duration::from_millis(100),
+            A {},
+        );
 
-        ThrottleBuilder::new(
+        Throttle::spawn_interval(
             DummyClient {},
             DummyClient::call_c,
-            Frequency::Interval(Duration::from_millis(100)),
-        )
-        .init(A {})
-        .build()
-        .unwrap();
+            Duration::from_millis(100),
+            A {},
+        );
     }
 
     #[derive(Debug, Clone)]
