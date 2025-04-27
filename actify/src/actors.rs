@@ -255,6 +255,8 @@ where
                 );
             }
         }
+        // If there are no remaining handles or messages in the channel, the listener exits
+        log::debug!("Actor of type {} terminated", std::any::type_name::<T>());
     }
 }
 

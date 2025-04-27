@@ -4,14 +4,14 @@ use std::collections::HashSet;
 use std::fmt::Debug;
 use std::hash::Hash;
 
-trait ActorMap<K> {
+trait ActorSet<K> {
     fn insert(&mut self, val: K) -> bool;
 
     fn is_empty(&self) -> bool;
 }
 
 #[actify]
-impl<K> ActorMap<K> for HashSet<K>
+impl<K> ActorSet<K> for HashSet<K>
 where
     K: Clone + Debug + Eq + Hash + Send + Sync + 'static,
 {
