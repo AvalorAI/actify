@@ -1,7 +1,7 @@
 [package]
 name = "actify-macros"
 version = "0.3.3"
-edition = "2021"
+edition = "2024"
 description = "Actify's procedural macros"
 license = "MIT"
 repository = "https://github.com/AvalorAI/actify"
