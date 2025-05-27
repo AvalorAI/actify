@@ -54,13 +54,11 @@
 //! }
 //!
 //! // Defines the custom function signatures that should be added to the handle
-//! #[async_trait::async_trait]
 //! pub trait GreeterHandle {
 //!     async fn say_hi(&self, name: String) -> String;
 //! }
 //!
 //! // Implements the methods on the handle, and calls the generated method for the actor
-//! #[async_trait::async_trait]
 //! impl GreeterHandle for Handle<Greeter> {
 //!     async fn say_hi(&self, name: String) -> String {
 //!         let res = self
@@ -201,7 +199,6 @@ mod throttle;
 // Reexport for easier reference
 pub use actify_macros::{actify, skip_broadcast};
 pub use actors::{Actor, Handle};
-pub use async_trait::async_trait;
 pub use cache::{Cache, CacheRecvError, CacheRecvNewestError};
 pub use extensions::{
     map::HashMapHandle, option::OptionHandle, set::HashSetHandle, vec::VecHandle,

@@ -2,8 +2,8 @@ use proc_macro::TokenStream;
 use proc_macro2::Span;
 use quote::{quote, quote_spanned};
 use syn::{
-    punctuated::Punctuated, spanned::Spanned, token::Comma, FnArg, Ident, ImplItem, ImplItemFn,
-    ItemImpl, PatIdent, PathSegment, Receiver, ReturnType, TraitItemFn, Type,
+    FnArg, Ident, ImplItem, ImplItemFn, ItemImpl, PatIdent, PathSegment, Receiver, ReturnType,
+    TraitItemFn, Type, punctuated::Punctuated, spanned::Spanned, token::Comma,
 };
 
 #[proc_macro_attribute]
@@ -84,7 +84,6 @@ fn generate_actor_trait_impl(
     let where_clause = impl_block.generics.where_clause.as_ref().unwrap();
     let result = quote! {
         #[allow(unused_parens)]
-        #[actify::async_trait]
         impl #generics #actor_trait for actify::Actor<#impl_type> #where_clause
         {
             #methods
@@ -218,7 +217,6 @@ fn generate_actor_trait(
     let methods = GeneratedMethods::get_actor_trait_methods(methods);
 
     let result = quote! {
-        #[actify::async_trait]
         trait #actor_trait_ident
         {
             #methods
@@ -266,7 +264,6 @@ fn generate_handle_trait_impl(
     let where_clause = impl_block.generics.where_clause.as_ref().unwrap();
 
     let result = quote! {
-        #[actify::async_trait]
         impl #generics #handle_trait #generics for actify::Handle<#impl_type> #where_clause
         {
             #methods
@@ -491,7 +488,6 @@ fn generate_handle_trait(
 
     let result = quote! {
         #flattened_attributes
-        #[actify::async_trait]
         pub trait #handle_trait_ident #generics #where_clause
         {
             #methods
@@ -607,7 +603,7 @@ fn transform_args(
                             return Err(quote_spanned! {
                                 pat_type.ty.span() =>
                                 compile_error!("Input arguments of actor model methods must be owned types and not referenced");
-                            })
+                            });
                         }
                         _ => {} // Ignore other types
                     }

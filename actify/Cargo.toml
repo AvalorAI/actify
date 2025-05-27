@@ -1,6 +1,6 @@
 [package]
 name = "actify"
-version = "0.6.0"
+version = "0.6.1"
 edition = "2024"
 description = "An intutive actor model with minimal boilerplate"
 license = "MIT"
@@ -11,13 +11,11 @@ readme = "../README.md"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-async-trait = "0.1.88"
 thiserror = "2.0.12"
 tokio = { version = "1.44.1", features = ["full"] }
 log = "0.4"
 futures = "0.3.26"
-actify-macros = "0.3.3"
-# actify-macros = { path = "../actify-macros", version = "0.3.3" }
+actify-macros = "0.3.4"
 lazy_static = "1.4.0"
 
 [features]

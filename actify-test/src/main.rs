@@ -1,7 +1,6 @@
 //! This workspace is used to test the functionalities of actify as would any user that imports the library
 
 use actify::actify;
-use async_trait::async_trait;
 use std::{collections::HashMap, fmt::Debug};
 
 fn main() {}
@@ -75,12 +74,10 @@ where
 
 #[allow(dead_code)]
 /// Example async Extension trait
-#[async_trait]
 trait AsyncTestExt<T> {
     async fn extended_baz(&mut self, i: i32) -> f64;
 }
 
-#[async_trait]
 impl<T> AsyncTestExt<T> for TestStruct<T>
 where
     T: Clone + Debug + Send + Sync + 'static,
