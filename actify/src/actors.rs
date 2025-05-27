@@ -216,6 +216,8 @@ where
         // However, the actor will only close if:
         // 1) there are no handles (which is impossible given this method is executed from a handle itself)
         // 2) the actor tried to execute a method which paniced. Then a send panic is deemed acceptable.
+        // 3) if the thread of the actor was already closed because the runtime is exiting, but the thread of the handle is not yet closed.
+        //    This is not harmful, but results in a panic.
         self.tx
             .send(job)
             .await

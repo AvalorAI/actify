@@ -27,11 +27,6 @@ where
         (i + 2) as f64
     }
 
-    #[cfg(target_os = "macos")]
-    fn foo(&mut self, i: i32, _h: HashMap<String, T>) -> f64 {
-        (i + 3) as f64
-    }
-
     fn bar<F>(&self, i: usize, f: F) -> usize
     where
         F: Fn(usize) -> usize + Send + Sync + 'static,
@@ -99,7 +94,12 @@ mod tests {
             inner_data: "Test".to_string(),
         });
 
+        #[cfg(target_os = "linux")]
+        assert_eq!(actor_handle.foo(0, HashMap::new()).await, 1.);
+
+        #[cfg(target_os = "windows")]
         assert_eq!(actor_handle.foo(0, HashMap::new()).await, 2.);
+
         assert_eq!(actor_handle.bar(5, |i: usize| i + 10).await, 15);
         assert_eq!(actor_handle.baz(0).await, 2.);
     }
