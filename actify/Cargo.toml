@@ -1,6 +1,6 @@
 [package]
 name = "actify"
-version = "0.6.1"
+version = "0.6.2"
 edition = "2024"
 description = "An intutive actor model with minimal boilerplate"
 license = "MIT"
@@ -15,7 +15,7 @@ thiserror = "2.0.12"
 tokio = { version = "1.44.1", features = ["full"] }
 log = "0.4"
 futures = "0.3.26"
-actify-macros = "0.3.4"
+actify-macros = "0.3.5"
 lazy_static = "1.4.0"
 
 [features]
