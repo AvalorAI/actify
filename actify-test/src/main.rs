@@ -38,6 +38,12 @@ where
     async fn baz(&mut self, i: i32) -> f64 {
         (i + 2) as f64
     }
+
+    fn mut_test(&self, mut arg: String) {
+        println!("{arg}");
+        arg = "mutated".to_string();
+        println!("{arg}")
+    }
 }
 
 #[allow(dead_code)]
