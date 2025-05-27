@@ -2,7 +2,7 @@ use proc_macro::TokenStream;
 use proc_macro2::Span;
 use quote::{quote, quote_spanned};
 use syn::{
-    FnArg, Ident, ImplItem, ImplItemFn, ItemImpl, PatIdent, PathSegment, Receiver, ReturnType,
+    FnArg, Ident, ImplItem, ImplItemFn, ItemImpl, Pat, PatIdent, PathSegment, Receiver, ReturnType,
     TraitItemFn, Type, punctuated::Punctuated, spanned::Spanned, token::Comma,
 };
 
@@ -524,7 +524,18 @@ fn generate_handle_trait_method(
         });
     }
 
-    let modified_inputs = &modified_method.sig.inputs;
+    let modified_inputs = &mut modified_method.sig.inputs;
+
+    for input in modified_inputs.iter_mut() {
+        match input {
+            FnArg::Receiver(_) => (),
+            FnArg::Typed(pattern) => {
+                if let Pat::Ident(ident) = &mut *pattern.pat {
+                    ident.mutability = None;
+                }
+            }
+        }
+    }
 
     // Extract generic parameters and where-clause from the method.
     let generics = &method.sig.generics;
