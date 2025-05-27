@@ -1,8 +1,8 @@
 [package]
 name = "actify"
-version = "0.6.0"
+version = "0.7.0"
 edition = "2024"
-description = "An intutive actor model with minimal boilerplate"
+description = "An intuitive actor model with minimal boilerplate"
 license = "MIT"
 repository = "https://github.com/AvalorAI/actify"
 documentation = "https://docs.rs/actify/latest/actify/"
@@ -15,8 +15,7 @@ thiserror = "2.0.12"
 tokio = { version = "1.44.1", features = ["full"] }
 log = "0.4"
 futures = "0.3.26"
-actify-macros = "0.3.3"
-# actify-macros = { path = "../actify-macros", version = "0.3.3" }
+actify-macros = "0.3.4"
 lazy_static = "1.4.0"
 
 [features]
