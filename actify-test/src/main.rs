@@ -87,6 +87,15 @@ where
     }
 }
 
+#[allow(dead_code)]
+#[derive(Clone)]
+struct NonDebug;
+
+#[actify]
+impl NonDebug {
+    fn foo(&self) {}
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
