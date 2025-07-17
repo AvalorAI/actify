@@ -1,9 +1,8 @@
 use std::fmt::Debug;
 use thiserror::Error;
 use tokio::sync::broadcast::{
-    self,
+    self, Receiver,
     error::{RecvError, TryRecvError},
-    Receiver,
 };
 
 /// A simple caching struct that can be used to locally maintain a synchronized state with an actor
@@ -202,7 +201,7 @@ pub enum CacheRecvNewestError {
 #[cfg(test)]
 mod tests {
     use crate::Handle;
-    use tokio::time::{sleep, Duration};
+    use tokio::time::{Duration, sleep};
 
     #[tokio::test]
     async fn test_get_newest() {
@@ -323,5 +322,16 @@ mod tests {
         handle.set(2).await;
         handle.set(3).await; // Returned, as newest value first
         assert_eq!(cache.try_recv_newest().unwrap(), Some(&3))
+    }
+
+    #[tokio::test]
+    async fn test_try_set_if_changed() {
+        let handle = Handle::new(1);
+        let mut cache = handle.create_cache().await;
+        assert_eq!(cache.try_recv_newest().unwrap(), Some(&1));
+        handle.set_if_changed(1).await;
+        assert!(cache.try_recv_newest().unwrap().is_none());
+        handle.set_if_changed(2).await;
+        assert_eq!(cache.try_recv_newest().unwrap(), Some(&2))
     }
 }
