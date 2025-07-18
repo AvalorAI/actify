@@ -1,10 +1,11 @@
 use std::fmt::Debug;
 use thiserror::Error;
 use tokio::sync::broadcast::{
-    self,
+    self, Receiver,
     error::{RecvError, TryRecvError},
-    Receiver,
 };
+
+use crate::{Frequency, Throttle, Throttled};
 
 /// A simple caching struct that can be used to locally maintain a synchronized state with an actor
 #[derive(Debug)]
@@ -174,6 +175,19 @@ where
             },
         }
     }
+
+    /// Spawns a throttle that fires given a specificed [Frequency], given any broadcasted updates by the actor.
+    /// Does not first update the cache to the newest value, since then the user of the cache might miss the update
+    pub fn spawn_throttle<C, F>(&self, client: C, call: fn(&C, F), freq: Frequency)
+    where
+        C: Send + Sync + 'static,
+        T: Throttled<F>,
+        F: Clone + Send + Sync + 'static,
+    {
+        let current = self.inner.clone();
+        let receiver = self.rx.resubscribe();
+        Throttle::spawn_from_receiver(client, call, freq, receiver, Some(current));
+    }
 }
 
 #[derive(Error, Debug, PartialEq, Clone)]
@@ -202,7 +216,7 @@ pub enum CacheRecvNewestError {
 #[cfg(test)]
 mod tests {
     use crate::Handle;
-    use tokio::time::{sleep, Duration};
+    use tokio::time::{Duration, sleep};
 
     #[tokio::test]
     async fn test_get_newest() {

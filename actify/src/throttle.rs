@@ -1,9 +1,7 @@
 use std::fmt::{self, Debug};
-use tokio::sync::broadcast;
 use tokio::sync::broadcast::error::RecvError;
+use tokio::sync::broadcast::{self, Receiver};
 use tokio::time::{self, Duration, Interval};
-
-use crate::Handle;
 
 /// The Frequency is used to tune the speed of the throttle.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -60,19 +58,18 @@ where
     T: Clone + Debug + Throttled<F> + Send + Sync + 'static,
     F: Clone + Send + Sync + 'static,
 {
-    pub fn spawn_from_handle(
+    pub fn spawn_from_receiver(
         client: C,
         call: fn(&C, F),
         frequency: Frequency,
-        handle: Handle<T>,
+        receiver: Receiver<T>,
         init: Option<T>,
     ) {
-        let val_rx = handle.subscribe();
         let mut throttle = Throttle {
             frequency,
             client,
             call,
-            val_rx: Some(val_rx),
+            val_rx: Some(receiver),
             current_val: init,
         };
         tokio::spawn(async move { throttle.tick().await });
@@ -174,9 +171,11 @@ where
 
 #[cfg(test)]
 mod tests {
+    use crate::Handle;
+
     use super::*;
     use std::sync::{Arc, Mutex};
-    use tokio::time::{sleep, Duration, Instant};
+    use tokio::time::{Duration, Instant, sleep};
 
     #[tokio::test]
     async fn test_first_shot() {
@@ -194,17 +193,32 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_throttle_from_cache() {
+        let handle = Handle::new(1);
+        let counter = CounterClient::new();
+        let cache = handle.create_cache().await;
+
+        // Spawn throttle that should only activate once on creation
+        cache.spawn_throttle(counter.clone(), CounterClient::call, Frequency::OnEvent);
+        sleep(Duration::from_millis(200)).await;
+
+        let count = *counter.count.lock().unwrap();
+        assert_eq!(count, 1)
+    }
+
+    #[tokio::test]
     async fn test_exit_on_shutdown() {
         let handle = Handle::new(1);
+        let receiver = handle.subscribe();
 
         let counter = CounterClient::new();
 
         // Spawn throttle
-        Throttle::spawn_from_handle(
+        Throttle::spawn_from_receiver(
             counter.clone(),
             CounterClient::call,
             Frequency::Interval(Duration::from_millis(100)),
-            handle.clone(),
+            receiver,
             None,
         );
 
@@ -235,11 +249,12 @@ mod tests {
         let counter = CounterClient::new();
 
         // Spawn throttle
-        Throttle::spawn_from_handle(
+        let receiver = handle.subscribe();
+        Throttle::spawn_from_receiver(
             counter.clone(),
             CounterClient::call,
             Frequency::OnEvent,
-            handle.clone(),
+            receiver,
             None,
         );
 
@@ -249,7 +264,8 @@ mod tests {
 
         let time = *counter.elapsed.lock().unwrap() as f64;
         let count = *counter.count.lock().unwrap();
-        assert!((timer - time).abs() / timer < 0.1 && count == 1);
+        assert_eq!(count, 1);
+        assert!((timer - time).abs() / timer < 0.1);
     }
 
     #[tokio::test]
@@ -264,11 +280,12 @@ mod tests {
         let counter = CounterClient::new();
 
         // Spawn throttle
-        Throttle::spawn_from_handle(
+        let receiver = handle.subscribe();
+        Throttle::spawn_from_receiver(
             counter.clone(),
             CounterClient::call,
             Frequency::OnEventWhen(Duration::from_millis(timer as u64)),
-            handle.clone(),
+            receiver,
             None,
         );
 
@@ -335,11 +352,12 @@ mod tests {
         let counter = CounterClient::new();
 
         // Spawn throttle
-        Throttle::spawn_from_handle(
+        let receiver = handle.subscribe();
+        Throttle::spawn_from_receiver(
             counter.clone(),
             CounterClient::call,
             Frequency::OnEventWhen(Duration::from_millis((timer * 0.55) as u64)),
-            handle.clone(),
+            receiver,
             None,
         );
 
@@ -368,11 +386,12 @@ mod tests {
         let counter = CounterClient::new();
 
         // Spawn throttle
-        Throttle::spawn_from_handle(
+        let receiver = handle.subscribe();
+        Throttle::spawn_from_receiver(
             counter.clone(),
             CounterClient::call,
             Frequency::OnEventWhen(Duration::from_millis((timer * 1.5) as u64)),
-            handle.clone(),
+            receiver,
             None,
         );
 

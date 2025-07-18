@@ -99,7 +99,8 @@ where
         F: Clone + Send + Sync + 'static,
     {
         let current = self.get().await;
-        Throttle::spawn_from_handle(client, call, freq, self.clone(), Some(current));
+        let receiver = self.subscribe();
+        Throttle::spawn_from_receiver(client, call, freq, receiver, Some(current));
     }
 
     /// Receives a clone of the current value of the actor
@@ -196,7 +197,8 @@ where
         F: Clone + Send + Sync + 'static,
     {
         let handle = Self::new(val.clone());
-        Throttle::spawn_from_handle(client, call, freq, handle.clone(), Some(val));
+        let receiver = handle.subscribe();
+        Throttle::spawn_from_receiver(client, call, freq, receiver, Some(val));
         handle
     }
 
