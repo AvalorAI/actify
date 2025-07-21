@@ -85,6 +85,38 @@ where
 
 impl<T> Handle<T>
 where
+    T: Clone + Send + Sync + PartialEq + 'static,
+{
+    /// Overwrites the inner value of the actor with the new value
+    /// But does not broadcast if the value being set is equal to the current value in the handle
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use actify::Handle;
+    /// # use tokio;
+    /// # #[tokio::test]
+    /// # async fn set_ok_actor() {
+    /// let handle = Handle::new(None);
+    /// handle.set(Some(1)).await.unwrap();
+    /// assert_eq!(handle.get().await.unwrap(), Some(1));
+    /// # }
+    /// ```
+    pub async fn set_if_changed(&self, val: T) {
+        let res = self
+            .send_job(
+                Box::new(|s: &mut Actor<T>, args: Box<dyn std::any::Any + Send>| {
+                    Box::pin(async move { Actor::set_if_changed(s, args).await })
+                }),
+                Box::new(val),
+            )
+            .await;
+        *res.downcast().expect(WRONG_RESPONSE)
+    }
+}
+
+impl<T> Handle<T>
+where
     T: Clone + Send + Sync + 'static,
 {
     /// Creates an itialized cache that can locally synchronize with the remote actor.
@@ -108,7 +140,8 @@ where
         F: Clone + Send + Sync + 'static,
     {
         let current = self.get().await;
-        Throttle::spawn_from_handle(client, call, freq, self.clone(), Some(current));
+        let receiver = self.subscribe();
+        Throttle::spawn_from_receiver(client, call, freq, receiver, Some(current));
     }
 
     /// Receives a clone of the current value of the actor
@@ -205,7 +238,8 @@ where
         F: Clone + Send + Sync + 'static,
     {
         let handle = Self::new(val.clone());
-        Throttle::spawn_from_handle(client, call, freq, handle.clone(), Some(val));
+        let receiver = handle.subscribe();
+        Throttle::spawn_from_receiver(client, call, freq, receiver, Some(val));
         handle
     }
 
@@ -234,6 +268,23 @@ where
 
         // The receiver for the result will only return an error if the response sender is dropped. Again, this is only possible if a panic occured
         get_result.await.expect("A panic occured in the Actor")
+    }
+}
+
+impl<T> Actor<T>
+where
+    T: Clone + Send + PartialEq + 'static,
+{
+    async fn set_if_changed(&mut self, args: Box<dyn Any + Send>) -> Box<dyn Any + Send> {
+        let new_value: T = *args.downcast().expect(WRONG_ARGS);
+
+        if self.inner != new_value {
+            self.inner = new_value;
+            let type_name = format!("{}::set", std::any::type_name::<T>());
+            self.broadcast(&type_name);
+        }
+
+        Box::new(())
     }
 }
 
