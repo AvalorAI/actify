@@ -1,5 +1,5 @@
 use futures::future::BoxFuture;
-use std::any::Any;
+use std::any::{type_name, Any};
 use std::fmt;
 use std::fmt::Debug;
 use tokio::sync::{broadcast, mpsc, oneshot};
@@ -53,10 +53,7 @@ pub struct Handle<T> {
 
 impl<T> Debug for Handle<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Handle")
-            .field("tx", &self.tx)
-            .field("_broadcast", &self._broadcast)
-            .finish()
+        write!(f, "Handle<{}>", type_name::<T>())
     }
 }
 
