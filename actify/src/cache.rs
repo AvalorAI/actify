@@ -17,7 +17,7 @@ pub struct Cache<T> {
 
 impl<T> Clone for Cache<T>
 where
-    T: Clone + Debug + Send + Sync + 'static,
+    T: Clone + Send + Sync + 'static,
 {
     fn clone(&self) -> Self {
         Cache {
@@ -30,7 +30,7 @@ where
 
 impl<T> Cache<T>
 where
-    T: Clone + Debug + Send + Sync + 'static,
+    T: Clone + Send + Sync + 'static,
 {
     pub(crate) fn new(rx: Receiver<T>, initial_value: T) -> Self {
         Self {

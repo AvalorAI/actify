@@ -55,7 +55,7 @@ impl<C, T, F> fmt::Debug for Throttle<C, T, F> {
 impl<C, T, F> Throttle<C, T, F>
 where
     C: Send + Sync + 'static,
-    T: Clone + Debug + Throttled<F> + Send + Sync + 'static,
+    T: Clone + Throttled<F> + Send + Sync + 'static,
     F: Clone + Send + Sync + 'static,
 {
     pub fn spawn_from_receiver(

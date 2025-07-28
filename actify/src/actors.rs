@@ -1,5 +1,5 @@
 use futures::future::BoxFuture;
-use std::any::Any;
+use std::any::{type_name, Any};
 use std::fmt;
 use std::fmt::Debug;
 use tokio::sync::{broadcast, mpsc, oneshot};
@@ -43,7 +43,7 @@ pub fn get_sorted_broadcast_counts() -> Vec<(String, usize)> {
 }
 
 /// A clonable handle that can be used to remotely execute a closure on the corresponding actor
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct Handle<T> {
     tx: mpsc::Sender<Job<T>>,
 
@@ -51,10 +51,16 @@ pub struct Handle<T> {
     _broadcast: broadcast::Sender<T>,
 }
 
+impl<T> Debug for Handle<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "Handle<{}>", type_name::<T>())
+    }
+}
+
 /// Implement default for any inner type that implements default aswell
 impl<T> Default for Handle<T>
 where
-    T: Default + Clone + Debug + Send + Sync + 'static,
+    T: Default + Clone + Send + Sync + 'static,
 {
     fn default() -> Self {
         Handle::new(T::default())
@@ -63,7 +69,7 @@ where
 
 impl<T> Handle<T>
 where
-    T: Clone + Debug + Send + Sync + 'static + Default,
+    T: Clone + Send + Sync + 'static + Default,
 {
     /// Creates a cache from a custom value that can locally synchronize with the remote actor
     /// It does this through subscribing to broadcasted updates from the actor
@@ -76,7 +82,7 @@ where
 
 impl<T> Handle<T>
 where
-    T: Clone + Debug + Send + Sync + PartialEq + 'static,
+    T: Clone + Send + Sync + PartialEq + 'static,
 {
     /// Overwrites the inner value of the actor with the new value
     /// But does not broadcast if the value being set is equal to the current value in the handle
@@ -108,7 +114,7 @@ where
 
 impl<T> Handle<T>
 where
-    T: Clone + Debug + Send + Sync + 'static,
+    T: Clone + Send + Sync + 'static,
 {
     /// Creates an itialized cache that can locally synchronize with the remote actor.
     /// It does this through subscribing to broadcasted updates from the actor.
@@ -282,7 +288,7 @@ where
 #[derive(Debug)]
 struct Listener<T>
 where
-    T: Clone + Debug + Send + Sync + 'static,
+    T: Clone + Send + Sync + 'static,
 {
     rx: mpsc::Receiver<Job<T>>,
     actor: Actor<T>,
@@ -290,7 +296,7 @@ where
 
 impl<T> Listener<T>
 where
-    T: Clone + Debug + Send + Sync + 'static,
+    T: Clone + Send + Sync + 'static,
 {
     fn new(rx: mpsc::Receiver<Job<T>>, actor: Actor<T>) -> Self {
         Self { rx, actor }
