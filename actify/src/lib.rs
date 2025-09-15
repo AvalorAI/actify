@@ -198,7 +198,7 @@ mod throttle;
 
 // Reexport for easier reference
 pub use actify_macros::{actify, skip_broadcast};
-pub use actors::{Actor, Handle};
+pub use actors::{Actor, Handle, ReadHandle};
 pub use cache::{Cache, CacheRecvError, CacheRecvNewestError};
 pub use extensions::{
     map::HashMapHandle, option::OptionHandle, set::HashSetHandle, vec::VecHandle,
