@@ -1,5 +1,5 @@
 use futures::future::BoxFuture;
-use std::any::{type_name, Any};
+use std::any::{Any, type_name};
 use std::fmt;
 use std::fmt::Debug;
 use tokio::sync::{broadcast, mpsc, oneshot};
@@ -116,7 +116,14 @@ impl<T> Handle<T>
 where
     T: Clone + Send + Sync + 'static,
 {
-    /// Creates an itialized cache that can locally synchronize with the remote actor.
+    pub fn get_read_handle(&self) -> ReadHandle<T> {
+        ReadHandle {
+            tx: self.tx.clone(),
+            _broadcast: self._broadcast.clone(),
+        }
+    }
+
+    /// Creates an initialized cache that can locally synchronize with the remote actor.
     /// It does this through subscribing to broadcasted updates from the actor.
     /// As it is initialized with the current value, any updates before construction are included
     pub async fn create_cache(&self) -> Cache<T> {
@@ -255,7 +262,7 @@ where
         // If the receive half of the channel is closed, either due to close being called or the Receiver handle dropping, tokio mpsc send returns an error.
         // However, the actor will only close if:
         // 1) there are no handles (which is impossible given this method is executed from a handle itself)
-        // 2) the actor tried to execute a method which paniced. Then a send panic is deemed acceptable.
+        // 2) the actor tried to execute a method which panicked. Then a send panic is deemed acceptable.
         // 3) if the thread of the actor was already closed because the runtime is exiting, but the thread of the handle is not yet closed.
         //    This is not harmful, but results in a panic.
         self.tx
@@ -389,6 +396,102 @@ type ActorMethod<T> = Box<
     dyn FnMut(&mut Actor<T>, Box<dyn Any + Send>) -> BoxFuture<Box<dyn Any + Send>> + Send + Sync,
 >;
 
+/// A clonable Read-only handle that can only be used to read the internal value
+/// It's comparable to a cache, without needing mutability but needing an async execution context
+#[derive(Clone)]
+pub struct ReadHandle<T> {
+    tx: mpsc::Sender<Job<T>>,
+
+    // The handle holds a clone of the broadcast transmitter from the actor for easy subscription
+    _broadcast: broadcast::Sender<T>,
+}
+
+impl<T> Debug for ReadHandle<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "Read-only Handle<{}>", type_name::<T>())
+    }
+}
+
+impl<T> ReadHandle<T>
+where
+    T: Clone + Send + Sync + 'static,
+{
+    async fn send_job(
+        &self,
+        call: ActorMethod<T>,
+        args: Box<dyn Any + Send>,
+    ) -> Box<dyn Any + Send> {
+        let (respond_to, get_result) = oneshot::channel();
+        let job = Job {
+            call,
+            args,
+            respond_to,
+        };
+
+        // If the receive half of the channel is closed, either due to close being called or the Receiver handle dropping, tokio mpsc send returns an error.
+        // However, the actor will only close if:
+        // 1) there are no handles (which is impossible given this method is executed from a handle itself)
+        // 2) the actor tried to execute a method which panicked. Then a send panic is deemed acceptable.
+        // 3) if the thread of the actor was already closed because the runtime is exiting, but the thread of the handle is not yet closed.
+        //    This is not harmful, but results in a panic.
+        self.tx
+            .send(job)
+            .await
+            .expect("A panic occured in the Actor");
+
+        // The receiver for the result will only return an error if the response sender is dropped. Again, this is only possible if a panic occured
+        get_result.await.expect("A panic occured in the Actor")
+    }
+
+    /// Receives a clone of the current value of the actor
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use actify::Handle;
+    /// # use tokio;
+    /// # #[tokio::test]
+    /// # async fn get_ok_actor() {
+    /// let handle = Handle::new(1);
+    /// let read_handle = handle.get_read_handle();
+    /// let result = read_handle.get().await;
+    /// assert_eq!(result.unwrap(), 1);
+    /// # }
+    /// ```
+    pub async fn get(&self) -> T {
+        let res = self
+            .send_job(
+                Box::new(|s: &mut Actor<T>, args: Box<dyn std::any::Any + Send>| {
+                    Box::pin(async move { Actor::get(s, args).await })
+                }),
+                Box::new(()),
+            )
+            .await;
+        *res.downcast().expect(WRONG_RESPONSE)
+    }
+
+    /// Creates an initialized cache that can locally synchronize with the remote actor.
+    /// It does this through subscribing to broadcasted updates from the actor.
+    /// As it is initialized with the current value, any updates before construction are included
+    pub async fn create_cache(&self) -> Cache<T> {
+        let init = self.get().await;
+        Cache::new(self._broadcast.subscribe(), init)
+    }
+}
+
+impl<T> ReadHandle<T>
+where
+    T: Clone + Send + Sync + 'static + Default,
+{
+    /// Creates a cache from a custom value that can locally synchronize with the remote actor
+    /// It does this through subscribing to broadcasted updates from the actor
+    /// As it is not initialized with the current value, any updates before construction are missed.
+    /// In case no updates are processed yet, the default value is returned
+    pub fn create_cache_from_default(&self) -> Cache<T> {
+        Cache::new(self._broadcast.subscribe(), T::default())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -409,5 +512,15 @@ mod tests {
         fn panic(&self) {
             panic!()
         }
+    }
+
+    #[tokio::test]
+    async fn test_read_handle() {
+        let handle = Handle::new(1);
+        let read_handle = handle.get_read_handle();
+        assert_eq!(read_handle.get().await, 1);
+
+        handle.set(2).await;
+        assert_eq!(read_handle.get().await, 2);
     }
 }
