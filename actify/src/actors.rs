@@ -477,6 +477,27 @@ where
         let init = self.get().await;
         Cache::new(self._broadcast.subscribe(), init)
     }
+
+    /// Returns a receiver that receives all updated values from the actor
+    /// Note that the inner value might not actually have changed.
+    /// It broadcasts on any method that has a mutable reference to the actor.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use actify::Handle;
+    /// # use tokio;
+    /// # #[tokio::test]
+    /// # async fn receive_val_broadcast() {
+    /// let handle = Handle::new(None);
+    /// let mut rx = handle.subscribe();
+    /// handle.set(Some("testing!")).await.unwrap();
+    /// assert_eq!(rx.recv().await.unwrap(), Some("testing!"));
+    /// # }
+    /// ```
+    pub fn subscribe(&self) -> broadcast::Receiver<T> {
+        self._broadcast.subscribe()
+    }
 }
 
 impl<T> ReadHandle<T>
