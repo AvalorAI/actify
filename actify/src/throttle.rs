@@ -1,8 +1,15 @@
 use std::fmt::{self, Debug};
 use tokio::sync::broadcast::error::RecvError;
-use tokio::sync::broadcast::{self, Receiver};
+use tokio::sync::broadcast::{self};
 use tokio::time::{self, Duration, Interval};
 use tokio_util::sync::CancellationToken;
+
+/// A type that can provide a broadcast receiver and cancellation token for throttle spawning.
+/// Implemented by [`Handle`](crate::Handle), [`ReadHandle`](crate::ReadHandle), and [`Cache`](crate::Cache).
+pub trait Subscribable<T> {
+    fn subscribe(&self) -> broadcast::Receiver<T>;
+    fn cancellation_token(&self) -> CancellationToken;
+}
 
 /// The Frequency is used to tune the speed of the throttle.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -60,14 +67,15 @@ where
     T: Clone + Throttled<F> + Send + Sync + 'static,
     F: Clone + Send + Sync + 'static,
 {
-    pub fn spawn_from_receiver(
+    pub fn spawn_from_handle(
         client: C,
         call: fn(&C, F),
         frequency: Frequency,
-        receiver: Receiver<T>,
+        handle: &impl Subscribable<T>,
         init: Option<T>,
-        cancellation_token: CancellationToken,
     ) {
+        let receiver = handle.subscribe();
+        let cancellation_token = handle.cancellation_token();
         let mut throttle = Throttle {
             frequency,
             client,
@@ -225,18 +233,16 @@ mod tests {
     #[tokio::test]
     async fn test_exit_on_shutdown() {
         let handle = Handle::new(1);
-        let receiver = handle.subscribe();
 
         let counter = CounterClient::new();
 
         // Spawn throttle
-        Throttle::spawn_from_receiver(
+        Throttle::spawn_from_handle(
             counter.clone(),
             CounterClient::call,
             Frequency::Interval(Duration::from_millis(100)),
-            receiver,
+            &handle,
             None,
-            CancellationToken::new(),
         );
 
         sleep(Duration::from_millis(500)).await;
@@ -266,14 +272,12 @@ mod tests {
         let counter = CounterClient::new();
 
         // Spawn throttle
-        let receiver = handle.subscribe();
-        Throttle::spawn_from_receiver(
+        Throttle::spawn_from_handle(
             counter.clone(),
             CounterClient::call,
             Frequency::OnEvent,
-            receiver,
+            &handle,
             None,
-            CancellationToken::new(),
         );
 
         interval.tick().await; // Should wait up to exactly 200ms
@@ -298,14 +302,12 @@ mod tests {
         let counter = CounterClient::new();
 
         // Spawn throttle
-        let receiver = handle.subscribe();
-        Throttle::spawn_from_receiver(
+        Throttle::spawn_from_handle(
             counter.clone(),
             CounterClient::call,
             Frequency::OnEventWhen(Duration::from_millis(timer as u64)),
-            receiver,
+            &handle,
             None,
-            CancellationToken::new(),
         );
 
         // Many updates are triggered in quick succesion
@@ -372,14 +374,12 @@ mod tests {
         let counter = CounterClient::new();
 
         // Spawn throttle
-        let receiver = handle.subscribe();
-        Throttle::spawn_from_receiver(
+        Throttle::spawn_from_handle(
             counter.clone(),
             CounterClient::call,
             Frequency::OnEventWhen(Duration::from_millis((timer * 0.55) as u64)),
-            receiver,
+            &handle,
             None,
-            CancellationToken::new(),
         );
 
         interval.tick().await; // Should wait up to exactly 200ms
@@ -407,14 +407,12 @@ mod tests {
         let counter = CounterClient::new();
 
         // Spawn throttle
-        let receiver = handle.subscribe();
-        Throttle::spawn_from_receiver(
+        Throttle::spawn_from_handle(
             counter.clone(),
             CounterClient::call,
             Frequency::OnEventWhen(Duration::from_millis((timer * 1.5) as u64)),
-            receiver,
+            &handle,
             None,
-            CancellationToken::new(),
         );
 
         interval.tick().await; // Should wait up to exactly 200ms

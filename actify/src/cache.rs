@@ -6,6 +6,7 @@ use tokio::sync::broadcast::{
 };
 use tokio_util::sync::CancellationToken;
 
+use crate::throttle::Subscribable;
 use crate::{Frequency, Throttle, Throttled};
 
 /// A simple caching struct that can be used to locally maintain a synchronized state with an actor
@@ -189,8 +190,17 @@ where
         F: Clone + Send + Sync + 'static,
     {
         let current = self.inner.clone();
-        let receiver = self.rx.resubscribe();
-        Throttle::spawn_from_receiver(client, call, freq, receiver, Some(current), self.cancellation_token.clone());
+        Throttle::spawn_from_handle(client, call, freq, self, Some(current));
+    }
+}
+
+impl<T: Clone + Send + Sync + 'static> Subscribable<T> for Cache<T> {
+    fn subscribe(&self) -> broadcast::Receiver<T> {
+        self.rx.resubscribe()
+    }
+
+    fn cancellation_token(&self) -> CancellationToken {
+        self.cancellation_token.clone()
     }
 }
 

@@ -6,7 +6,7 @@ use std::sync::Arc;
 use tokio::sync::{broadcast, mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
 
-use crate::throttle::Throttle;
+use crate::throttle::{Subscribable, Throttle};
 use crate::{Cache, Frequency, Throttled};
 
 const CHANNEL_SIZE: usize = 100;
@@ -151,8 +151,7 @@ where
         F: Clone + Send + Sync + 'static,
     {
         let current = self.get().await;
-        let receiver = self.subscribe();
-        Throttle::spawn_from_receiver(client, call, freq, receiver, Some(current), self.cancellation_token.clone());
+        Throttle::spawn_from_handle(client, call, freq, self, Some(current));
     }
 
     /// Receives a clone of the current value of the actor
@@ -253,8 +252,7 @@ where
         F: Clone + Send + Sync + 'static,
     {
         let handle = Self::new(val.clone());
-        let receiver = handle.subscribe();
-        Throttle::spawn_from_receiver(client, call, freq, receiver, Some(val), handle.cancellation_token.clone());
+        Throttle::spawn_from_handle(client, call, freq, &handle, Some(val));
         handle
     }
 
@@ -537,6 +535,26 @@ where
     /// In case no updates are processed yet, the default value is returned
     pub fn create_cache_from_default(&self) -> Cache<T> {
         Cache::new(self._broadcast.subscribe(), T::default(), self.cancellation_token.clone())
+    }
+}
+
+impl<T: Clone + Send + Sync + 'static> Subscribable<T> for Handle<T> {
+    fn subscribe(&self) -> broadcast::Receiver<T> {
+        self._broadcast.subscribe()
+    }
+
+    fn cancellation_token(&self) -> CancellationToken {
+        self.cancellation_token.clone()
+    }
+}
+
+impl<T: Clone + Send + Sync + 'static> Subscribable<T> for ReadHandle<T> {
+    fn subscribe(&self) -> broadcast::Receiver<T> {
+        self._broadcast.subscribe()
+    }
+
+    fn cancellation_token(&self) -> CancellationToken {
+        self.cancellation_token.clone()
     }
 }
 

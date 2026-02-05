@@ -203,7 +203,7 @@ pub use cache::{Cache, CacheRecvError, CacheRecvNewestError};
 pub use extensions::{
     map::HashMapHandle, option::OptionHandle, set::HashSetHandle, vec::VecHandle,
 };
-pub use throttle::{Frequency, Throttle, Throttled};
+pub use throttle::{Frequency, Subscribable, Throttle, Throttled};
 pub use tokio_util::sync::CancellationToken;
 
 #[cfg(feature = "profiler")]
