@@ -540,4 +540,85 @@ mod tests {
 
         assert_eq!(count_at_cancel, count_after_cancel, "Throttle should stop after cancellation");
     }
+
+    #[tokio::test]
+    async fn test_handle_drop_stops_spawned_throttle() {
+        let handle = Handle::new(1);
+        let counter = CounterClient::new();
+
+        handle
+            .spawn_throttle(counter.clone(), CounterClient::call, Frequency::Interval(Duration::from_millis(100)))
+            .await;
+
+        sleep(Duration::from_millis(500)).await;
+        let count_before = *counter.count.lock().unwrap();
+        assert!(count_before > 0, "Throttle should have fired at least once");
+
+        drop(handle);
+
+        sleep(Duration::from_millis(100)).await;
+        let count_at_drop = *counter.count.lock().unwrap();
+
+        sleep(Duration::from_millis(500)).await;
+        let count_after = *counter.count.lock().unwrap();
+
+        assert_eq!(count_at_drop, count_after, "Throttle should stop after Handle is dropped");
+    }
+
+    #[tokio::test]
+    async fn test_read_handle_drop_stops_spawned_throttle() {
+        let handle = Handle::new(1);
+        let read_handle = handle.get_read_handle();
+        let counter = CounterClient::new();
+
+        Throttle::spawn_from_handle(
+            counter.clone(),
+            CounterClient::call,
+            Frequency::Interval(Duration::from_millis(100)),
+            &read_handle,
+            Some(1),
+        );
+
+        // Drop the original handle - ReadHandle still keeps the guard alive
+        drop(handle);
+
+        sleep(Duration::from_millis(500)).await;
+        let count_before = *counter.count.lock().unwrap();
+        assert!(count_before > 0, "Throttle should have fired while ReadHandle is alive");
+
+        // Drop read handle - last holder of the guard, cancels the token
+        drop(read_handle);
+
+        sleep(Duration::from_millis(100)).await;
+        let count_at_drop = *counter.count.lock().unwrap();
+
+        sleep(Duration::from_millis(500)).await;
+        let count_after = *counter.count.lock().unwrap();
+
+        assert_eq!(count_at_drop, count_after, "Throttle should stop after ReadHandle is dropped");
+    }
+
+    #[tokio::test]
+    async fn test_cache_handle_drop_stops_spawned_throttle() {
+        let handle = Handle::new(1);
+        let cache = handle.create_cache().await;
+        let counter = CounterClient::new();
+
+        cache.spawn_throttle(counter.clone(), CounterClient::call, Frequency::Interval(Duration::from_millis(100)));
+
+        sleep(Duration::from_millis(500)).await;
+        let count_before = *counter.count.lock().unwrap();
+        assert!(count_before > 0, "Throttle should have fired at least once");
+
+        // Drop handle - cancels the token shared with the cache's throttle
+        drop(handle);
+
+        sleep(Duration::from_millis(100)).await;
+        let count_at_drop = *counter.count.lock().unwrap();
+
+        sleep(Duration::from_millis(500)).await;
+        let count_after = *counter.count.lock().unwrap();
+
+        assert_eq!(count_at_drop, count_after, "Throttle should stop after Handle is dropped");
+    }
 }
