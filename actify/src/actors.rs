@@ -2,7 +2,9 @@ use futures::future::BoxFuture;
 use std::any::{Any, type_name};
 use std::fmt;
 use std::fmt::Debug;
+use std::sync::Arc;
 use tokio::sync::{broadcast, mpsc, oneshot};
+use tokio_util::sync::CancellationToken;
 
 use crate::throttle::Throttle;
 use crate::{Cache, Frequency, Throttled};
@@ -49,6 +51,9 @@ pub struct Handle<T> {
 
     // The handle holds a clone of the broadcast transmitter from the actor for easy subscription
     _broadcast: broadcast::Sender<T>,
+
+    cancellation_token: CancellationToken,
+    _cancellation_guard: Arc<tokio_util::sync::DropGuard>,
 }
 
 impl<T> Debug for Handle<T> {
@@ -76,7 +81,7 @@ where
     /// As it is not initialized with the current value, any updates before construction are missed.
     /// In case no updates are processed yet, the default value is returned
     pub fn create_cache_from_default(&self) -> Cache<T> {
-        Cache::new(self._broadcast.subscribe(), T::default())
+        Cache::new(self._broadcast.subscribe(), T::default(), self.cancellation_token.clone())
     }
 }
 
@@ -120,6 +125,8 @@ where
         ReadHandle {
             tx: self.tx.clone(),
             _broadcast: self._broadcast.clone(),
+            cancellation_token: self.cancellation_token.clone(),
+            _cancellation_guard: self._cancellation_guard.clone(),
         }
     }
 
@@ -128,7 +135,7 @@ where
     /// As it is initialized with the current value, any updates before construction are included
     pub async fn create_cache(&self) -> Cache<T> {
         let init = self.get().await;
-        Cache::new(self._broadcast.subscribe(), init)
+        Cache::new(self._broadcast.subscribe(), init, self.cancellation_token.clone())
     }
 
     /// Returns the current capacity of the channel
@@ -145,7 +152,7 @@ where
     {
         let current = self.get().await;
         let receiver = self.subscribe();
-        Throttle::spawn_from_receiver(client, call, freq, receiver, Some(current));
+        Throttle::spawn_from_receiver(client, call, freq, receiver, Some(current), self.cancellation_token.clone());
     }
 
     /// Receives a clone of the current value of the actor
@@ -224,12 +231,16 @@ where
     pub fn new(val: T) -> Handle<T> {
         let (tx, rx) = mpsc::channel(CHANNEL_SIZE);
         let (broadcast, _) = broadcast::channel(CHANNEL_SIZE);
+        let cancellation_token = CancellationToken::new();
+        let cancellation_guard = Arc::new(cancellation_token.clone().drop_guard());
         let actor = Actor::new(broadcast.clone(), val);
         let listener = Listener::new(rx, actor);
-        tokio::spawn(Listener::serve(listener));
+        tokio::spawn(Listener::serve(listener, cancellation_token.clone()));
         Handle {
             tx,
             _broadcast: broadcast,
+            cancellation_token,
+            _cancellation_guard: cancellation_guard,
         }
     }
 
@@ -243,7 +254,7 @@ where
     {
         let handle = Self::new(val.clone());
         let receiver = handle.subscribe();
-        Throttle::spawn_from_receiver(client, call, freq, receiver, Some(val));
+        Throttle::spawn_from_receiver(client, call, freq, receiver, Some(val), handle.cancellation_token.clone());
         handle
     }
 
@@ -309,16 +320,29 @@ where
         Self { rx, actor }
     }
 
-    async fn serve(mut self) {
+    async fn serve(mut self, cancellation_token: CancellationToken) {
         // Execute the function on the inner data
-        while let Some(mut job) = self.rx.recv().await {
-            let res = (*job.call)(&mut self.actor, job.args).await;
+        loop {
+            tokio::select! {
+                _ = cancellation_token.cancelled() => {
+                    log::debug!("Actor of type {} cancelled", std::any::type_name::<T>());
+                    break;
+                }
+                job = self.rx.recv() => {
+                    match job {
+                        Some(mut job) => {
+                            let res = (*job.call)(&mut self.actor, job.args).await;
 
-            if job.respond_to.send(res).is_err() {
-                log::debug!(
-                    "Actor of type {} failed to respond as the receiver is dropped",
-                    std::any::type_name::<T>()
-                );
+                            if job.respond_to.send(res).is_err() {
+                                log::debug!(
+                                    "Actor of type {} failed to respond as the receiver is dropped",
+                                    std::any::type_name::<T>()
+                                );
+                            }
+                        }
+                        None => break,
+                    }
+                }
             }
         }
         // If there are no remaining handles or messages in the channel, the listener exits
@@ -404,6 +428,9 @@ pub struct ReadHandle<T> {
 
     // The handle holds a clone of the broadcast transmitter from the actor for easy subscription
     _broadcast: broadcast::Sender<T>,
+
+    cancellation_token: CancellationToken,
+    _cancellation_guard: Arc<tokio_util::sync::DropGuard>,
 }
 
 impl<T> Debug for ReadHandle<T> {
@@ -475,7 +502,7 @@ where
     /// As it is initialized with the current value, any updates before construction are included
     pub async fn create_cache(&self) -> Cache<T> {
         let init = self.get().await;
-        Cache::new(self._broadcast.subscribe(), init)
+        Cache::new(self._broadcast.subscribe(), init, self.cancellation_token.clone())
     }
 
     /// Returns a receiver that receives all updated values from the actor
@@ -509,7 +536,7 @@ where
     /// As it is not initialized with the current value, any updates before construction are missed.
     /// In case no updates are processed yet, the default value is returned
     pub fn create_cache_from_default(&self) -> Cache<T> {
-        Cache::new(self._broadcast.subscribe(), T::default())
+        Cache::new(self._broadcast.subscribe(), T::default(), self.cancellation_token.clone())
     }
 }
 

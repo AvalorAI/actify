@@ -204,6 +204,7 @@ pub use extensions::{
     map::HashMapHandle, option::OptionHandle, set::HashSetHandle, vec::VecHandle,
 };
 pub use throttle::{Frequency, Throttle, Throttled};
+pub use tokio_util::sync::CancellationToken;
 
 #[cfg(feature = "profiler")]
 pub use actors::{get_broadcast_counts, get_sorted_broadcast_counts};

@@ -4,6 +4,7 @@ use tokio::sync::broadcast::{
     self, Receiver,
     error::{RecvError, TryRecvError},
 };
+use tokio_util::sync::CancellationToken;
 
 use crate::{Frequency, Throttle, Throttled};
 
@@ -13,6 +14,7 @@ pub struct Cache<T> {
     inner: T,
     rx: broadcast::Receiver<T>,
     first_request: bool,
+    cancellation_token: CancellationToken,
 }
 
 impl<T> Clone for Cache<T>
@@ -24,6 +26,7 @@ where
             inner: self.inner.clone(),
             rx: self.rx.resubscribe(),
             first_request: self.first_request,
+            cancellation_token: self.cancellation_token.clone(),
         }
     }
 }
@@ -32,11 +35,12 @@ impl<T> Cache<T>
 where
     T: Clone + Send + Sync + 'static,
 {
-    pub(crate) fn new(rx: Receiver<T>, initial_value: T) -> Self {
+    pub(crate) fn new(rx: Receiver<T>, initial_value: T, cancellation_token: CancellationToken) -> Self {
         Self {
             inner: initial_value,
             rx,
             first_request: true,
+            cancellation_token,
         }
     }
 
@@ -186,7 +190,7 @@ where
     {
         let current = self.inner.clone();
         let receiver = self.rx.resubscribe();
-        Throttle::spawn_from_receiver(client, call, freq, receiver, Some(current));
+        Throttle::spawn_from_receiver(client, call, freq, receiver, Some(current), self.cancellation_token.clone());
     }
 }
 

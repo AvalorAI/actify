@@ -2,6 +2,7 @@ use std::fmt::{self, Debug};
 use tokio::sync::broadcast::error::RecvError;
 use tokio::sync::broadcast::{self, Receiver};
 use tokio::time::{self, Duration, Interval};
+use tokio_util::sync::CancellationToken;
 
 /// The Frequency is used to tune the speed of the throttle.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -35,6 +36,7 @@ pub struct Throttle<C, T, F> {
     call: fn(&C, F),
     val_rx: Option<broadcast::Receiver<T>>,
     current_val: Option<T>,
+    cancellation_token: CancellationToken,
 }
 
 impl<C, T, F> fmt::Debug for Throttle<C, T, F> {
@@ -64,6 +66,7 @@ where
         frequency: Frequency,
         receiver: Receiver<T>,
         init: Option<T>,
+        cancellation_token: CancellationToken,
     ) {
         let mut throttle = Throttle {
             frequency,
@@ -71,17 +74,25 @@ where
             call,
             val_rx: Some(receiver),
             current_val: init,
+            cancellation_token,
         };
         tokio::spawn(async move { throttle.tick().await });
     }
 
-    pub fn spawn_interval(client: C, call: fn(&C, F), interval: Duration, val: T) {
+    pub fn spawn_interval(
+        client: C,
+        call: fn(&C, F),
+        interval: Duration,
+        val: T,
+        cancellation_token: CancellationToken,
+    ) {
         let mut throttle = Throttle {
             frequency: Frequency::Interval(interval),
             client,
             call,
             val_rx: None,
             current_val: Some(val),
+            cancellation_token,
         };
         tokio::spawn(async move { throttle.tick().await });
     }
@@ -103,6 +114,10 @@ where
         loop {
             // Wait or update cache
             let received_msg = tokio::select!(
+                _ = self.cancellation_token.cancelled() => {
+                    log::debug!("Throttle of type {} cancelled - exiting", std::any::type_name::<T>());
+                    break
+                },
                 _ = Throttle::<C, T, F>::keep_time(&mut interval) => false,
                 res = Throttle::<C, T, F>::check_value(&mut self.val_rx) => {
                     match res {
@@ -176,6 +191,7 @@ mod tests {
     use super::*;
     use std::sync::{Arc, Mutex};
     use tokio::time::{Duration, Instant, sleep};
+    use tokio_util::sync::CancellationToken;
 
     #[tokio::test]
     async fn test_first_shot() {
@@ -220,6 +236,7 @@ mod tests {
             Frequency::Interval(Duration::from_millis(100)),
             receiver,
             None,
+            CancellationToken::new(),
         );
 
         sleep(Duration::from_millis(500)).await;
@@ -256,6 +273,7 @@ mod tests {
             Frequency::OnEvent,
             receiver,
             None,
+            CancellationToken::new(),
         );
 
         interval.tick().await; // Should wait up to exactly 200ms
@@ -287,6 +305,7 @@ mod tests {
             Frequency::OnEventWhen(Duration::from_millis(timer as u64)),
             receiver,
             None,
+            CancellationToken::new(),
         );
 
         // Many updates are triggered in quick succesion
@@ -322,6 +341,7 @@ mod tests {
             CounterClient::call,
             Duration::from_millis(timer as u64),
             1,
+            CancellationToken::new(),
         );
 
         for _ in 0..5 {
@@ -359,6 +379,7 @@ mod tests {
             Frequency::OnEventWhen(Duration::from_millis((timer * 0.55) as u64)),
             receiver,
             None,
+            CancellationToken::new(),
         );
 
         interval.tick().await; // Should wait up to exactly 200ms
@@ -393,6 +414,7 @@ mod tests {
             Frequency::OnEventWhen(Duration::from_millis((timer * 1.5) as u64)),
             receiver,
             None,
+            CancellationToken::new(),
         );
 
         interval.tick().await; // Should wait up to exactly 200ms
@@ -413,6 +435,7 @@ mod tests {
             DummyClient::call_a,
             Duration::from_millis(100),
             A {},
+            CancellationToken::new(),
         );
 
         // Parsing to either B or C should be infered by the compiler
@@ -421,6 +444,7 @@ mod tests {
             DummyClient::call_b,
             Duration::from_millis(100),
             A {},
+            CancellationToken::new(),
         );
 
         Throttle::spawn_interval(
@@ -428,6 +452,7 @@ mod tests {
             DummyClient::call_c,
             Duration::from_millis(100),
             A {},
+            CancellationToken::new(),
         );
     }
 
@@ -484,5 +509,37 @@ mod tests {
             let mut count = self.count.lock().unwrap();
             *count += 1;
         }
+    }
+
+    #[tokio::test]
+    async fn test_cancellation_stops_interval() {
+        let token = CancellationToken::new();
+        let counter = CounterClient::new();
+
+        // Spawn an interval throttle with the cancellation token
+        Throttle::spawn_interval(
+            counter.clone(),
+            CounterClient::call,
+            Duration::from_millis(100),
+            1,
+            token.clone(),
+        );
+
+        sleep(Duration::from_millis(500)).await;
+
+        let count_before_cancel = *counter.count.lock().unwrap();
+        assert!(count_before_cancel > 0, "Throttle should have fired at least once");
+
+        // Cancel the token
+        token.cancel();
+
+        sleep(Duration::from_millis(100)).await;
+        let count_at_cancel = *counter.count.lock().unwrap();
+
+        // Wait and verify no more calls happen
+        sleep(Duration::from_millis(500)).await;
+        let count_after_cancel = *counter.count.lock().unwrap();
+
+        assert_eq!(count_at_cancel, count_after_cancel, "Throttle should stop after cancellation");
     }
 }
