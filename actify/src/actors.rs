@@ -71,6 +71,16 @@ impl<T> Handle<T>
 where
     T: Clone + Send + Sync + 'static + Default,
 {
+    /// Overwrites the inner value of the actor with the default value of the data type
+    pub async fn reset(&self) {
+        self.set(T::default()).await;
+    }
+}
+
+impl<T> Handle<T>
+where
+    T: Clone + Send + Sync + 'static + Default,
+{
     /// Creates a cache from a custom value that can locally synchronize with the remote actor
     /// It does this through subscribing to broadcasted updates from the actor
     /// As it is not initialized with the current value, any updates before construction are missed.
@@ -543,5 +553,13 @@ mod tests {
 
         handle.set(2).await;
         assert_eq!(read_handle.get().await, 2);
+    }
+
+    #[tokio::test]
+    async fn test_reset_handle() {
+        let handle = Handle::new(1);
+        assert_eq!(handle.get().await, 1);
+        handle.reset().await;
+        assert_eq!(handle.get().await, 0);
     }
 }
