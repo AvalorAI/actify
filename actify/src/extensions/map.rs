@@ -4,6 +4,8 @@ use std::collections::HashMap;
 use std::fmt::Debug;
 use std::hash::Hash;
 
+/// An extension trait for `HashMap<K, V>` actors, made available on the [`Handle`](crate::Handle)
+/// as [`HashMapHandle`](crate::HashMapHandle).
 trait ActorMap<K, V> {
     fn get_key(&self, key: K) -> Option<V>;
 
@@ -12,6 +14,7 @@ trait ActorMap<K, V> {
     fn is_empty(&self) -> bool;
 }
 
+/// Extension methods for `Handle<HashMap<K, V>>`, exposed as [`HashMapHandle`](crate::HashMapHandle).
 #[actify]
 impl<K, V> ActorMap<K, V> for HashMap<K, V>
 where

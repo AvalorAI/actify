@@ -2,17 +2,23 @@
 #![deny(unused_must_use)]
 //! An intuitive actor model for Rust with minimal boilerplate, no manual messages and typed arguments.
 //!
-//! **Note that this crate is under construction. Although used in production, work is done on making an intuitive API, documententation and remaining features. Pre 1.0 the API may break at any time!**
+//! Actify is a pre-1.0 crate used in production. The API may still change between minor versions.
 //!
-//! Actify is an actor model built on [Tokio][tokio] that allows annotating any regular implementation block of your own type with the actify! macro.
+//! Actify is an actor model built on [Tokio][tokio] that allows annotating any regular implementation block of your own type with the [`actify`](macro@actify) macro.
 //! By generating the boilerplate code for you, a few key benefits are provided:
 //!
-//! * Async actor model build on Tokio and channels
-//! * Access to actors through clonable handles
-//! * Types arguments on the methods from your actor, exposed through the handle
+//! * Async actor model built on Tokio and channels
+//! * Access to actors through clonable [`Handle`]s
+//! * Typed arguments on the methods from your actor, exposed through the handle
 //! * No need to define message structs or enums!
+//! * Automatic [broadcasting] of state changes to subscribers
+//! * Local synchronization through [`Cache`]
+//! * Rate-limited updates through [`Throttle`]
+//! * Built-in [extension traits] for common standard library types
 //!
 //! [tokio]: https://docs.rs/tokio/latest/tokio/
+//! [broadcasting]: #broadcasting
+//! [extension traits]: #extension-traits
 //!
 //! # Main functionality of actify!
 //!
@@ -150,8 +156,9 @@
 //!```
 //!
 //! ## Generics in the method arguments
-//! Unfortunately, passing generics by arguments is not yet supported. It is technically possible, and will be added in the near future.
-//! ```compile_fail
+//! Generic method parameters are supported when they have appropriate trait bounds.
+//! The type parameters must be `Send + Sync + 'static`:
+//! ```
 //! # use actify::{Handle, actify};
 //! # use std::fmt::Debug;
 //! # #[derive(Clone, Debug)]
@@ -159,19 +166,24 @@
 //! #[actify]
 //! impl Greeter
 //! {
-//!     async fn generic_hi<F>(&self, name: String, f: F) -> String
+//!     fn apply<F>(&self, value: usize, f: F) -> usize
 //!     where
-//!         F: Debug + Send + Sync,
+//!         F: Fn(usize) -> usize + Send + Sync + 'static,
 //!     {
-//!         format!("hi {} with {:?}", name, f)
+//!         f(value)
 //!     }
+//! }
+//!
+//! #[tokio::main]
+//! async fn main() {
+//!     let handle = Handle::new(Greeter {});
+//!     let result = handle.apply(5, |x| x * 2).await;
+//!     assert_eq!(result, 10);
 //! }
 //!```
 //!
-//! TODO: show temporary workaround with PhantomData in the actor struct
-//!
 //! ## Passing arguments by reference
-//! As referenced arguments cannot be send to the actor, they are forbidden. All arguments must be owned:
+//! As referenced arguments cannot be sent to the actor, they are forbidden. All arguments must be owned:
 //! ```compile_fail
 //! # struct MyActor {}
 //! #[actify::actify]
@@ -182,14 +194,62 @@
 //! }
 //! ```
 //!
-//! ## Standard actor methods
-//! TODO: add documentation on the standard actor methods like get and set
+//! # Standard methods
 //!
-//! ## Atomicity
-//! TODO: add documentation on how to guarantee atomocity by preventing updating actors with gets and sets
+//! Every [`Handle`] provides a set of built-in methods that work without the macro:
 //!
-//! ## Preventing cycles
-//! TODO: add documentation on how to prevent cycles when actors use eachothers handles
+//! - [`Handle::get`] — returns a clone of the current actor value
+//! - [`Handle::set`] — overwrites the actor value and broadcasts the change
+//! - [`Handle::set_if_changed`] — only broadcasts when the new value differs (requires `PartialEq`)
+//! - [`Handle::subscribe`] — returns a [`tokio::sync::broadcast::Receiver`] for change notifications
+//!
+//! # Broadcasting
+//!
+//! By default, any method on an actified type automatically broadcasts the
+//! updated value to all subscribers after execution. This allows [`Cache`]s and
+//! [`Throttle`]s to stay synchronized with the actor.
+//!
+//! You can control broadcasting with these attributes:
+//!
+//! - `#[actify::skip_broadcast]` — skip broadcasting for a single `&mut self` method
+//! - `#[actify(skip_broadcast)]` — skip broadcasting for all methods in the impl block
+//! - `#[actify::broadcast]` — force broadcasting for a method in a `skip_broadcast` block
+//!
+//! # Cache
+//!
+//! A [`Cache`] provides local, synchronous access to the actor's value by subscribing
+//! to its broadcast stream. Create one with [`Handle::create_cache`] (initialized with the
+//! current value) or [`Handle::create_cache_from_default`] (starts from `T::default()`).
+//!
+//! See [`CacheRecvError`] and [`CacheRecvNewestError`] for possible error conditions.
+//!
+//! # ReadHandle
+//!
+//! A [`ReadHandle`] is a read-only view of an actor. It supports [`get`](ReadHandle::get),
+//! [`subscribe`](ReadHandle::subscribe), and cache creation, but cannot mutate the actor.
+//! Obtain one via [`Handle::get_read_handle`].
+//!
+//! # Throttle
+//!
+//! A [`Throttle`] rate-limits broadcasted updates before forwarding them to a callback.
+//! Configure the rate with [`Frequency`]:
+//!
+//! - [`Frequency::OnEvent`] — fires on every broadcast
+//! - [`Frequency::Interval`] — fires at a fixed interval
+//! - [`Frequency::OnEventWhen`] — fires for an event only after an interval has passed
+//!
+//! Use the [`Throttled`] trait to parse the actor's type into a different output type
+//! for the throttle callback.
+//!
+//! # Extension traits
+//!
+//! Actify ships with extension traits that add convenience methods to handles
+//! wrapping common standard library types:
+//!
+//! - [`OptionHandle`] — `is_some`, `is_none` for `Handle<Option<T>>`
+//! - [`VecHandle`] — `push`, `is_empty`, `drain` for `Handle<Vec<T>>`
+//! - [`HashMapHandle`] — `get_key`, `insert`, `is_empty` for `Handle<HashMap<K, V>>`
+//! - [`HashSetHandle`] — `insert`, `is_empty` for `Handle<HashSet<K>>`
 
 mod actors;
 mod cache;

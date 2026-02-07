@@ -3,19 +3,19 @@ use tokio::sync::broadcast::error::RecvError;
 use tokio::sync::broadcast::{self, Receiver};
 use tokio::time::{self, Duration, Interval};
 
-/// The Frequency is used to tune the speed of the throttle.
+/// The Frequency is used to tune the speed of a [`Throttle`].
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Frequency {
-    /// OnEvent fires any time an event arrives. It is specifically designed for infrequent but important events.
+    /// Fires any time an event arrives. Designed for infrequent but important events.
     OnEvent,
-    /// Interval(x) fires every interval x, regardless of the incoming events.
+    /// Fires every interval, regardless of incoming events.
     Interval(Duration),
-    /// OnEventWhen(x) fires for an event only after the interval has been passed. It is specifically desgined for high memory types.
+    /// Fires for an event only after the interval has passed. Designed for high-throughput types.
     OnEventWhen(Duration),
 }
 
 /// The Throttled trait can be implemented to parse the type held by the actor to a custom output type.
-/// This allows a single [`Handle`](crate::Handle) to attach itself to multiple throttles, each with a seperate parsing implementation.
+/// This allows a single [`Handle`](crate::Handle) to attach itself to multiple throttles, each with a separate parsing implementation.
 pub trait Throttled<F> {
     /// Implement this parse function on the type to be sent by the throttle
     fn parse(&self) -> F;
@@ -29,6 +29,11 @@ impl<T: Clone> Throttled<T> for T {
     }
 }
 
+/// Rate-limits broadcasted updates from a [`Handle`](crate::Handle) or [`Cache`](crate::Cache)
+/// before forwarding them to a callback.
+///
+/// Configure the rate with [`Frequency`]. The actor type must implement [`Throttled<F>`](Throttled)
+/// to convert the actor value into the callback argument type `F`.
 pub struct Throttle<C, T, F> {
     frequency: Frequency,
     client: C,

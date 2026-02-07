@@ -4,12 +4,15 @@ use std::collections::HashSet;
 use std::fmt::Debug;
 use std::hash::Hash;
 
+/// An extension trait for `HashSet<K>` actors, made available on the [`Handle`](crate::Handle)
+/// as [`HashSetHandle`](crate::HashSetHandle).
 trait ActorSet<K> {
     fn insert(&mut self, val: K) -> bool;
 
     fn is_empty(&self) -> bool;
 }
 
+/// Extension methods for `Handle<HashSet<K>>`, exposed as [`HashSetHandle`](crate::HashSetHandle).
 #[actify]
 impl<K> ActorSet<K> for HashSet<K>
 where

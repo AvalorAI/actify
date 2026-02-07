@@ -42,7 +42,11 @@ pub fn get_sorted_broadcast_counts() -> Vec<(String, usize)> {
     counts_vec
 }
 
-/// A clonable handle that can be used to remotely execute a closure on the corresponding actor
+/// A clonable handle that can be used to remotely execute a closure on the corresponding [`Actor`].
+///
+/// Handles are the primary way to interact with actors. Clone them freely to share
+/// access across tasks. For read-only access, see [`ReadHandle`]. For local
+/// synchronization, see [`Cache`]. For rate-limited updates, see [`Throttle`].
 #[derive(Clone)]
 pub struct Handle<T> {
     tx: mpsc::Sender<Job<T>>,
@@ -71,10 +75,12 @@ impl<T> Handle<T>
 where
     T: Clone + Send + Sync + 'static + Default,
 {
-    /// Creates a cache from a custom value that can locally synchronize with the remote actor
-    /// It does this through subscribing to broadcasted updates from the actor
+    /// Creates a [`Cache`] initialized with `T::default()` that locally synchronizes with the remote actor.
+    /// It does this through subscribing to broadcasted updates from the actor.
     /// As it is not initialized with the current value, any updates before construction are missed.
-    /// In case no updates are processed yet, the default value is returned
+    /// In case no updates are processed yet, the default value is returned.
+    ///
+    /// See also [`Handle::create_cache`] for a cache initialized with the current actor value.
     pub fn create_cache_from_default(&self) -> Cache<T> {
         Cache::new(self._broadcast.subscribe(), T::default())
     }
@@ -117,6 +123,7 @@ impl<T> Handle<T>
 where
     T: Clone + Send + Sync + 'static,
 {
+    /// Returns a [`ReadHandle`] that provides read-only access to this actor.
     pub fn get_read_handle(&self) -> ReadHandle<T> {
         ReadHandle {
             tx: self.tx.clone(),
@@ -124,9 +131,11 @@ where
         }
     }
 
-    /// Creates an initialized cache that can locally synchronize with the remote actor.
+    /// Creates an initialized [`Cache`] that can locally synchronize with the remote actor.
     /// It does this through subscribing to broadcasted updates from the actor.
-    /// As it is initialized with the current value, any updates before construction are included
+    /// As it is initialized with the current value, any updates before construction are included.
+    ///
+    /// See also [`Handle::create_cache_from_default`] for a cache that starts from `T::default()`.
     pub async fn create_cache(&self) -> Cache<T> {
         let init = self.get().await;
         Cache::new(self._broadcast.subscribe(), init)
@@ -137,7 +146,9 @@ where
         self.tx.capacity()
     }
 
-    /// Spawns a throttle that fires given a specificed [Frequency], given any broadcasted updates by the actor.
+    /// Spawns a [`Throttle`] that fires given a specified [`Frequency`], given any broadcasted updates by the actor.
+    ///
+    /// The type must implement [`Throttled<F>`](crate::Throttled) to parse the actor value into the callback argument.
     pub async fn spawn_throttle<C, F>(&self, client: C, call: fn(&C, F), freq: Frequency)
     where
         C: Send + Sync + 'static,
@@ -199,7 +210,7 @@ where
         *res.downcast().expect(WRONG_RESPONSE)
     }
 
-    /// Returns a receiver that receives all updated values from the actor
+    /// Returns a [`tokio::sync::broadcast::Receiver`] that receives all updated values from the actor.
     /// Note that the inner value might not actually have changed.
     /// It broadcasts on any method that has a mutable reference to the actor.
     ///
@@ -219,6 +230,7 @@ where
         self._broadcast.subscribe()
     }
 
+    /// Creates a new [`Handle`] and spawns the corresponding [`Actor`].
     pub fn new(val: T) -> Handle<T> {
         let (tx, rx) = mpsc::channel(CHANNEL_SIZE);
         let (broadcast, _) = broadcast::channel(CHANNEL_SIZE);
@@ -231,8 +243,8 @@ where
         }
     }
 
-    /// Creates a new Handle and initializes a corresponding throttle
-    /// The throttle fires given a specificed [Frequency]
+    /// Creates a new [`Handle`] and initializes a corresponding [`Throttle`].
+    /// The throttle fires given a specified [`Frequency`].
     pub fn new_throttled<C, F>(val: T, client: C, call: fn(&C, F), freq: Frequency) -> Handle<T>
     where
         C: Send + Sync + 'static,
@@ -324,7 +336,11 @@ where
     }
 }
 
-// ------- The remote actor that runs in a seperate thread ------- //
+/// The internal actor wrapper that runs in a separate task.
+///
+/// You do not create this directly — it is spawned by [`Handle::new`].
+/// The `inner` field holds the wrapped value and `broadcast` is used to
+/// notify subscribers of state changes.
 #[derive(Debug)]
 pub struct Actor<T> {
     pub inner: T,
@@ -394,8 +410,12 @@ type ActorMethod<T> = Box<
     dyn FnMut(&mut Actor<T>, Box<dyn Any + Send>) -> BoxFuture<Box<dyn Any + Send>> + Send + Sync,
 >;
 
-/// A clonable Read-only handle that can only be used to read the internal value
-/// It's comparable to a cache, without needing mutability but needing an async execution context
+/// A clonable read-only handle that can only be used to read the internal value.
+///
+/// Obtained via [`Handle::get_read_handle`]. Like a [`Cache`], it provides access
+/// to the actor's value, but requires an async context instead of mutability.
+/// Supports [`ReadHandle::get`], [`ReadHandle::subscribe`], and
+/// [`ReadHandle::create_cache`].
 #[derive(Clone)]
 pub struct ReadHandle<T> {
     tx: mpsc::Sender<Job<T>>,
@@ -467,15 +487,17 @@ where
         *res.downcast().expect(WRONG_RESPONSE)
     }
 
-    /// Creates an initialized cache that can locally synchronize with the remote actor.
+    /// Creates an initialized [`Cache`] that can locally synchronize with the remote actor.
     /// It does this through subscribing to broadcasted updates from the actor.
-    /// As it is initialized with the current value, any updates before construction are included
+    /// As it is initialized with the current value, any updates before construction are included.
+    ///
+    /// See also [`ReadHandle::create_cache_from_default`] for a cache that starts from `T::default()`.
     pub async fn create_cache(&self) -> Cache<T> {
         let init = self.get().await;
         Cache::new(self._broadcast.subscribe(), init)
     }
 
-    /// Returns a receiver that receives all updated values from the actor
+    /// Returns a [`tokio::sync::broadcast::Receiver`] that receives all updated values from the actor.
     /// Note that the inner value might not actually have changed.
     /// It broadcasts on any method that has a mutable reference to the actor.
     ///
@@ -501,10 +523,12 @@ impl<T> ReadHandle<T>
 where
     T: Clone + Send + Sync + 'static + Default,
 {
-    /// Creates a cache from a custom value that can locally synchronize with the remote actor
-    /// It does this through subscribing to broadcasted updates from the actor
+    /// Creates a [`Cache`] initialized with `T::default()` that locally synchronizes with the remote actor.
+    /// It does this through subscribing to broadcasted updates from the actor.
     /// As it is not initialized with the current value, any updates before construction are missed.
-    /// In case no updates are processed yet, the default value is returned
+    /// In case no updates are processed yet, the default value is returned.
+    ///
+    /// See also [`ReadHandle::create_cache`] for a cache initialized with the current actor value.
     pub fn create_cache_from_default(&self) -> Cache<T> {
         Cache::new(self._broadcast.subscribe(), T::default())
     }

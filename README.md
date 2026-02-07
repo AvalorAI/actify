@@ -1,8 +1,8 @@
 # Actify
 
-**Note that this crate is under construction. Although used in production, work is done on making an intuitive API, documententation and remaining features. For the time being, this does not follow semantic versioning!**
+Actify is a pre-1.0 crate used in production. The API may still change between minor versions.
 
-Actify is an [actor model](https://en.wikipedia.org/wiki/Actor_model) built on [Tokio](https://tokio.rs) that allows annotating any regular implementation block of your own type with the actify! macro.
+Actify is an [actor model](https://en.wikipedia.org/wiki/Actor_model) built on [Tokio](https://tokio.rs) that allows annotating any regular implementation block of your own type with the `#[actify]` macro.
 
 [![Crates.io][crates-badge]][crates-url]
 [![License][mit-badge]][mit-url]
@@ -15,15 +15,26 @@ Actify is an [actor model](https://en.wikipedia.org/wiki/Actor_model) built on [
 [docs-badge]: https://docs.rs/actify/badge.svg
 [docs-url]: https://docs.rs/actify/latest/actify/
 
+## Installation
+
+```sh
+cargo add actify
+```
+
 ## Benefits
 
 By generating the boilerplate code for you, a few key benefits are provided:
 
-- Async actor model build on Tokio and channels, which can keep arbitrary owned data types.
+- Async actor model built on Tokio and channels, which can keep arbitrary owned data types.
 - [Atomic](https://www.codingem.com/atomic-meaning-in-programming/) access and mutation of underlying data through clonable handles.
 - Typed arguments and return values on the methods from your actor, exposed through each handle.
 - No need to manually define message structs or enums!
-- Generic methods like get() and set() even without using the macro.
+- Built-in methods like `get()`, `set()`, `set_if_changed()`, and `subscribe()` even without using the macro.
+- Automatic broadcasting of state changes to subscribers, with `#[skip_broadcast]` and `#[broadcast]` controls.
+- Local synchronization through `Cache`, with `recv`, `recv_newest`, and non-blocking variants.
+- Rate-limited updates through `Throttle` with configurable `Frequency`.
+- Generic type parameters supported in both actor types and method arguments.
+- Extension traits for common types: `Vec`, `Option`, `HashMap`, `HashSet`.
 
 ## Example
 
@@ -44,13 +55,15 @@ impl Greeter {
 
 #[tokio::main]
 async fn main() {
-// An actify handle is created and initialized with the Greeter struct
-let handle = Handle::new(Greeter {});
+    // An actify handle is created and initialized with the Greeter struct
+    let handle = Handle::new(Greeter {});
 
-// The say_hi method is made available on its handle through the actify! macro
-let greeting = handle.say_hi("Alfred".to_string()).await.unwrap();
+    // The say_hi method is made available on its handle through the actify! macro
+    let greeting = handle.say_hi("Alfred".to_string()).await;
 
-// The method is executed remotely on the initialized Greeter and returned through the handle
-assert_eq!(greeting, "hi Alfred".to_string())
+    // The method is executed remotely on the initialized Greeter and returned through the handle
+    assert_eq!(greeting, "hi Alfred".to_string())
 }
 ```
+
+For full API documentation, see [docs.rs](https://docs.rs/actify/latest/actify/).

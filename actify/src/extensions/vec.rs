@@ -3,6 +3,8 @@ use actify_macros::actify;
 use core::ops::RangeBounds;
 use std::fmt::Debug;
 
+/// An extension trait for `Vec<T>` actors, made available on the [`Handle`](crate::Handle)
+/// as [`VecHandle`](crate::VecHandle).
 trait ActorVec<T> {
     fn push(&mut self, value: T);
 
@@ -13,6 +15,7 @@ trait ActorVec<T> {
         R: RangeBounds<usize> + Send + Sync + 'static;
 }
 
+/// Extension methods for `Handle<Vec<T>>`, exposed as [`VecHandle`](crate::VecHandle).
 #[actify]
 impl<T> ActorVec<T> for Vec<T>
 where

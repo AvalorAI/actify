@@ -2,7 +2,7 @@
 name = "actify"
 version = "0.7.3"
 edition = "2024"
-description = "An intutive actor model with minimal boilerplate"
+description = "An intuitive actor model with minimal boilerplate"
 license = "MIT"
 repository = "https://github.com/AvalorAI/actify"
 documentation = "https://docs.rs/actify/latest/actify/"

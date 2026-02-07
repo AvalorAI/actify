@@ -7,7 +7,11 @@ use tokio::sync::broadcast::{
 
 use crate::{Frequency, Throttle, Throttled};
 
-/// A simple caching struct that can be used to locally maintain a synchronized state with an actor
+/// A simple caching struct that can be used to locally maintain a synchronized state with an actor.
+///
+/// Create one via [`Handle::create_cache`](crate::Handle::create_cache) (initialized with the
+/// current actor value) or [`Handle::create_cache_from_default`](crate::Handle::create_cache_from_default)
+/// (starts from `T::default()`).
 #[derive(Debug)]
 pub struct Cache<T> {
     inner: T,
@@ -105,9 +109,11 @@ where
     }
 
     /// Receive the newest updated value broadcasted by the actor, discarding any older messages.
-    /// The first time it will return its current value immediately
-    /// After that, it might wait indefinitely for a new update
-    /// Note that when the cache is initialized with a default value, this might return the default while the actor has a different value
+    /// The first time it will return its current value immediately.
+    /// After that, it might wait indefinitely for a new update.
+    /// Note that when the cache is initialized with a default value, this might return the default while the actor has a different value.
+    ///
+    /// Returns [`CacheRecvNewestError::Closed`] if the actor is dropped.
     ///
     /// # Examples
     ///
@@ -158,9 +164,11 @@ where
     }
 
     /// Receive the last updated value broadcasted by the actor (FIFO).
-    /// The first time it will return its current value immediately
-    /// After that, it might wait indefinitely for a new update
-    /// Note that when the cache is initialized with a default value, this might return the default while the actor has a different value
+    /// The first time it will return its current value immediately.
+    /// After that, it might wait indefinitely for a new update.
+    /// Note that when the cache is initialized with a default value, this might return the default while the actor has a different value.
+    ///
+    /// Returns [`CacheRecvError`] on channel close or lag.
     ///
     /// # Examples
     ///
@@ -325,8 +333,8 @@ where
         }
     }
 
-    /// Spawns a throttle that fires given a specificed [Frequency], given any broadcasted updates by the actor.
-    /// Does not first update the cache to the newest value, since then the user of the cache might miss the update
+    /// Spawns a [`Throttle`] that fires given a specified [`Frequency`], given any broadcasted updates by the actor.
+    /// Does not first update the cache to the newest value, since then the user of the cache might miss the update.
     pub fn spawn_throttle<C, F>(&self, client: C, call: fn(&C, F), freq: Frequency)
     where
         C: Send + Sync + 'static,
@@ -339,6 +347,7 @@ where
     }
 }
 
+/// Error returned by [`Cache::recv`] and [`Cache::try_recv`].
 #[derive(Error, Debug, PartialEq, Clone)]
 pub enum CacheRecvError {
     #[error("Cache channel closed")]
@@ -356,6 +365,7 @@ impl From<RecvError> for CacheRecvError {
     }
 }
 
+/// Error returned by [`Cache::recv_newest`] and [`Cache::try_recv_newest`].
 #[derive(Error, Debug, PartialEq, Clone)]
 pub enum CacheRecvNewestError {
     #[error("Cache channel closed")]
