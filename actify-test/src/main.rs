@@ -96,12 +96,45 @@ impl NonDebug {
     fn foo(&self) {}
 }
 
+#[derive(Clone, Debug)]
+struct ComplexActorTypes;
+
+#[actify]
+impl ComplexActorTypes {
+    fn with_array(&self, data: [u8; 4]) -> u8 {
+        data[0]
+    }
+
+    fn with_tuple(&self, pair: (String, i32)) -> String {
+        format!("{}: {}", pair.0, pair.1)
+    }
+
+    fn with_fn_ptr(&self, f: fn(usize) -> usize, val: usize) -> usize {
+        f(val)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use actify::{Handle, VecHandle};
     use std::time::Duration;
     use tokio::time::sleep;
+
+    // NOTE: "should not compile" tests live in tests/compile_fail/ and are run via trybuild.
+    // A compile_error! from the macro fires at compile time, so it cannot be tested inline.
+
+    #[tokio::test]
+    async fn test_complex_arg_types() {
+        let handle = Handle::new(ComplexActorTypes);
+
+        assert_eq!(handle.with_array([10, 20, 30, 40]).await, 10);
+        assert_eq!(
+            handle.with_tuple(("hello".to_string(), 42)).await,
+            "hello: 42"
+        );
+        assert_eq!(handle.with_fn_ptr(|x| x * 2, 21).await, 42);
+    }
 
     #[tokio::test]
     async fn test_macro() {

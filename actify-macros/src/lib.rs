@@ -2,8 +2,8 @@ use proc_macro::TokenStream;
 use proc_macro2::Span;
 use quote::{quote, quote_spanned};
 use syn::{
-    FnArg, Ident, ImplItem, ImplItemFn, ItemImpl, Pat, PatIdent, PathSegment, Receiver, ReturnType,
-    TraitItemFn, Type, punctuated::Punctuated, spanned::Spanned, token::Comma,
+    FnArg, Ident, ImplItem, ImplItemFn, ItemImpl, Pat, PatIdent, Receiver, ReturnType, TraitItemFn,
+    Type, punctuated::Punctuated, spanned::Spanned, token::Comma,
 };
 
 #[proc_macro_attribute]
@@ -22,8 +22,6 @@ pub fn actify(_attr: TokenStream, item: TokenStream) -> TokenStream {
         Ok(parsed) => parsed,
         Err(error) => error,
     };
-
-    // println!("{}", result);
 
     result.into()
 }
@@ -586,42 +584,63 @@ fn get_impl_type_ident(impl_type: &Type) -> Result<Ident, proc_macro2::TokenStre
 /// TODO is allowing only the Ident pattern to prohibitive?
 fn transform_args(
     args: &Punctuated<FnArg, Comma>,
-) -> Result<(Punctuated<PatIdent, Comma>, Punctuated<PathSegment, Comma>), proc_macro2::TokenStream>
-{
+) -> Result<(Punctuated<PatIdent, Comma>, Punctuated<Type, Comma>), proc_macro2::TokenStream> {
     // Add all idents to a Punctuated => param1, param2, ...
     let mut input_arg_names: Punctuated<PatIdent, Comma> = Punctuated::new();
-    let mut input_arg_types: Punctuated<PathSegment, Comma> = Punctuated::new();
+    let mut input_arg_types: Punctuated<Type, Comma> = Punctuated::new();
 
     for arg in args {
         match arg {
             syn::FnArg::Typed(pat_type) => {
                 if let syn::Pat::Ident(mut pat_ident) = *pat_type.pat.clone() {
                     match &*pat_type.ty {
-                        Type::Path(type_path) => {
-                            let var_type = type_path
-                                .path
-                                .segments
-                                .last()
-                                .expect("Actify macro expected a valid type");
+                        // Valid owned types that can be boxed and sent over channels
+                        // e.g. String, Vec<T>, HashMap<K,V>, custom types
+                        Type::Path(_) |
+                        // e.g. (String, i32)
+                        Type::Tuple(_) |
+                        // e.g. [u8; 4]
+                        Type::Array(_) |
+                        // e.g. fn(usize) -> bool
+                        Type::BareFn(_) |
+                        // Transparent wrappers, e.g. (T) or compiler-generated groupings
+                        Type::Paren(_) | Type::Group(_) => {
                             // Remove any mutability, as the argument is never mutated before passing and always owned.
                             // It can safely be removed even if the underlying method has signature method(mut arg: type)
                             // This prevents issues where the args are passed to the method, as "method(mut arg)" is not allowed
                             pat_ident.mutability = None;
                             input_arg_names.push(pat_ident.clone());
-                            input_arg_types.push(var_type.clone());
+                            input_arg_types.push(*pat_type.ty.clone());
                         }
                         Type::Reference(_) => {
                             return Err(quote_spanned! {
                                 pat_type.ty.span() =>
-                                compile_error!("Input arguments of actor model methods must be owned types and not referenced");
+                                compile_error!("Input arguments of actor model methods must be owned types, not references (e.g. use String instead of &str)");
                             });
                         }
-                        _ => {} // Ignore other types
+                        Type::Ptr(_) => {
+                            return Err(quote_spanned! {
+                                pat_type.ty.span() =>
+                                compile_error!("Raw pointer types (*const T, *mut T) are not supported as actor method arguments because they are not Send");
+                            });
+                        }
+                        Type::ImplTrait(_) => {
+                            return Err(quote_spanned! {
+                                pat_type.ty.span() =>
+                                compile_error!("impl Trait is not supported as an actor method argument; use a named generic type parameter with trait bounds instead (e.g. fn method<F: Fn()>(&self, f: F))");
+                            });
+                        }
+                        _ => {
+                            return Err(quote_spanned! {
+                                pat_type.ty.span() =>
+                                compile_error!("Unsupported argument type for actor method; use a concrete owned type (e.g. String, Vec<T>, (A, B), [T; N])");
+                            });
+                        }
                     }
                 }
             }
             #[cfg_attr(test, deny(clippy::non_exhaustive_omitted_patterns))]
-            _ => {} // some sane fallback
+            _ => {}
         }
     }
 

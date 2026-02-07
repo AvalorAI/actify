@@ -1,0 +1,5 @@
+error: impl Trait is not supported as an actor method argument; use a named generic type parameter with trait bounds instead (e.g. fn method<F: Fn()>(&self, f: F))
+  --> tests/compile_fail/impl_trait_arg.rs:10:34
+   |
+10 |     fn with_impl_trait(&self, f: impl Fn(usize) -> usize) -> usize {
+   |                                  ^^^^
