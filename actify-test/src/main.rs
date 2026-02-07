@@ -199,6 +199,25 @@ impl CfgImplActor {
     }
 }
 
+#[derive(Clone, Debug)]
+struct SkipMultipleBroadcastsActor {
+    value: i32,
+}
+
+#[actify(skip_broadcast)]
+impl SkipMultipleBroadcastsActor {
+    fn skipped_method(&mut self, x: i32) -> i32 {
+        self.value = x;
+        x
+    }
+
+    #[actify::broadcast]
+    fn broadcast_method(&mut self, x: i32) -> i32 {
+        self.value = x;
+        x * 2
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -335,6 +354,20 @@ mod tests {
 
         let sorted_counts = actify::get_sorted_broadcast_counts();
         println!("{:?}", sorted_counts);
+    }
+
+    #[tokio::test]
+    async fn test_block_skip_broadcast() {
+        let handle = Handle::new(SkipMultipleBroadcastsActor { value: 0 });
+        let mut rx = handle.subscribe();
+
+        // skipped_method has no #[broadcast], so block default (skip) applies
+        handle.skipped_method(10).await;
+        assert!(rx.try_recv().is_err());
+
+        // broadcast_method has #[broadcast], overriding the block default
+        handle.broadcast_method(20).await;
+        assert!(rx.try_recv().is_ok());
     }
 
     #[allow(dead_code)]

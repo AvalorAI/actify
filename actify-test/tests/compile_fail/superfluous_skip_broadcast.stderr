@@ -1,0 +1,5 @@
+error: #[skip_broadcast] is superfluous: the impl block already skips all broadcasts via #[actify(skip_broadcast)]
+ --> tests/compile_fail/superfluous_skip_broadcast.rs:9:5
+  |
+9 |     #[actify::skip_broadcast]
+  |     ^

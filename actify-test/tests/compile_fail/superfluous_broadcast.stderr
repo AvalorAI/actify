@@ -1,0 +1,5 @@
+error: #[broadcast] is superfluous: methods already broadcast by default; use #[actify(skip_broadcast)] on the impl block to change the default
+ --> tests/compile_fail/superfluous_broadcast.rs:9:5
+  |
+9 |     #[actify::broadcast]
+  |     ^
