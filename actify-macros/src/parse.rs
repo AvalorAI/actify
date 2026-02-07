@@ -173,11 +173,18 @@ fn get_impl_type_ident(impl_type: &Type) -> Result<Ident, proc_macro2::TokenStre
     })
 }
 
-/// Filter attributes to only keep `#[cfg(...)]` and `#[doc(...)]`.
+/// Propagate all attributes except actify-specific ones (like `skip_broadcast`)
+/// that are consumed during parsing and should not appear on generated methods.
 fn filter_attributes(attrs: &[Attribute]) -> Vec<Attribute> {
     attrs
         .iter()
-        .filter(|attr| attr.path().is_ident("cfg") || attr.path().is_ident("doc"))
+        .filter(|attr| {
+            !attr
+                .path()
+                .segments
+                .iter()
+                .any(|seg| seg.ident == "skip_broadcast")
+        })
         .cloned()
         .collect()
 }
