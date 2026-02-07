@@ -91,12 +91,11 @@ where
     ///
     /// ```
     /// # use actify::Handle;
-    /// # use tokio;
-    /// # #[tokio::test]
-    /// # async fn set_ok_actor() {
+    /// # #[tokio::main]
+    /// # async fn main() {
     /// let handle = Handle::new(None);
-    /// handle.set(Some(1)).await.unwrap();
-    /// assert_eq!(handle.get().await.unwrap(), Some(1));
+    /// handle.set_if_changed(Some(1)).await;
+    /// assert_eq!(handle.get().await, Some(1));
     /// # }
     /// ```
     pub async fn set_if_changed(&self, val: T) {
@@ -154,12 +153,11 @@ where
     ///
     /// ```
     /// # use actify::Handle;
-    /// # use tokio;
-    /// # #[tokio::test]
-    /// # async fn get_ok_actor() {
+    /// # #[tokio::main]
+    /// # async fn main() {
     /// let handle = Handle::new(1);
     /// let result = handle.get().await;
-    /// assert_eq!(result.unwrap(), 1);
+    /// assert_eq!(result, 1);
     /// # }
     /// ```
     pub async fn get(&self) -> T {
@@ -180,12 +178,11 @@ where
     ///
     /// ```
     /// # use actify::Handle;
-    /// # use tokio;
-    /// # #[tokio::test]
-    /// # async fn set_ok_actor() {
+    /// # #[tokio::main]
+    /// # async fn main() {
     /// let handle = Handle::new(None);
-    /// handle.set(Some(1)).await.unwrap();
-    /// assert_eq!(handle.get().await.unwrap(), Some(1));
+    /// handle.set(Some(1)).await;
+    /// assert_eq!(handle.get().await, Some(1));
     /// # }
     /// ```
     pub async fn set(&self, val: T) {
@@ -208,12 +205,11 @@ where
     ///
     /// ```
     /// # use actify::Handle;
-    /// # use tokio;
-    /// # #[tokio::test]
-    /// # async fn receive_val_broadcast() {
+    /// # #[tokio::main]
+    /// # async fn main() {
     /// let handle = Handle::new(None);
     /// let mut rx = handle.subscribe();
-    /// handle.set(Some("testing!")).await.unwrap();
+    /// handle.set(Some("testing!")).await;
     /// assert_eq!(rx.recv().await.unwrap(), Some("testing!"));
     /// # }
     /// ```
@@ -449,13 +445,12 @@ where
     ///
     /// ```
     /// # use actify::Handle;
-    /// # use tokio;
-    /// # #[tokio::test]
-    /// # async fn get_ok_actor() {
+    /// # #[tokio::main]
+    /// # async fn main() {
     /// let handle = Handle::new(1);
     /// let read_handle = handle.get_read_handle();
     /// let result = read_handle.get().await;
-    /// assert_eq!(result.unwrap(), 1);
+    /// assert_eq!(result, 1);
     /// # }
     /// ```
     pub async fn get(&self) -> T {
@@ -486,12 +481,12 @@ where
     ///
     /// ```
     /// # use actify::Handle;
-    /// # use tokio;
-    /// # #[tokio::test]
-    /// # async fn receive_val_broadcast() {
+    /// # #[tokio::main]
+    /// # async fn main() {
     /// let handle = Handle::new(None);
-    /// let mut rx = handle.subscribe();
-    /// handle.set(Some("testing!")).await.unwrap();
+    /// let read_handle = handle.get_read_handle();
+    /// let mut rx = read_handle.subscribe();
+    /// handle.set(Some("testing!")).await;
     /// assert_eq!(rx.recv().await.unwrap(), Some("testing!"));
     /// # }
     /// ```

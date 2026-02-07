@@ -22,22 +22,16 @@ where
     /// # Examples
     ///
     /// ```
-    /// # use tokio;
-    /// # use actify::Handle;
+    /// # use actify::{Handle, HashSetHandle};
     /// # use std::collections::HashSet;
-    /// # #[tokio::test]
-    /// # async fn insert_at_actor() {
+    /// # #[tokio::main]
+    /// # async fn main() {
     /// let handle = Handle::new(HashSet::new());
-    /// let res = handle.insert(10).await.unwrap();
-    /// assert_eq!(res, true);
-    /// # }
+    /// let res = handle.insert(10).await;
+    /// assert!(res);
     ///
-    /// # #[tokio::test]
-    /// # async fn insert_already_exists_at_actor() {
-    /// let handle = actify::Handle::new(std::collections::HashSet::new());
-    /// handle.insert(10).await.unwrap();
-    /// let res = handle.insert(10).await.unwrap();
-    /// assert_eq!(res, false);
+    /// let res = handle.insert(10).await;
+    /// assert!(!res);
     /// # }
     /// ```
     fn insert(&mut self, val: K) -> bool {
@@ -49,13 +43,12 @@ where
     /// # Examples
     ///
     /// ```
-    /// # use tokio;
-    /// # use actify::Handle;
+    /// # use actify::{Handle, HashSetHandle};
     /// # use std::collections::HashSet;
-    /// # #[tokio::test]
-    /// # async fn actor_hash_is_empty() {
+    /// # #[tokio::main]
+    /// # async fn main() {
     /// let handle = Handle::new(HashSet::<i32>::new());
-    /// assert!(handle.is_empty().await.unwrap());
+    /// assert!(handle.is_empty().await);
     /// # }
     /// ```
     fn is_empty(&self) -> bool {
