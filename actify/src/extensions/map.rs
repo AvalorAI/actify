@@ -25,14 +25,13 @@ where
     /// # Examples
     ///
     /// ```
-    /// # use tokio;
-    /// # use actify::Handle;
+    /// # use actify::{Handle, HashMapHandle};
     /// # use std::collections::HashMap;
-    /// # #[tokio::test]
-    /// # async fn get_key_actor() {
+    /// # #[tokio::main]
+    /// # async fn main() {
     /// let handle = Handle::new(HashMap::new());
-    /// handle.insert("test", 10).await.unwrap();
-    /// let res = handle.get_key("test").await.unwrap();
+    /// handle.insert("test", 10).await;
+    /// let res = handle.get_key("test").await;
     /// assert_eq!(res, Some(10));
     /// # }
     /// ```
@@ -48,21 +47,15 @@ where
     /// # Examples
     ///
     /// ```
-    /// # use tokio;
-    /// # use actify::Handle;
+    /// # use actify::{Handle, HashMapHandle};
     /// # use std::collections::HashMap;
-    /// # #[tokio::test]
-    /// # async fn insert_at_actor() {
+    /// # #[tokio::main]
+    /// # async fn main() {
     /// let handle = Handle::new(HashMap::new());
-    /// let res = handle.insert("test", 10).await.unwrap();
+    /// let res = handle.insert("test", 10).await;
     /// assert_eq!(res, None);
-    /// # }
     ///
-    /// # #[tokio::test]
-    /// # async fn insert_overwrite_at_actor() {
-    /// let handle = actify::Handle::new(std::collections::HashMap::new());
-    /// handle.insert("test", 10).await.unwrap();
-    /// let old_value = handle.insert("test", 20).await.unwrap();
+    /// let old_value = handle.insert("test", 20).await;
     /// assert_eq!(old_value, Some(10));
     /// # }
     /// ```
@@ -75,13 +68,12 @@ where
     /// # Examples
     ///
     /// ```
-    /// # use tokio;
-    /// # use actify::Handle;
+    /// # use actify::{Handle, HashMapHandle};
     /// # use std::collections::HashMap;
-    /// # #[tokio::test]
-    /// # async fn actor_hashmap_is_empty() {
+    /// # #[tokio::main]
+    /// # async fn main() {
     /// let handle = Handle::new(HashMap::<&str, i32>::new());
-    /// assert!(handle.is_empty().await.unwrap());
+    /// assert!(handle.is_empty().await);
     /// # }
     /// ```
     fn is_empty(&self) -> bool {
