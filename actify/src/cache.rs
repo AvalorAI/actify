@@ -41,18 +41,65 @@ where
     }
 
     /// Returns if any new updates are received
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use actify::Handle;
+    /// # #[tokio::main]
+    /// # async fn main() {
+    /// let handle = Handle::new(1);
+    /// let cache = handle.create_cache().await;
+    /// assert!(!cache.has_updates());
+    ///
+    /// handle.set(2).await;
+    /// assert!(cache.has_updates());
+    /// # }
+    /// ```
     pub fn has_updates(&self) -> bool {
         !self.rx.is_empty()
     }
 
     /// Returns the newest value available, even if the channel is closed
     /// Note that when the cache is initialized with a default value, this might return the default while the actor has a different value
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use actify::Handle;
+    /// # #[tokio::main]
+    /// # async fn main() {
+    /// let handle = Handle::new(1);
+    /// let mut cache = handle.create_cache_from_default();
+    /// assert_eq!(cache.get_newest(), &0); // Not initialized, returns default
+    ///
+    /// handle.set(2).await;
+    /// handle.set(3).await;
+    /// assert_eq!(cache.get_newest(), &3); // Synchronizes with latest value
+    /// # }
+    /// ```
     pub fn get_newest(&mut self) -> &T {
         _ = self.try_recv_newest(); // Update if possible
         self.get_current()
     }
 
     /// Returns the current value held by the cache, without synchronizing with the actor
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use actify::Handle;
+    /// # #[tokio::main]
+    /// # async fn main() {
+    /// let handle = Handle::new(1);
+    /// let cache = handle.create_cache().await;
+    /// assert_eq!(cache.get_current(), &1);
+    ///
+    /// handle.set(2).await;
+    /// // Still returns the cached value, not the updated actor value
+    /// assert_eq!(cache.get_current(), &1);
+    /// # }
+    /// ```
     pub fn get_current(&self) -> &T {
         &self.inner
     }
@@ -61,6 +108,25 @@ where
     /// The first time it will return its current value immediately
     /// After that, it might wait indefinitely for a new update
     /// Note that when the cache is initialized with a default value, this might return the default while the actor has a different value
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use actify::Handle;
+    /// # #[tokio::main]
+    /// # async fn main() {
+    /// let handle = Handle::new(1);
+    /// let mut cache = handle.create_cache().await;
+    ///
+    /// // First call returns the initialized value immediately
+    /// assert_eq!(cache.recv_newest().await.unwrap(), &1);
+    ///
+    /// handle.set(2).await;
+    /// handle.set(3).await;
+    /// // Skips to newest value, discarding older updates
+    /// assert_eq!(cache.recv_newest().await.unwrap(), &3);
+    /// # }
+    /// ```
     pub async fn recv_newest(&mut self) -> Result<&T, CacheRecvNewestError> {
         // If requesting a value for the first time, it returns immediately
         if self.first_request {
@@ -95,6 +161,25 @@ where
     /// The first time it will return its current value immediately
     /// After that, it might wait indefinitely for a new update
     /// Note that when the cache is initialized with a default value, this might return the default while the actor has a different value
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use actify::Handle;
+    /// # #[tokio::main]
+    /// # async fn main() {
+    /// let handle = Handle::new(1);
+    /// let mut cache = handle.create_cache().await;
+    ///
+    /// // First call returns the initialized value immediately
+    /// assert_eq!(cache.recv().await.unwrap(), &1);
+    ///
+    /// handle.set(2).await;
+    /// handle.set(3).await;
+    /// // Returns oldest update first (FIFO)
+    /// assert_eq!(cache.recv().await.unwrap(), &2);
+    /// # }
+    /// ```
     pub async fn recv(&mut self) -> Result<&T, CacheRecvError> {
         // If requesting a value for the first time, it returns immediately
         if self.first_request {
@@ -117,7 +202,39 @@ where
     /// Try to receive the newest updated value broadcasted by the actor, discarding any older messages.
     /// The first time it will return its initialized value, even if no updates are present.
     /// After that, lacking updates will return None.
-    /// Note that when the cache is initialized with a default value, this might return None while the actor has a value
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use actify::Handle;
+    /// # #[tokio::main]
+    /// # async fn main() {
+    /// let handle = Handle::new(2);
+    /// let mut cache = handle.create_cache().await;
+    ///
+    /// // First call returns the initialized value
+    /// assert_eq!(cache.try_recv_newest().unwrap(), Some(&2));
+    /// // No new updates available
+    /// assert_eq!(cache.try_recv_newest().unwrap(), None);
+    /// # }
+    /// ```
+    ///
+    /// When the cache is created from a default value, the actor's actual value is never
+    /// received unless a broadcast occurs:
+    ///
+    /// ```
+    /// # use actify::Handle;
+    /// # #[tokio::main]
+    /// # async fn main() {
+    /// let handle = Handle::new(5);
+    /// let mut cache = handle.create_cache_from_default();
+    ///
+    /// // Returns the default, not the actor's actual value (5)
+    /// assert_eq!(cache.try_recv_newest().unwrap(), Some(&0));
+    /// // No broadcasts arrived, so None — the actor's value (5) is never seen
+    /// assert_eq!(cache.try_recv_newest().unwrap(), None);
+    /// # }
+    /// ```
     pub fn try_recv_newest(&mut self) -> Result<Option<&T>, CacheRecvNewestError> {
         loop {
             match self.rx.try_recv() {
@@ -155,7 +272,39 @@ where
     /// Try to receive the last updated value broadcasted by the actor once (FIFO).
     /// The first time it will return its initialized value, even if no updates are present.
     /// After that, lacking updates will return None.
-    /// Note that when the cache is initialized with a default value, this might return None while the actor has a value
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use actify::Handle;
+    /// # #[tokio::main]
+    /// # async fn main() {
+    /// let handle = Handle::new(2);
+    /// let mut cache = handle.create_cache().await;
+    ///
+    /// // First call returns the initialized value
+    /// assert_eq!(cache.try_recv().unwrap(), Some(&2));
+    /// // No new updates available
+    /// assert_eq!(cache.try_recv().unwrap(), None);
+    /// # }
+    /// ```
+    ///
+    /// When the cache is created from a default value, the actor's actual value is never
+    /// received unless a broadcast occurs:
+    ///
+    /// ```
+    /// # use actify::Handle;
+    /// # #[tokio::main]
+    /// # async fn main() {
+    /// let handle = Handle::new(5);
+    /// let mut cache = handle.create_cache_from_default();
+    ///
+    /// // Returns the default, not the actor's actual value (5)
+    /// assert_eq!(cache.try_recv().unwrap(), Some(&0));
+    /// // No broadcasts arrived, so None — the actor's value (5) is never seen
+    /// assert_eq!(cache.try_recv().unwrap(), None);
+    /// # }
+    /// ```
     pub fn try_recv(&mut self) -> Result<Option<&T>, CacheRecvError> {
         // If requesting a value for the first time, it returns immediately
         if self.first_request {
@@ -219,44 +368,6 @@ mod tests {
     use tokio::time::{Duration, sleep};
 
     #[tokio::test]
-    async fn test_get_newest() {
-        let handle = Handle::new(1);
-        let mut cache = handle.create_cache_from_default();
-        assert_eq!(cache.get_newest(), &0); // Not initalized, so default although value is set
-        handle.set(2).await;
-        assert_eq!(cache.get_newest(), &2); // The new value is broadcasted and processed
-    }
-
-    #[tokio::test]
-    async fn test_has_updates() {
-        let handle = Handle::new(1);
-        let cache = handle.create_cache().await;
-        assert_eq!(cache.has_updates(), false);
-        handle.set(2).await;
-        assert!(cache.has_updates());
-    }
-
-    #[tokio::test]
-    async fn test_recv_cache() {
-        let handle = Handle::new(1);
-        let mut cache = handle.create_cache().await;
-        assert_eq!(cache.recv().await.unwrap(), &1);
-        handle.set(2).await;
-        handle.set(3).await; // Not returned yet, as returning oldest value first
-        assert_eq!(cache.recv().await.unwrap(), &2)
-    }
-
-    #[tokio::test]
-    async fn test_recv_cache_newest() {
-        let handle = Handle::new(1);
-        let mut cache = handle.create_cache().await;
-        assert_eq!(cache.recv_newest().await.unwrap(), &1);
-        handle.set(2).await;
-        handle.set(3).await;
-        assert_eq!(cache.recv_newest().await.unwrap(), &3)
-    }
-
-    #[tokio::test]
     async fn test_immediate_cache_return() {
         let handle = Handle::new(1);
         let mut cache = handle.create_cache().await;
@@ -290,26 +401,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_try_recv() {
-        let handle = Handle::new(2);
-        let mut cache = handle.create_cache().await;
-        assert_eq!(cache.try_recv().unwrap(), Some(&2));
-        assert!(cache.try_recv().unwrap().is_none())
-    }
-
-    #[tokio::test]
     async fn test_try_recv_default() {
         let handle = Handle::new(2);
         let mut cache = handle.create_cache_from_default();
         assert_eq!(cache.try_recv().unwrap(), Some(&0))
-    }
-
-    #[tokio::test]
-    async fn test_try_recv_newest() {
-        let handle = Handle::new(2);
-        let mut cache = handle.create_cache().await;
-        assert_eq!(cache.try_recv_newest().unwrap(), Some(&2)); // Returns the initialized value directly
-        assert!(cache.try_recv_newest().unwrap().is_none())
     }
 
     #[tokio::test]
