@@ -112,6 +112,32 @@ impl ComplexActorTypes {
     fn with_fn_ptr(&self, f: fn(usize) -> usize, val: usize) -> usize {
         f(val)
     }
+
+    fn with_multi_generic<A, B>(&self, a: A, b: B) -> (A, B)
+    where
+        A: Send + Sync + 'static,
+        B: Send + Sync + 'static,
+    {
+        (a, b)
+    }
+
+    fn with_trait_object(&self, handler: Box<dyn Fn(i32) -> i32 + Send + Sync>) -> i32 {
+        handler(42)
+    }
+
+    async fn async_generic<F>(&self, f: F) -> usize
+    where
+        F: Fn(usize) -> usize + Send + Sync + 'static,
+    {
+        f(42)
+    }
+
+    fn with_const_generic<const N: usize>(&self, arr: [u8; N]) -> usize
+    where
+        [u8; N]: Send + Sync + 'static,
+    {
+        arr.iter().map(|b| *b as usize).sum()
+    }
 }
 
 #[cfg(test)]
@@ -134,6 +160,15 @@ mod tests {
             "hello: 42"
         );
         assert_eq!(handle.with_fn_ptr(|x| x * 2, 21).await, 42);
+        assert_eq!(
+            handle
+                .with_multi_generic(42u32, "hello".to_string())
+                .await,
+            (42u32, "hello".to_string())
+        );
+        assert_eq!(handle.with_trait_object(Box::new(|x| x * 3)).await, 126);
+        assert_eq!(handle.async_generic(|x| x + 8).await, 50);
+        assert_eq!(handle.with_const_generic([1u8, 2, 3, 4]).await, 10);
     }
 
     #[tokio::test]
