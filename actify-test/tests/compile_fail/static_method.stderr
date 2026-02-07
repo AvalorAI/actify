@@ -1,0 +1,5 @@
+error: Static method cannot be actified: the method requires a receiver to the impl type, using either &self or &mut self
+  --> tests/compile_fail/static_method.rs:10:5
+   |
+10 |     fn no_receiver(x: i32) -> i32 {
+   |     ^^
