@@ -271,6 +271,91 @@ impl<T: Send + Sync + 'static, V> Handle<T, V> {
             .await;
         *res.downcast().expect(WRONG_RESPONSE)
     }
+
+    /// Runs a read-only closure on the actor's value and returns the result.
+    ///
+    /// This is useful for reading parts of the actor state without cloning
+    /// the entire value, and works with non-Clone types.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use actify::Handle;
+    /// # #[tokio::main]
+    /// # async fn main() {
+    /// let handle = Handle::new(vec![1, 2, 3]);
+    ///
+    /// // Extract just what you need, without cloning the whole Vec
+    /// let len = handle.with(|v| v.len()).await;
+    /// assert_eq!(len, 3);
+    ///
+    /// let first = handle.with(|v| v.first().copied()).await;
+    /// assert_eq!(first, Some(1));
+    /// # }
+    /// ```
+    pub async fn with<R, F>(&self, f: F) -> R
+    where
+        F: FnOnce(&T) -> R + Send + 'static,
+        R: Send + 'static,
+    {
+        let res = self
+            .send_job(
+                Box::new(|s: &mut Actor<T>, args: Box<dyn std::any::Any + Send>| {
+                    Box::pin(async move {
+                        let f = *args.downcast::<F>().expect(WRONG_RESPONSE);
+                        let result = f(&s.inner);
+                        Box::new(result) as Box<dyn Any + Send>
+                    })
+                }),
+                Box::new(f),
+            )
+            .await;
+        *res.downcast().expect(WRONG_RESPONSE)
+    }
+
+    /// Runs a closure on the actor's value mutably and returns the result.
+    ///
+    /// This is useful for atomic read-modify-return operations without
+    /// defining a dedicated `#[actify]` method.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use actify::Handle;
+    /// # #[tokio::main]
+    /// # async fn main() {
+    /// let handle = Handle::new(vec![1, 2, 3]);
+    /// let mut rx = handle.subscribe();
+    ///
+    /// // Mutate and return a result in one atomic operation
+    /// let popped = handle.with_mut(|v| v.pop()).await;
+    /// assert_eq!(popped, Some(3));
+    /// assert_eq!(handle.get().await, vec![1, 2]);
+    ///
+    /// // The mutation triggered a broadcast
+    /// assert!(rx.try_recv().is_ok());
+    /// # }
+    /// ```
+    pub async fn with_mut<R, F>(&self, f: F) -> R
+    where
+        F: FnOnce(&mut T) -> R + Send + 'static,
+        R: Send + 'static,
+    {
+        let res = self
+            .send_job(
+                Box::new(|s: &mut Actor<T>, args: Box<dyn std::any::Any + Send>| {
+                    Box::pin(async move {
+                        let f = *args.downcast::<F>().expect(WRONG_RESPONSE);
+                        let result = f(&mut s.inner);
+                        s.broadcast(&format!("{}::with_mut", type_name::<T>()));
+                        Box::new(result) as Box<dyn Any + Send>
+                    })
+                }),
+                Box::new(f),
+            )
+            .await;
+        *res.downcast().expect(WRONG_RESPONSE)
+    }
 }
 
 impl<T: Clone + Send + Sync + 'static, V> Handle<T, V> {

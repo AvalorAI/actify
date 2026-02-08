@@ -198,10 +198,12 @@
 //!
 //! Every [`Handle`] provides a set of built-in methods that work without the macro:
 //!
-//! - [`Handle::get`] — returns a clone of the current actor value
-//! - [`Handle::set`] — overwrites the actor value and broadcasts the change
+//! - [`Handle::get`] — returns a clone of the current actor value (does not broadcast)
+//! - [`Handle::set`] — overwrites the actor value and broadcasts the change (broadcasts the change)
 //! - [`Handle::set_if_changed`] — only broadcasts when the new value differs (requires `PartialEq`)
 //! - [`Handle::subscribe`] — returns a [`tokio::sync::broadcast::Receiver`] for change notifications
+//! - [`Handle::with`] — runs a read-only closure on `&T` (does not broadcast)
+//! - [`Handle::with_mut`] — runs a mutable closure on `&mut T` (broadcasts the change)
 //!
 //! # Broadcasting
 //!
