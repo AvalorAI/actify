@@ -266,13 +266,15 @@ mod throttle;
 
 // Reexport for easier reference
 pub use actify_macros::{actify, broadcast, skip_broadcast};
-pub use actor::Actor;
 pub use cache::{Cache, CacheRecvError, CacheRecvNewestError};
 pub use extensions::{
     map::HashMapHandle, option::OptionHandle, set::HashSetHandle, vec::VecHandle,
 };
 pub use handle::{BroadcastAs, Handle, ReadHandle};
 pub use throttle::{Frequency, Throttle, Throttled};
+
+#[doc(hidden)]
+pub use actor::Actor;
 
 #[cfg(feature = "profiler")]
 pub use actor::{get_broadcast_counts, get_sorted_broadcast_counts};

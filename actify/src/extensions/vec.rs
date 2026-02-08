@@ -1,7 +1,6 @@
 use crate as actify;
 use actify_macros::actify;
 use core::ops::RangeBounds;
-use std::fmt::Debug;
 
 /// An extension trait for `Vec<T>` actors, made available on the [`Handle`](crate::Handle)
 /// as [`VecHandle`](crate::VecHandle).
@@ -19,7 +18,7 @@ trait ActorVec<T> {
 #[actify]
 impl<T> ActorVec<T> for Vec<T>
 where
-    T: Clone + Debug + Send + Sync + 'static,
+    T: Clone + Send + Sync + 'static,
 {
     /// Appends an element to the back of a collection.
     ///

@@ -35,6 +35,7 @@ pub fn get_sorted_broadcast_counts() -> Vec<(String, usize)> {
 ///
 /// You do not create this directly — it is spawned by [`Handle::new`](super::Handle::new).
 /// The `inner` field holds the wrapped value.
+#[doc(hidden)]
 pub struct Actor<T> {
     pub inner: T,
     broadcast_fn: Box<dyn Fn(&T, &str) + Send + Sync>,

@@ -1,6 +1,5 @@
 use crate as actify;
 use actify_macros::actify;
-use std::fmt::Debug;
 
 trait ActorOption<T> {
     fn is_some(&self) -> bool;
@@ -17,7 +16,7 @@ trait ActorOption<T> {
 #[actify]
 impl<T> ActorOption<T> for Option<T>
 where
-    T: Clone + Debug + Send + Sync + 'static,
+    T: Clone + Send + Sync + 'static,
 {
     /// Returns true if the option is a Some value.
     ///

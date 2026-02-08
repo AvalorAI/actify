@@ -1,7 +1,6 @@
 use crate as actify;
 use actify_macros::actify;
 use std::collections::HashMap;
-use std::fmt::Debug;
 use std::hash::Hash;
 
 /// An extension trait for `HashMap<K, V>` actors, made available on the [`Handle`](crate::Handle)
@@ -18,8 +17,8 @@ trait ActorMap<K, V> {
 #[actify]
 impl<K, V> ActorMap<K, V> for HashMap<K, V>
 where
-    K: Clone + Debug + Eq + Hash + Send + Sync + 'static,
-    V: Clone + Debug + Send + Sync + 'static,
+    K: Clone + Eq + Hash + Send + Sync + 'static,
+    V: Clone + Send + Sync + 'static,
 {
     /// Returns a clone of the value corresponding to the key if it exists
     /// It is equivalent to the Hashmap get(), but the method name is changed

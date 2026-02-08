@@ -1,7 +1,6 @@
 use crate as actify;
 use actify_macros::actify;
 use std::collections::HashSet;
-use std::fmt::Debug;
 use std::hash::Hash;
 
 /// An extension trait for `HashSet<K>` actors, made available on the [`Handle`](crate::Handle)
@@ -16,7 +15,7 @@ trait ActorSet<K> {
 #[actify]
 impl<K> ActorSet<K> for HashSet<K>
 where
-    K: Clone + Debug + Eq + Hash + Send + Sync + 'static,
+    K: Clone + Eq + Hash + Send + Sync + 'static,
 {
     /// Adds a value to the set.
     /// Returns whether the value was newly inserted. That is:

@@ -431,6 +431,7 @@ where
 
     /// Spawns a [`Throttle`] that fires given a specified [`Frequency`], given any broadcasted updates by the actor.
     /// Does not first update the cache to the newest value, since then the user of the cache might miss the update.
+    /// See [`Handle::spawn_throttle`](crate::Handle::spawn_throttle) for an example.
     pub fn spawn_throttle<C, F>(&self, client: C, call: fn(&C, F), freq: Frequency)
     where
         C: Send + Sync + 'static,
