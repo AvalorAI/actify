@@ -1,43 +1,15 @@
-use futures::future::BoxFuture;
-use std::any::{Any, type_name};
+use std::any::Any;
+use std::any::type_name;
 use std::fmt::{self, Debug};
 use tokio::sync::{broadcast, mpsc, oneshot};
 
+use super::read_handle::ReadHandle;
+use crate::actor::{Actor, ActorMethod, Job, serve};
 use crate::throttle::Throttle;
 use crate::{Cache, Frequency, Throttled};
 
 const CHANNEL_SIZE: usize = 100;
-const WRONG_ARGS: &str = "Incorrect arguments have been provided for this method";
 const WRONG_RESPONSE: &str = "An incorrect response type for this method has been called";
-
-#[cfg(feature = "profiler")]
-use lazy_static::lazy_static;
-#[cfg(feature = "profiler")]
-use std::collections::HashMap;
-#[cfg(feature = "profiler")]
-use std::sync::Mutex;
-
-#[cfg(feature = "profiler")]
-lazy_static! {
-    static ref BROADCAST_COUNTS: Mutex<HashMap<String, usize>> = Mutex::new(HashMap::new());
-}
-
-#[cfg(feature = "profiler")]
-/// Returns a HashMap of all broadcast counts per method
-pub fn get_broadcast_counts() -> HashMap<String, usize> {
-    BROADCAST_COUNTS
-        .lock()
-        .map(|c| c.clone())
-        .unwrap_or_default()
-}
-
-#[cfg(feature = "profiler")]
-/// Returns a sorted Vec of all broadcast counts per method
-pub fn get_sorted_broadcast_counts() -> Vec<(String, usize)> {
-    let mut v: Vec<_> = get_broadcast_counts().into_iter().collect();
-    v.sort_by(|a, b| b.1.cmp(&a.1));
-    v
-}
 
 /// Defines how to convert an actor's value to its broadcast type.
 ///
@@ -88,8 +60,8 @@ impl<T: Clone> BroadcastAs<T> for T {
 /// type, implement [`BroadcastAs<V>`] and specify `V` explicitly
 /// (e.g. `Handle::<MyType, Summary>::new(val)`).
 pub struct Handle<T, V = T> {
-    tx: mpsc::Sender<Job<T>>,
-    broadcast_sender: broadcast::Sender<V>,
+    pub(super) tx: mpsc::Sender<Job<T>>,
+    pub(super) broadcast_sender: broadcast::Sender<V>,
 }
 
 impl<T, V> Clone for Handle<T, V> {
@@ -203,7 +175,7 @@ impl<T, V> Handle<T, V> {
 
     /// Returns a [`ReadHandle`] that provides read-only access to this actor.
     pub fn get_read_handle(&self) -> ReadHandle<T, V> {
-        ReadHandle(self.clone())
+        ReadHandle::new(self.clone())
     }
 }
 
@@ -355,168 +327,6 @@ where
     }
 }
 
-/// The internal actor wrapper that runs in a separate task.
-///
-/// You do not create this directly — it is spawned by [`Handle::new`].
-/// The `inner` field holds the wrapped value.
-pub struct Actor<T> {
-    pub inner: T,
-    broadcast_fn: Box<dyn Fn(&T, &str) + Send + Sync>,
-}
-
-impl<T: Debug> Debug for Actor<T> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Actor").field("inner", &self.inner).finish()
-    }
-}
-
-impl<T> Actor<T> {
-    fn new(broadcast_fn: Box<dyn Fn(&T, &str) + Send + Sync>, inner: T) -> Self {
-        Self {
-            inner,
-            broadcast_fn,
-        }
-    }
-
-    pub fn broadcast(&self, method: &str) {
-        #[cfg(feature = "profiler")]
-        {
-            if let Ok(mut counts) = BROADCAST_COUNTS.lock() {
-                *counts.entry(method.to_string()).or_insert(0) += 1;
-            }
-        }
-
-        (self.broadcast_fn)(&self.inner, method);
-    }
-}
-
-impl<T: Clone + Send + 'static> Actor<T> {
-    async fn get(&mut self, _args: Box<dyn Any + Send>) -> Box<dyn Any + Send> {
-        Box::new(self.inner.clone())
-    }
-}
-
-impl<T: Send + 'static> Actor<T> {
-    async fn set(&mut self, args: Box<dyn Any + Send>) -> Box<dyn Any + Send> {
-        self.inner = *args.downcast().expect(WRONG_ARGS);
-        self.broadcast(&format!("{}::set", type_name::<T>()));
-        Box::new(())
-    }
-}
-
-impl<T: Send + PartialEq + 'static> Actor<T> {
-    async fn set_if_changed(&mut self, args: Box<dyn Any + Send>) -> Box<dyn Any + Send> {
-        let new_value: T = *args.downcast().expect(WRONG_ARGS);
-        if self.inner != new_value {
-            self.inner = new_value;
-            self.broadcast(&format!("{}::set", type_name::<T>()));
-        }
-        Box::new(())
-    }
-}
-
-type ActorMethod<T> = Box<
-    dyn FnMut(&mut Actor<T>, Box<dyn Any + Send>) -> BoxFuture<Box<dyn Any + Send>> + Send + Sync,
->;
-
-struct Job<T> {
-    call: ActorMethod<T>,
-    args: Box<dyn Any + Send>,
-    respond_to: oneshot::Sender<Box<dyn Any + Send>>,
-}
-
-async fn serve<T: Send + Sync + 'static>(mut rx: mpsc::Receiver<Job<T>>, mut actor: Actor<T>) {
-    while let Some(mut job) = rx.recv().await {
-        let res = (*job.call)(&mut actor, job.args).await;
-        if job.respond_to.send(res).is_err() {
-            log::debug!(
-                "Actor of type {} failed to respond as the receiver is dropped",
-                type_name::<T>()
-            );
-        }
-    }
-    log::debug!("Actor of type {} terminated", type_name::<T>());
-}
-
-/// A clonable read-only handle that can only be used to read the internal value.
-///
-/// Obtained via [`Handle::get_read_handle`]. Supports [`ReadHandle::get`],
-/// [`ReadHandle::subscribe`], and [`ReadHandle::create_cache`].
-pub struct ReadHandle<T, V = T>(Handle<T, V>);
-
-impl<T, V> Clone for ReadHandle<T, V> {
-    fn clone(&self) -> Self {
-        ReadHandle(self.0.clone())
-    }
-}
-
-impl<T, V> Debug for ReadHandle<T, V> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "ReadHandle<{}>", type_name::<T>())
-    }
-}
-
-impl<T, V> ReadHandle<T, V> {
-    /// Returns a [`tokio::sync::broadcast::Receiver`] that receives all broadcasted values.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// # use actify::Handle;
-    /// # #[tokio::main]
-    /// # async fn main() {
-    /// let handle = Handle::new(None);
-    /// let read_handle = handle.get_read_handle();
-    /// let mut rx = read_handle.subscribe();
-    /// handle.set(Some("testing!")).await;
-    /// assert_eq!(rx.recv().await.unwrap(), Some("testing!"));
-    /// # }
-    /// ```
-    pub fn subscribe(&self) -> broadcast::Receiver<V> {
-        self.0.subscribe()
-    }
-}
-
-impl<T: Clone + Send + Sync + 'static, V> ReadHandle<T, V> {
-    /// Receives a clone of the current value of the actor.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// # use actify::Handle;
-    /// # #[tokio::main]
-    /// # async fn main() {
-    /// let handle = Handle::new(1);
-    /// let read_handle = handle.get_read_handle();
-    /// let result = read_handle.get().await;
-    /// assert_eq!(result, 1);
-    /// # }
-    /// ```
-    pub async fn get(&self) -> T {
-        self.0.get().await
-    }
-}
-
-impl<T, V: Default + Clone + Send + Sync + 'static> ReadHandle<T, V> {
-    /// Creates a [`Cache`] initialized with `V::default()` that locally synchronizes
-    /// with broadcasted updates from the actor.
-    pub fn create_cache_from_default(&self) -> Cache<V> {
-        self.0.create_cache_from_default()
-    }
-}
-
-impl<T, V> ReadHandle<T, V>
-where
-    T: Clone + BroadcastAs<V> + Send + Sync + 'static,
-    V: Clone + Send + Sync + 'static,
-{
-    /// Creates an initialized [`Cache`] that locally synchronizes with the remote actor.
-    /// As it is initialized with the current value, any updates before construction are included.
-    pub async fn create_cache(&self) -> Cache<V> {
-        self.0.create_cache().await
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -537,16 +347,6 @@ mod tests {
         fn panic(&self) {
             panic!()
         }
-    }
-
-    #[tokio::test]
-    async fn test_read_handle() {
-        let handle = Handle::new(1);
-        let read_handle = handle.get_read_handle();
-        assert_eq!(read_handle.get().await, 1);
-
-        handle.set(2).await;
-        assert_eq!(read_handle.get().await, 2);
     }
 
     #[derive(Debug)]
