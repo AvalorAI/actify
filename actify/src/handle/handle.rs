@@ -57,12 +57,10 @@ where
     V: Clone + Send + Sync + 'static,
 {
     Box::new(move |inner: &T, method: &str| {
-        if sender.receiver_count() > 0 {
-            if let Err(_) = sender.send(inner.to_broadcast()) {
-                log::debug!(
-                    "Failed to broadcast update for {method:?} because there are no active receivers"
-                );
-            }
+        if sender.send(inner.to_broadcast()).is_err() {
+            log::trace!("No active receivers for broadcast on {method:?}");
+        } else {
+            log::trace!("Broadcasted new value on {method:?}");
         }
     })
 }
@@ -134,7 +132,10 @@ where
     pub fn new(val: T) -> Handle<T, V> {
         let (tx, rx) = mpsc::channel(CHANNEL_SIZE);
         let (broadcast_tx, _) = broadcast::channel::<V>(CHANNEL_SIZE);
-        tokio::spawn(serve(rx, Actor::new(make_broadcast_fn(broadcast_tx.clone()), val)));
+        tokio::spawn(serve(
+            rx,
+            Actor::new(make_broadcast_fn(broadcast_tx.clone()), val),
+        ));
         Handle {
             tx,
             broadcast_sender: broadcast_tx,

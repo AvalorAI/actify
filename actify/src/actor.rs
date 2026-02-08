@@ -6,16 +6,13 @@ use tokio::sync::{mpsc, oneshot};
 const WRONG_ARGS: &str = "Incorrect arguments have been provided for this method";
 
 #[cfg(feature = "profiler")]
-use lazy_static::lazy_static;
-#[cfg(feature = "profiler")]
 use std::collections::HashMap;
 #[cfg(feature = "profiler")]
-use std::sync::Mutex;
+use std::sync::{LazyLock, Mutex};
 
 #[cfg(feature = "profiler")]
-lazy_static! {
-    static ref BROADCAST_COUNTS: Mutex<HashMap<String, usize>> = Mutex::new(HashMap::new());
-}
+static BROADCAST_COUNTS: LazyLock<Mutex<HashMap<String, usize>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
 
 #[cfg(feature = "profiler")]
 /// Returns a HashMap of all broadcast counts per method

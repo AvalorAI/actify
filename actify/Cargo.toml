@@ -16,7 +16,6 @@ tokio = { version = "1.44.1", features = ["full"] }
 log = "0.4"
 futures = "0.3.26"
 actify-macros = { path = "../actify-macros", version = "0.3.5" }
-lazy_static = "1.4.0"
 
 [features]
 default = []
