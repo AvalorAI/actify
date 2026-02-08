@@ -40,6 +40,27 @@ where
     }
 }
 
+/// An example struct for the macro tests
+#[allow(dead_code)]
+#[derive(Clone, Debug)]
+struct SomeStruct {
+    inner_bool: bool,
+}
+
+#[actify]
+impl SomeStruct {
+    fn set_true(&mut self) {
+        self.inner_bool = true
+    }
+}
+
+#[actify(name = "SomeStructGetters", skip_broadcast)]
+impl SomeStruct {
+    fn get_inner(&self) -> bool {
+        self.inner_bool
+    }
+}
+
 #[allow(dead_code)]
 /// Example Extension trait
 trait TestExt<T> {
@@ -224,6 +245,13 @@ mod tests {
     use actify::{Handle, VecHandle};
     use std::time::Duration;
     use tokio::time::sleep;
+
+    #[tokio::test]
+    async fn test_custom_trait_name() {
+        let handle = Handle::new(SomeStruct { inner_bool: false });
+        SomeStructHandle::set_true(&handle).await;
+        assert!(SomeStructGetters::get_inner(&handle).await);
+    }
 
     // NOTE: "should not compile" tests live in tests/compile_fail/ and are run via trybuild.
     // A compile_error! from the macro fires at compile time, so it cannot be tested inline.

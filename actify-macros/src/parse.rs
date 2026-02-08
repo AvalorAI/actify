@@ -33,14 +33,24 @@ impl ImplInfo {
     pub fn from_impl_block(
         impl_block: &mut ItemImpl,
         skip_all_broadcasts: bool,
+        custom_name: Option<String>,
     ) -> Result<ImplInfo, proc_macro2::TokenStream> {
         let type_ident = get_impl_type_ident(&impl_block.self_ty)?;
 
         // Ensure the where clause always exists so we can unwrap safely
         impl_block.generics.make_where_clause();
 
-        let actor_trait_ident = Ident::new(&format!("{}Actor", type_ident), Span::call_site());
-        let handle_trait_ident = Ident::new(&format!("{}Handle", type_ident), Span::call_site());
+        let (handle_trait_ident, actor_trait_ident) = if let Some(name) = custom_name {
+            (
+                Ident::new(&name, Span::call_site()),
+                Ident::new(&format!("{name}Actor"), Span::call_site()),
+            )
+        } else {
+            (
+                Ident::new(&format!("{type_ident}Handle"), Span::call_site()),
+                Ident::new(&format!("{type_ident}Actor"), Span::call_site()),
+            )
+        };
 
         let trait_path = impl_block.trait_.as_ref().map(|(_, path, _)| path.clone());
 
