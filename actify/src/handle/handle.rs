@@ -49,6 +49,24 @@ impl<T: Clone> BroadcastAs<T> for T {
     }
 }
 
+/// Creates the broadcast function that the [`Actor`] calls after each `&mut self` method.
+/// Converts the actor value to `V` via [`BroadcastAs`] and sends it to all subscribers.
+fn make_broadcast_fn<T, V>(sender: broadcast::Sender<V>) -> Box<dyn Fn(&T, &str) + Send + Sync>
+where
+    T: BroadcastAs<V>,
+    V: Clone + Send + Sync + 'static,
+{
+    Box::new(move |inner: &T, method: &str| {
+        if sender.receiver_count() > 0 {
+            if let Err(_) = sender.send(inner.to_broadcast()) {
+                log::debug!(
+                    "Failed to broadcast update for {method:?} because there are no active receivers"
+                );
+            }
+        }
+    })
+}
+
 /// A clonable handle that can be used to remotely execute a closure on the corresponding [`Actor`].
 ///
 /// Handles are the primary way to interact with actors. Clone them freely to share
@@ -116,19 +134,7 @@ where
     pub fn new(val: T) -> Handle<T, V> {
         let (tx, rx) = mpsc::channel(CHANNEL_SIZE);
         let (broadcast_tx, _) = broadcast::channel::<V>(CHANNEL_SIZE);
-        let sender = broadcast_tx.clone();
-        let broadcast_fn: Box<dyn Fn(&T, &str) + Send + Sync> = Box::new(
-            move |inner: &T, method: &str| {
-                if sender.receiver_count() > 0 {
-                    if let Err(_) = sender.send(inner.to_broadcast()) {
-                        log::debug!(
-                            "Failed to broadcast update for {method:?} because there are no active receivers"
-                        );
-                    }
-                }
-            },
-        );
-        tokio::spawn(serve(rx, Actor::new(broadcast_fn, val)));
+        tokio::spawn(serve(rx, Actor::new(make_broadcast_fn(broadcast_tx.clone()), val)));
         Handle {
             tx,
             broadcast_sender: broadcast_tx,
