@@ -42,17 +42,31 @@ pub fn get_sorted_broadcast_counts() -> Vec<(String, usize)> {
     counts_vec
 }
 
+// ------- Handle ------- //
+
 /// A clonable handle that can be used to remotely execute a closure on the corresponding [`Actor`].
 ///
 /// Handles are the primary way to interact with actors. Clone them freely to share
 /// access across tasks. For read-only access, see [`ReadHandle`]. For local
 /// synchronization, see [`Cache`]. For rate-limited updates, see [`Throttle`].
-#[derive(Clone)]
+///
+/// Use [`Handle::new`] for types that implement `Clone` (enables broadcasting, `get`, `set`,
+/// `subscribe`, and caching). Use [`Handle::new_basic`] for types that only
+/// implement `Send + Sync + 'static` (user-defined methods work, but no broadcasting).
 pub struct Handle<T> {
     tx: mpsc::Sender<Job<T>>,
+    // broadcast::Sender<T> doesn't require T: Clone — only channel() does.
+    // None when created via Handle::new_basic() for non-Clone types.
+    broadcast_sender: Option<broadcast::Sender<T>>,
+}
 
-    // The handle holds a clone of the broadcast transmitter from the actor for easy subscription
-    _broadcast: broadcast::Sender<T>,
+impl<T> Clone for Handle<T> {
+    fn clone(&self) -> Self {
+        Handle {
+            tx: self.tx.clone(),
+            broadcast_sender: self.broadcast_sender.clone(),
+        }
+    }
 }
 
 impl<T> Debug for Handle<T> {
@@ -71,6 +85,75 @@ where
     }
 }
 
+// ------- Methods available for all T ------- //
+
+impl<T> Handle<T>
+where
+    T: Send + Sync + 'static,
+{
+    /// Creates a new [`Handle`] without broadcast support.
+    ///
+    /// This allows using types that do not implement `Clone` as actors.
+    /// User-defined methods (via `#[actify]`) work normally, but built-in methods
+    /// like [`Handle::get`], [`Handle::set`], [`Handle::subscribe`], and
+    /// [`Handle::create_cache`] are not available.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use actify::Handle;
+    /// # #[tokio::main]
+    /// # async fn main() {
+    /// let handle = Handle::new_basic(42_i32);
+    /// # }
+    /// ```
+    pub fn new_basic(val: T) -> Handle<T> {
+        let (tx, rx) = mpsc::channel(CHANNEL_SIZE);
+        let broadcast_fn: Box<dyn Fn(&T, &str) + Send + Sync> = Box::new(|_, _| {});
+        let actor = Actor::new(broadcast_fn, val);
+        let listener = Listener::new(rx, actor);
+        tokio::spawn(Listener::serve(listener));
+        Handle {
+            tx,
+            broadcast_sender: None,
+        }
+    }
+
+    /// Returns the current capacity of the channel
+    pub fn capacity(&self) -> usize {
+        self.tx.capacity()
+    }
+
+    pub async fn send_job(
+        &self,
+        call: ActorMethod<T>,
+        args: Box<dyn Any + Send>,
+    ) -> Box<dyn Any + Send> {
+        let (respond_to, get_result) = oneshot::channel();
+        let job = Job {
+            call,
+            args,
+            respond_to,
+        };
+
+        // If the receive half of the channel is closed, either due to close being called or the Receiver handle dropping, tokio mpsc send returns an error.
+        // However, the actor will only close if:
+        // 1) there are no handles (which is impossible given this method is executed from a handle itself)
+        // 2) the actor tried to execute a method which panicked. Then a send panic is deemed acceptable.
+        // 3) if the thread of the actor was already closed because the runtime is exiting, but the thread of the handle is not yet closed.
+        //    This is not harmful, but results in a panic.
+        self.tx
+            .send(job)
+            .await
+            .expect("A panic occured in the Actor");
+
+        // The receiver for the result will only return an error if the response sender is dropped. Again, this is only possible if a panic occured
+        get_result.await.expect("A panic occured in the Actor")
+    }
+}
+
+// ------- Methods that require Clone ------- //
+
 impl<T> Handle<T>
 where
     T: Clone + Send + Sync + 'static + Default,
@@ -82,7 +165,7 @@ where
     ///
     /// See also [`Handle::create_cache`] for a cache initialized with the current actor value.
     pub fn create_cache_from_default(&self) -> Cache<T> {
-        Cache::new(self._broadcast.subscribe(), T::default())
+        Cache::new(self.subscribe(), T::default())
     }
 }
 
@@ -127,7 +210,7 @@ where
     pub fn get_read_handle(&self) -> ReadHandle<T> {
         ReadHandle {
             tx: self.tx.clone(),
-            _broadcast: self._broadcast.clone(),
+            broadcast_sender: self.broadcast_sender.clone(),
         }
     }
 
@@ -138,12 +221,7 @@ where
     /// See also [`Handle::create_cache_from_default`] for a cache that starts from `T::default()`.
     pub async fn create_cache(&self) -> Cache<T> {
         let init = self.get().await;
-        Cache::new(self._broadcast.subscribe(), init)
-    }
-
-    /// Returns the current capacity of the channel
-    pub fn capacity(&self) -> usize {
-        self.tx.capacity()
+        Cache::new(self.subscribe(), init)
     }
 
     /// Spawns a [`Throttle`] that fires given a specified [`Frequency`], given any broadcasted updates by the actor.
@@ -227,19 +305,38 @@ where
     /// # }
     /// ```
     pub fn subscribe(&self) -> broadcast::Receiver<T> {
-        self._broadcast.subscribe()
+        self.broadcast_sender
+            .as_ref()
+            .expect("subscribe() requires a Handle created with Handle::new()")
+            .subscribe()
     }
 
     /// Creates a new [`Handle`] and spawns the corresponding [`Actor`].
+    ///
+    /// This requires `T: Clone` because it enables broadcasting state changes
+    /// to subscribers. For non-Clone types, use [`Handle::new_basic`].
     pub fn new(val: T) -> Handle<T> {
         let (tx, rx) = mpsc::channel(CHANNEL_SIZE);
-        let (broadcast, _) = broadcast::channel(CHANNEL_SIZE);
-        let actor = Actor::new(broadcast.clone(), val);
+        let (broadcast_tx, _) = broadcast::channel(CHANNEL_SIZE);
+        let sender_for_broadcast = broadcast_tx.clone();
+        let broadcast_fn: Box<dyn Fn(&T, &str) + Send + Sync> = Box::new(
+            move |inner: &T, method: &str| {
+                // A broadcast error is not propagated, as otherwise a succesful call could produce an independent broadcast error
+                if sender_for_broadcast.receiver_count() > 0 {
+                    if let Err(_) = sender_for_broadcast.send(inner.clone()) {
+                        log::debug!(
+                            "Failed to broadcast update for {method:?} because there are no active receivers"
+                        );
+                    }
+                }
+            },
+        );
+        let actor = Actor::new(broadcast_fn, val);
         let listener = Listener::new(rx, actor);
         tokio::spawn(Listener::serve(listener));
         Handle {
             tx,
-            _broadcast: broadcast,
+            broadcast_sender: Some(broadcast_tx),
         }
     }
 
@@ -256,34 +353,9 @@ where
         Throttle::spawn_from_receiver(client, call, freq, receiver, Some(val));
         handle
     }
-
-    pub async fn send_job(
-        &self,
-        call: ActorMethod<T>,
-        args: Box<dyn Any + Send>,
-    ) -> Box<dyn Any + Send> {
-        let (respond_to, get_result) = oneshot::channel();
-        let job = Job {
-            call,
-            args,
-            respond_to,
-        };
-
-        // If the receive half of the channel is closed, either due to close being called or the Receiver handle dropping, tokio mpsc send returns an error.
-        // However, the actor will only close if:
-        // 1) there are no handles (which is impossible given this method is executed from a handle itself)
-        // 2) the actor tried to execute a method which panicked. Then a send panic is deemed acceptable.
-        // 3) if the thread of the actor was already closed because the runtime is exiting, but the thread of the handle is not yet closed.
-        //    This is not harmful, but results in a panic.
-        self.tx
-            .send(job)
-            .await
-            .expect("A panic occured in the Actor");
-
-        // The receiver for the result will only return an error if the response sender is dropped. Again, this is only possible if a panic occured
-        get_result.await.expect("A panic occured in the Actor")
-    }
 }
+
+// ------- Actor: set_if_changed ------- //
 
 impl<T> Actor<T>
 where
@@ -302,18 +374,28 @@ where
     }
 }
 
-#[derive(Debug)]
+// ------- Listener ------- //
+
 struct Listener<T>
 where
-    T: Clone + Send + Sync + 'static,
+    T: Send + Sync + 'static,
 {
     rx: mpsc::Receiver<Job<T>>,
     actor: Actor<T>,
 }
 
+impl<T: Debug + Send + Sync + 'static> Debug for Listener<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Listener")
+            .field("rx", &self.rx)
+            .field("actor", &self.actor)
+            .finish()
+    }
+}
+
 impl<T> Listener<T>
 where
-    T: Clone + Send + Sync + 'static,
+    T: Send + Sync + 'static,
 {
     fn new(rx: mpsc::Receiver<Job<T>>, actor: Actor<T>) -> Self {
         Self { rx, actor }
@@ -336,35 +418,30 @@ where
     }
 }
 
+// ------- The remote actor that runs in a separate task ------- //
+
 /// The internal actor wrapper that runs in a separate task.
 ///
-/// You do not create this directly — it is spawned by [`Handle::new`].
-/// The `inner` field holds the wrapped value and `broadcast` is used to
-/// notify subscribers of state changes.
-#[derive(Debug)]
+/// You do not create this directly — it is spawned by [`Handle::new`] or
+/// [`Handle::new_basic`]. The `inner` field holds the wrapped value.
 pub struct Actor<T> {
     pub inner: T,
-    pub broadcast: broadcast::Sender<T>,
+    broadcast_fn: Box<dyn Fn(&T, &str) + Send + Sync>,
 }
 
-impl<T> Actor<T>
-where
-    T: Clone + Send + 'static,
-{
-    fn new(broadcast: broadcast::Sender<T>, inner: T) -> Self {
-        Self { inner, broadcast }
+impl<T: Debug> Debug for Actor<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Actor").field("inner", &self.inner).finish()
     }
+}
 
-    async fn get(&mut self, _args: Box<dyn Any + Send>) -> Box<dyn Any + Send> {
-        Box::new(self.inner.clone())
-    }
-
-    async fn set(&mut self, args: Box<dyn Any + Send>) -> Box<dyn Any + Send> {
-        self.inner = *args.downcast().expect(WRONG_ARGS);
-        let type_name = format!("{}::set", std::any::type_name::<T>());
-
-        self.broadcast(&type_name);
-        Box::new(())
+// Methods available for all T — no Clone bound
+impl<T> Actor<T> {
+    fn new(broadcast_fn: Box<dyn Fn(&T, &str) + Send + Sync>, inner: T) -> Self {
+        Self {
+            inner,
+            broadcast_fn,
+        }
     }
 
     pub fn broadcast(&self, method: &str) {
@@ -375,14 +452,25 @@ where
             }
         }
 
-        // A broadcast error is not propagated, as otherwise a succesful call could produce an independent broadcast error
-        if self.broadcast.receiver_count() > 0 {
-            if let Err(_) = self.broadcast.send(self.inner.clone()) {
-                log::debug!(
-                    "Failed to broadcast update for {method:?} because there are no active receivers"
-                );
-            }
-        }
+        (self.broadcast_fn)(&self.inner, method);
+    }
+}
+
+// Methods that require Clone
+impl<T> Actor<T>
+where
+    T: Clone + Send + 'static,
+{
+    async fn get(&mut self, _args: Box<dyn Any + Send>) -> Box<dyn Any + Send> {
+        Box::new(self.inner.clone())
+    }
+
+    async fn set(&mut self, args: Box<dyn Any + Send>) -> Box<dyn Any + Send> {
+        self.inner = *args.downcast().expect(WRONG_ARGS);
+        let type_name = format!("{}::set", std::any::type_name::<T>());
+
+        self.broadcast(&type_name);
+        Box::new(())
     }
 }
 
@@ -416,12 +504,18 @@ type ActorMethod<T> = Box<
 /// to the actor's value, but requires an async context instead of mutability.
 /// Supports [`ReadHandle::get`], [`ReadHandle::subscribe`], and
 /// [`ReadHandle::create_cache`].
-#[derive(Clone)]
 pub struct ReadHandle<T> {
     tx: mpsc::Sender<Job<T>>,
+    broadcast_sender: Option<broadcast::Sender<T>>,
+}
 
-    // The handle holds a clone of the broadcast transmitter from the actor for easy subscription
-    _broadcast: broadcast::Sender<T>,
+impl<T> Clone for ReadHandle<T> {
+    fn clone(&self) -> Self {
+        ReadHandle {
+            tx: self.tx.clone(),
+            broadcast_sender: self.broadcast_sender.clone(),
+        }
+    }
 }
 
 impl<T> Debug for ReadHandle<T> {
@@ -446,18 +540,11 @@ where
             respond_to,
         };
 
-        // If the receive half of the channel is closed, either due to close being called or the Receiver handle dropping, tokio mpsc send returns an error.
-        // However, the actor will only close if:
-        // 1) there are no handles (which is impossible given this method is executed from a handle itself)
-        // 2) the actor tried to execute a method which panicked. Then a send panic is deemed acceptable.
-        // 3) if the thread of the actor was already closed because the runtime is exiting, but the thread of the handle is not yet closed.
-        //    This is not harmful, but results in a panic.
         self.tx
             .send(job)
             .await
             .expect("A panic occured in the Actor");
 
-        // The receiver for the result will only return an error if the response sender is dropped. Again, this is only possible if a panic occured
         get_result.await.expect("A panic occured in the Actor")
     }
 
@@ -494,7 +581,7 @@ where
     /// See also [`ReadHandle::create_cache_from_default`] for a cache that starts from `T::default()`.
     pub async fn create_cache(&self) -> Cache<T> {
         let init = self.get().await;
-        Cache::new(self._broadcast.subscribe(), init)
+        Cache::new(self.subscribe(), init)
     }
 
     /// Returns a [`tokio::sync::broadcast::Receiver`] that receives all updated values from the actor.
@@ -515,7 +602,10 @@ where
     /// # }
     /// ```
     pub fn subscribe(&self) -> broadcast::Receiver<T> {
-        self._broadcast.subscribe()
+        self.broadcast_sender
+            .as_ref()
+            .expect("subscribe() requires a Handle created with Handle::new()")
+            .subscribe()
     }
 }
 
@@ -530,7 +620,7 @@ where
     ///
     /// See also [`ReadHandle::create_cache`] for a cache initialized with the current actor value.
     pub fn create_cache_from_default(&self) -> Cache<T> {
-        Cache::new(self._broadcast.subscribe(), T::default())
+        Cache::new(self.subscribe(), T::default())
     }
 }
 
@@ -564,5 +654,35 @@ mod tests {
 
         handle.set(2).await;
         assert_eq!(read_handle.get().await, 2);
+    }
+
+    // Test that non-Clone types can be used as actors
+    #[derive(Debug)]
+    struct NonCloneActor {
+        value: i32,
+    }
+
+    #[actify_macros::actify]
+    impl NonCloneActor {
+        fn get_value(&self) -> i32 {
+            self.value
+        }
+
+        fn set_value(&mut self, val: i32) {
+            self.value = val;
+        }
+    }
+
+    #[tokio::test]
+    async fn test_non_clone_actor() {
+        let handle = Handle::new_basic(NonCloneActor { value: 42 });
+        assert_eq!(handle.get_value().await, 42);
+
+        handle.set_value(100).await;
+        assert_eq!(handle.get_value().await, 100);
+
+        // Cloning the handle works even for non-Clone inner types
+        let handle2 = handle.clone();
+        assert_eq!(handle2.get_value().await, 100);
     }
 }

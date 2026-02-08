@@ -250,6 +250,13 @@
 //! - [`VecHandle`] — `push`, `is_empty`, `drain` for `Handle<Vec<T>>`
 //! - [`HashMapHandle`] — `get_key`, `insert`, `is_empty` for `Handle<HashMap<K, V>>`
 //! - [`HashSetHandle`] — `insert`, `is_empty` for `Handle<HashSet<K>>`
+//!
+//! # Non-Clone types
+//!
+//! Most features (broadcasting, [`Cache`], [`Throttle`], [`Handle::get`], [`Handle::set`])
+//! require `T: Clone`. If your actor type does not implement `Clone`, use
+//! [`Handle::new_basic`] instead of [`Handle::new`]. Your `#[actify]` methods
+//! will work normally — only the built-in broadcast-dependent features are unavailable.
 
 mod actors;
 mod cache;
