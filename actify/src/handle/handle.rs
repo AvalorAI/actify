@@ -217,6 +217,33 @@ impl<T: Send + Sync + 'static, V> Handle<T, V> {
         get_result.await.expect("A panic occured in the Actor")
     }
 
+    /// Sends a closure to the actor, handling all boxing/unboxing internally.
+    async fn run<F, A, R>(&self, args: A, f: F) -> R
+    where
+        F: FnOnce(&mut Actor<T>, A) -> R + Send + 'static,
+        A: Send + 'static,
+        R: Send + 'static,
+    {
+        // ActorMethod requires FnMut because Box<dyn FnOnce> can't be called.
+        // We wrap f in Option so we can .take() it out of the FnMut closure.
+        // The unwrap is safe: send_job sends exactly one job, and serve()
+        // calls it exactly once, but the compiler just can't prove that so we need a work-around.
+        let mut f = Some(f);
+        let res = self
+            .send_job(
+                Box::new(move |s: &mut Actor<T>, boxed_args: Box<dyn Any + Send>| {
+                    let f = f.take().unwrap();
+                    Box::pin(async move {
+                        let args = *boxed_args.downcast::<A>().expect(WRONG_RESPONSE);
+                        Box::new(f(s, args)) as Box<dyn Any + Send>
+                    })
+                }),
+                Box::new(args),
+            )
+            .await;
+        *res.downcast::<R>().expect(WRONG_RESPONSE)
+    }
+
     /// Overwrites the inner value of the actor with the new value.
     ///
     /// # Examples
@@ -231,15 +258,11 @@ impl<T: Send + Sync + 'static, V> Handle<T, V> {
     /// # }
     /// ```
     pub async fn set(&self, val: T) {
-        let res = self
-            .send_job(
-                Box::new(|s: &mut Actor<T>, args: Box<dyn std::any::Any + Send>| {
-                    Box::pin(async move { Actor::set(s, args).await })
-                }),
-                Box::new(val),
-            )
-            .await;
-        *res.downcast().expect(WRONG_RESPONSE)
+        self.run(val, |s, val| {
+            s.inner = val;
+            s.broadcast(&format!("{}::set", type_name::<T>()));
+        })
+        .await
     }
 
     /// Overwrites the inner value, but only broadcasts if it actually changed.
@@ -261,15 +284,13 @@ impl<T: Send + Sync + 'static, V> Handle<T, V> {
     where
         T: PartialEq,
     {
-        let res = self
-            .send_job(
-                Box::new(|s: &mut Actor<T>, args: Box<dyn std::any::Any + Send>| {
-                    Box::pin(async move { Actor::set_if_changed(s, args).await })
-                }),
-                Box::new(val),
-            )
-            .await;
-        *res.downcast().expect(WRONG_RESPONSE)
+        self.run(val, |s, val| {
+            if s.inner != val {
+                s.inner = val;
+                s.broadcast(&format!("{}::set", type_name::<T>()));
+            }
+        })
+        .await
     }
 
     /// Runs a read-only closure on the actor's value and returns the result.
@@ -298,19 +319,7 @@ impl<T: Send + Sync + 'static, V> Handle<T, V> {
         F: FnOnce(&T) -> R + Send + 'static,
         R: Send + 'static,
     {
-        let res = self
-            .send_job(
-                Box::new(|s: &mut Actor<T>, args: Box<dyn std::any::Any + Send>| {
-                    Box::pin(async move {
-                        let f = *args.downcast::<F>().expect(WRONG_RESPONSE);
-                        let result = f(&s.inner);
-                        Box::new(result) as Box<dyn Any + Send>
-                    })
-                }),
-                Box::new(f),
-            )
-            .await;
-        *res.downcast().expect(WRONG_RESPONSE)
+        self.run(f, |s, f| f(&s.inner)).await
     }
 
     /// Runs a closure on the actor's value mutably and returns the result.
@@ -341,20 +350,12 @@ impl<T: Send + Sync + 'static, V> Handle<T, V> {
         F: FnOnce(&mut T) -> R + Send + 'static,
         R: Send + 'static,
     {
-        let res = self
-            .send_job(
-                Box::new(|s: &mut Actor<T>, args: Box<dyn std::any::Any + Send>| {
-                    Box::pin(async move {
-                        let f = *args.downcast::<F>().expect(WRONG_RESPONSE);
-                        let result = f(&mut s.inner);
-                        s.broadcast(&format!("{}::with_mut", type_name::<T>()));
-                        Box::new(result) as Box<dyn Any + Send>
-                    })
-                }),
-                Box::new(f),
-            )
-            .await;
-        *res.downcast().expect(WRONG_RESPONSE)
+        self.run(f, |s, f| {
+            let result = f(&mut s.inner);
+            s.broadcast(&format!("{}::with_mut", type_name::<T>()));
+            result
+        })
+        .await
     }
 }
 
@@ -373,15 +374,7 @@ impl<T: Clone + Send + Sync + 'static, V> Handle<T, V> {
     /// # }
     /// ```
     pub async fn get(&self) -> T {
-        let res = self
-            .send_job(
-                Box::new(|s: &mut Actor<T>, args: Box<dyn std::any::Any + Send>| {
-                    Box::pin(async move { Actor::get(s, args).await })
-                }),
-                Box::new(()),
-            )
-            .await;
-        *res.downcast().expect(WRONG_RESPONSE)
+        self.run((), |s, _| s.inner.clone()).await
     }
 }
 
