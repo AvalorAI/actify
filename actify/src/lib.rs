@@ -253,10 +253,10 @@
 //!
 //! # Non-Clone types
 //!
-//! Most features (broadcasting, [`Cache`], [`Throttle`], [`Handle::get`], [`Handle::set`])
-//! require `T: Clone`. If your actor type does not implement `Clone`, use
-//! [`Handle::new_basic`] instead of [`Handle::new`]. Your `#[actify]` methods
-//! will work normally — only the built-in broadcast-dependent features are unavailable.
+//! By default, [`Handle::new`] requires `T: Clone` so it can broadcast `T`.
+//! For non-Clone types, implement [`BroadcastAs<V>`] for a Clone-able summary
+//! type `V` and specify it explicitly: `Handle::<MyType, Summary>::new(val)`.
+//! Your `#[actify]` methods work normally either way.
 
 mod actors;
 mod cache;
@@ -265,7 +265,7 @@ mod throttle;
 
 // Reexport for easier reference
 pub use actify_macros::{actify, broadcast, skip_broadcast};
-pub use actors::{Actor, Handle, ReadHandle};
+pub use actors::{Actor, BroadcastAs, Handle, ReadHandle};
 pub use cache::{Cache, CacheRecvError, CacheRecvNewestError};
 pub use extensions::{
     map::HashMapHandle, option::OptionHandle, set::HashSetHandle, vec::VecHandle,
