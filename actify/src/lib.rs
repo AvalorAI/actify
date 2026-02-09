@@ -59,41 +59,31 @@
 //!     }
 //! }
 //!
-//! // Defines the custom function signatures that should be added to the handle
+//! // Defines the method signatures exposed on the handle
 //! pub trait GreeterHandle {
 //!     async fn say_hi(&self, name: String) -> String;
 //! }
 //!
-//! // Implements the methods on the handle, and calls the generated method for the actor
+//! // Implements the methods: boxes args, sends a job to the actor,
+//! // which downcasts them and calls the original method on the inner type
+//! #[allow(unused_parens)]
 //! impl GreeterHandle for Handle<Greeter> {
 //!     async fn say_hi(&self, name: String) -> String {
 //!         let res = self
 //!             .send_job(
-//!                         Box::new(|s: &mut Actor<Greeter>, args: Box<dyn std::any::Any + Send>| {
-//!                     Box::pin(async move { GreeterActor::_say_hi(s, args).await })
-//!                 }),
+//!                 Box::new(
+//!                     |s: &mut Actor<Greeter>, args: Box<dyn std::any::Any + Send>|
+//!                     Box::pin(async move {
+//!                         let name: String = *args.downcast().unwrap();
+//!                         let result: String = Greeter::say_hi(&s.inner, name);
+//!                         s.broadcast("Greeter::say_hi");
+//!                         Box::new(result) as Box<dyn std::any::Any + Send>
+//!                     })),
 //!                 Box::new(name),
 //!             )
 //!             .await;
 //!
 //!         *res.downcast().unwrap()
-//!     }
-//! }
-//!
-//! // Defines the wrappers that execute the original methods on the struct in the actor
-//! trait GreeterActor {
-//!     async fn _say_hi(&mut self, args: Box<dyn std::any::Any + Send>) -> Box<dyn std::any::Any + Send>;
-//! }
-//!
-//! // Implements the methods on the actor for this specific type
-//! impl GreeterActor for Actor<Greeter>
-//! {
-//!     async fn _say_hi(&mut self, args: Box<dyn std::any::Any + Send>) -> Box<dyn std::any::Any + Send> {
-//!         let name: String = *args.downcast().unwrap();
-//!
-//!         // This call is the actual execution of the method from the user-defined impl block, on the struct held by the actor
-//!         let result: String = self.inner.say_hi(name);
-//!         Box::new(result)
 //!     }
 //! }
 //!
@@ -199,7 +189,7 @@
 //! Every [`Handle`] provides a set of built-in methods that work without the macro:
 //!
 //! - [`Handle::get`] — returns a clone of the current actor value (does not broadcast)
-//! - [`Handle::set`] — overwrites the actor value and broadcasts the change (broadcasts the change)
+//! - [`Handle::set`] — overwrites the actor value (broadcasts the change)
 //! - [`Handle::set_if_changed`] — only broadcasts when the new value differs (requires `PartialEq`)
 //! - [`Handle::subscribe`] — returns a [`tokio::sync::broadcast::Receiver`] for change notifications
 //! - [`Handle::with`] — runs a read-only closure on `&T` (does not broadcast)
