@@ -44,6 +44,29 @@ where
         }
     }
 
+    /// Stores a received value and returns a reference to it.
+    fn store(&mut self, val: T) -> &T {
+        self.inner = val;
+        &self.inner
+    }
+
+    /// Drains all buffered messages from the channel, keeping only the newest value.
+    /// Returns `true` if any value was stored.
+    fn drain_to_newest(&mut self) -> Result<bool, CacheRecvNewestError> {
+        let mut received = false;
+        loop {
+            match self.rx.try_recv() {
+                Ok(val) => {
+                    self.inner = val;
+                    received = true;
+                }
+                Err(TryRecvError::Empty) => return Ok(received),
+                Err(TryRecvError::Closed) => return Err(CacheRecvNewestError::Closed),
+                Err(TryRecvError::Lagged(nr)) => log_lag::<T>(nr),
+            }
+        }
+    }
+
     /// Returns if any new updates are received
     ///
     /// # Examples
@@ -134,31 +157,21 @@ where
     /// # }
     /// ```
     pub async fn recv_newest(&mut self) -> Result<&T, CacheRecvNewestError> {
-        // If requesting a value for the first time, it returns immediately
         if self.first_request {
             self.first_request = false;
-            self.try_recv_newest()?; // Update inner to newest if possible
-            return Ok(self.get_current());
+            return Ok(self.get_newest());
         }
 
         loop {
             match self.rx.recv().await {
                 Ok(val) => {
                     self.inner = val;
-
-                    // If only interested in the newest, and more updates are available, process those first
-                    if !self.rx.is_empty() {
-                        continue;
+                    if self.rx.is_empty() {
+                        return Ok(&self.inner);
                     }
-                    return Ok(self.get_current());
                 }
-                Err(e) => match e {
-                    RecvError::Closed => return Err(CacheRecvNewestError::Closed),
-                    RecvError::Lagged(nr) => log::debug!(
-                        "Cache of actor type {} lagged {nr:?} messages",
-                        std::any::type_name::<T>()
-                    ),
-                },
+                Err(RecvError::Closed) => return Err(CacheRecvNewestError::Closed),
+                Err(RecvError::Lagged(nr)) => log_lag::<T>(nr),
             }
         }
     }
@@ -189,22 +202,13 @@ where
     /// # }
     /// ```
     pub async fn recv(&mut self) -> Result<&T, CacheRecvError> {
-        // If requesting a value for the first time, it returns immediately
         if self.first_request {
             self.first_request = false;
             return Ok(self.get_current());
         }
 
-        match self.rx.recv().await {
-            Ok(val) => {
-                self.inner = val;
-                Ok(self.get_current())
-            }
-            Err(e) => match e {
-                RecvError::Closed => Err(CacheRecvError::Closed),
-                RecvError::Lagged(nr) => Err(CacheRecvError::Lagged(nr)),
-            },
-        }
+        let val = self.rx.recv().await?;
+        Ok(self.store(val))
     }
 
     /// Try to receive the newest updated value broadcasted by the actor, discarding any older messages.
@@ -249,36 +253,12 @@ where
     /// # }
     /// ```
     pub fn try_recv_newest(&mut self) -> Result<Option<&T>, CacheRecvNewestError> {
-        loop {
-            match self.rx.try_recv() {
-                Ok(val) => {
-                    self.first_request = false;
-                    self.inner = val;
-
-                    // If more updates are available, process those first
-                    if !self.rx.is_empty() {
-                        continue;
-                    }
-                    return Ok(Some(self.get_current()));
-                }
-                Err(e) => match e {
-                    TryRecvError::Closed => return Err(CacheRecvNewestError::Closed),
-                    TryRecvError::Empty => {
-                        // If no new updates are present when listening for the newest value the first time
-                        // Then simply exit with the initialized value if present
-                        if self.first_request {
-                            self.first_request = false;
-                            return Ok(Some(self.get_current()));
-                        } else {
-                            return Ok(None);
-                        }
-                    }
-                    TryRecvError::Lagged(nr) => log::debug!(
-                        "Cache of actor type {} lagged {nr:?} messages",
-                        std::any::type_name::<T>()
-                    ),
-                },
-            }
+        let received = self.drain_to_newest()?;
+        if received || self.first_request {
+            self.first_request = false;
+            Ok(Some(&self.inner))
+        } else {
+            Ok(None)
         }
     }
 
@@ -324,22 +304,16 @@ where
     /// # }
     /// ```
     pub fn try_recv(&mut self) -> Result<Option<&T>, CacheRecvError> {
-        // If requesting a value for the first time, it returns immediately
         if self.first_request {
             self.first_request = false;
             return Ok(Some(self.get_current()));
         }
 
         match self.rx.try_recv() {
-            Ok(val) => {
-                self.inner = val;
-                Ok(Some(self.get_current()))
-            }
-            Err(e) => match e {
-                TryRecvError::Closed => Err(CacheRecvError::Closed),
-                TryRecvError::Empty => Ok(None),
-                TryRecvError::Lagged(nr) => Err(CacheRecvError::Lagged(nr)),
-            },
+            Ok(val) => Ok(Some(self.store(val))),
+            Err(TryRecvError::Empty) => Ok(None),
+            Err(TryRecvError::Closed) => Err(CacheRecvError::Closed),
+            Err(TryRecvError::Lagged(nr)) => Err(CacheRecvError::Lagged(nr)),
         }
     }
 
@@ -367,19 +341,11 @@ where
     pub fn blocking_recv(&mut self) -> Result<&T, CacheRecvError> {
         if self.first_request {
             self.first_request = false;
-            return Ok(self.get_current());
+            return Ok(&self.get_current());
         }
 
-        match self.rx.blocking_recv() {
-            Ok(val) => {
-                self.inner = val;
-                Ok(self.get_current())
-            }
-            Err(e) => match e {
-                RecvError::Closed => Err(CacheRecvError::Closed),
-                RecvError::Lagged(nr) => Err(CacheRecvError::Lagged(nr)),
-            },
-        }
+        let val = self.rx.blocking_recv()?;
+        Ok(self.store(val))
     }
 
     /// Blocking version of [`recv_newest`](Self::recv_newest). Waits for the newest broadcasted value.
@@ -405,26 +371,19 @@ where
     pub fn blocking_recv_newest(&mut self) -> Result<&T, CacheRecvNewestError> {
         if self.first_request {
             self.first_request = false;
-            self.try_recv_newest()?;
-            return Ok(self.get_current());
+            return Ok(self.get_newest());
         }
 
         loop {
             match self.rx.blocking_recv() {
                 Ok(val) => {
                     self.inner = val;
-                    if !self.rx.is_empty() {
-                        continue;
+                    if self.rx.is_empty() {
+                        return Ok(&self.inner);
                     }
-                    return Ok(self.get_current());
                 }
-                Err(e) => match e {
-                    RecvError::Closed => return Err(CacheRecvNewestError::Closed),
-                    RecvError::Lagged(nr) => log::debug!(
-                        "Cache of actor type {} lagged {nr:?} messages",
-                        std::any::type_name::<T>()
-                    ),
-                },
+                Err(RecvError::Closed) => return Err(CacheRecvNewestError::Closed),
+                Err(RecvError::Lagged(nr)) => log_lag::<T>(nr),
             }
         }
     }
@@ -442,6 +401,13 @@ where
         let receiver = self.rx.resubscribe();
         Throttle::spawn_from_receiver(client, call, freq, receiver, Some(current));
     }
+}
+
+fn log_lag<T>(nr: u64) {
+    log::debug!(
+        "Cache of actor type {} lagged {nr:?} messages",
+        std::any::type_name::<T>()
+    );
 }
 
 /// Error returned by [`Cache::recv`] and [`Cache::try_recv`].
