@@ -243,7 +243,8 @@
 //!
 //! A [`Cache`] provides local, synchronous access to the actor's value by subscribing
 //! to its broadcast stream. Create one with [`Handle::create_cache`] (initialized with the
-//! current value) or [`Handle::create_cache_from_default`] (starts from `T::default()`).
+//! current value), [`Handle::create_cache_from`] (custom initial value),
+//! or [`Handle::create_cache_from_default`] (starts from `T::default()`).
 //!
 //! See [`CacheRecvError`] and [`CacheRecvNewestError`] for possible error conditions.
 //!

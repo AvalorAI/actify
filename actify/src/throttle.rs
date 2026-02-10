@@ -178,7 +178,7 @@ mod tests {
     use std::sync::{Arc, Mutex};
     use tokio::time::{Duration, Instant, sleep};
 
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn test_first_shot() {
         let handle = Handle::new(1);
         let counter = CounterClient::new();
@@ -193,7 +193,7 @@ mod tests {
         assert_eq!(count, 1)
     }
 
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn test_throttle_from_cache() {
         let handle = Handle::new(1);
         let counter = CounterClient::new();
@@ -207,7 +207,7 @@ mod tests {
         assert_eq!(count, 1)
     }
 
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn test_exit_on_shutdown() {
         let handle = Handle::new(1);
         let receiver = handle.subscribe();
@@ -238,7 +238,7 @@ mod tests {
         assert_eq!(count_before_drop, count_after_drop);
     }
 
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn test_on_event() {
         // The Handle update event should be received directly after the interval has passed
         let timer = 200.;
@@ -269,7 +269,7 @@ mod tests {
         assert!((timer - time).abs() / timer < 0.1);
     }
 
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn test_hot_on_event_when() {
         // The Handle update event should be received directly after the interval has passed
         let timer = 200.;
@@ -306,7 +306,7 @@ mod tests {
         assert!((timer - time).abs() / timer < 0.1 && count == 1);
     }
 
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn test_interval() {
         // The interval passed to the throttle used to send the value each time
 
@@ -336,7 +336,7 @@ mod tests {
         assert!((timer * 5. - time).abs() / (5. * timer) < 0.1 && count == 6);
     }
 
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn test_on_event_when_interval_passed() {
         // The interval passed to the throttle is shorter than the time to the event, so its value is passed to the client call
         // Throttle interval passes at 0.55 timer, does nothing
@@ -372,7 +372,7 @@ mod tests {
         assert!((timer * 1.1 - time).abs() / (timer * 1.1) < 0.1 && count == 1);
     }
 
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn test_on_event_when_too_soon() {
         // The interval passed to the throttle is longer than the time to the event, so its value is disregarded
         // Event fires at 1. timer
@@ -406,7 +406,7 @@ mod tests {
         assert_eq!(time, 0);
     }
 
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn test_throttle_parsing() {
         // Parsing to self should succeed
         Throttle::spawn_interval(

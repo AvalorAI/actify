@@ -70,6 +70,14 @@ impl<T: Clone + Send + Sync + 'static, V> ReadHandle<T, V> {
     }
 }
 
+impl<T, V: Clone + Send + Sync + 'static> ReadHandle<T, V> {
+    /// Creates a [`Cache`] initialized with the given value that locally synchronizes
+    /// with broadcasted updates from the actor.
+    pub fn create_cache_from(&self, initial_value: V) -> Cache<V> {
+        self.0.create_cache_from(initial_value)
+    }
+}
+
 impl<T, V: Default + Clone + Send + Sync + 'static> ReadHandle<T, V> {
     /// Creates a [`Cache`] initialized with `V::default()` that locally synchronizes
     /// with broadcasted updates from the actor.
