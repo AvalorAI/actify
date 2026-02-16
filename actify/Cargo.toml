@@ -1,6 +1,6 @@
 [package]
 name = "actify"
-version = "0.7.3"
+version = "0.7.4"
 edition = "2024"
 description = "An intutive actor model with minimal boilerplate"
 license = "MIT"
