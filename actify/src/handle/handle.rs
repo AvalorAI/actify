@@ -532,14 +532,16 @@ mod tests {
         let val = handle.get().await;
         assert_eq!(val.count, 3);
 
-        handle
-            .set(BigState {
-                data: vec![1, 2, 3, 4],
-                count: 4,
-            })
-            .await;
+        let new_big_state = BigState {
+            data: vec![1, 2, 3, 4],
+            count: 4,
+        };
+        handle.set(new_big_state.clone()).await;
 
         let broadcast_val: usize = rx.recv().await.unwrap();
         assert_eq!(broadcast_val, 4);
+
+        let big_state = handle.get().await;
+        assert_eq!(big_state, new_big_state);
     }
 }
