@@ -197,7 +197,7 @@ mod extensions;
 mod throttle;
 
 // Reexport for easier reference
-pub use actify_macros::{actify, skip_broadcast};
+pub use actify_macros::{actify, broadcast, skip_broadcast};
 pub use actors::{Actor, Handle, ReadHandle};
 pub use cache::{Cache, CacheRecvError, CacheRecvNewestError};
 pub use extensions::{

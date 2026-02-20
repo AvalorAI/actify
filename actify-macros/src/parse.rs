@@ -32,6 +32,7 @@ impl ImplInfo {
     /// Mutates the impl block to ensure a where clause exists.
     pub fn from_impl_block(
         impl_block: &mut ItemImpl,
+        skip_all_broadcasts: bool,
     ) -> Result<ImplInfo, proc_macro2::TokenStream> {
         let type_ident = get_impl_type_ident(&impl_block.self_ty)?;
 
@@ -48,7 +49,7 @@ impl ImplInfo {
         let mut methods = Vec::new();
         for item in &impl_block.items {
             if let ImplItem::Fn(method) = item {
-                methods.push(MethodInfo::from_impl_method(method)?);
+                methods.push(MethodInfo::from_impl_method(method, skip_all_broadcasts)?);
             }
         }
 
@@ -94,7 +95,10 @@ pub struct MethodInfo {
 
 impl MethodInfo {
     /// Parse a single `ImplItemFn` into its intermediate representation.
-    fn from_impl_method(method: &ImplItemFn) -> Result<MethodInfo, proc_macro2::TokenStream> {
+    fn from_impl_method(
+        method: &ImplItemFn,
+        skip_all_broadcasts: bool,
+    ) -> Result<MethodInfo, proc_macro2::TokenStream> {
         let ident = method.sig.ident.clone();
         let actor_ident = Ident::new(&format!("_{}", ident), Span::call_site());
 
@@ -109,12 +113,38 @@ impl MethodInfo {
         });
         let is_async = method.sig.asyncness.is_some();
 
-        let skip_broadcast = method.attrs.iter().any(|attr| {
+        let skip_attr = method.attrs.iter().find(|attr| {
             attr.path()
                 .segments
                 .iter()
                 .any(|seg| seg.ident == "skip_broadcast")
         });
+        let broadcast_attr = method.attrs.iter().find(|attr| {
+            attr.path()
+                .segments
+                .iter()
+                .any(|seg| seg.ident == "broadcast")
+        });
+
+        if skip_all_broadcasts {
+            if let Some(attr) = skip_attr {
+                return Err(quote_spanned! {
+                    attr.span() =>
+                    compile_error!("#[skip_broadcast] is superfluous: the impl block already skips all broadcasts via #[actify(skip_broadcast)]");
+                });
+            }
+        } else if let Some(attr) = broadcast_attr {
+            return Err(quote_spanned! {
+                attr.span() =>
+                compile_error!("#[broadcast] is superfluous: methods already broadcast by default; use #[actify(skip_broadcast)] on the impl block to change the default");
+            });
+        }
+
+        let skip_broadcast = if skip_all_broadcasts {
+            broadcast_attr.is_none()
+        } else {
+            skip_attr.is_some()
+        };
 
         validate_has_receiver(method)?;
 
@@ -182,7 +212,7 @@ fn filter_attributes(attrs: &[Attribute]) -> Vec<Attribute> {
                 .path()
                 .segments
                 .iter()
-                .any(|seg| seg.ident == "skip_broadcast")
+                .any(|seg| seg.ident == "skip_broadcast" || seg.ident == "broadcast")
         })
         .cloned()
         .collect()

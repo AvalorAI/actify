@@ -14,4 +14,9 @@ fn compile_fail_tests() {
 
     // Method validation
     t.compile_fail("tests/compile_fail/static_method.rs");
+
+    // Superfluous broadcast attributes
+    t.compile_fail("tests/compile_fail/superfluous_skip_broadcast.rs");
+    t.compile_fail("tests/compile_fail/superfluous_broadcast.rs");
+    t.compile_fail("tests/compile_fail/unnecessary_block_broadcast.rs");
 }
