@@ -61,7 +61,7 @@ impl<T> Debug for Handle<T> {
     }
 }
 
-/// Implement default for any inner type that implements default aswell
+/// Implement default for any inner type that implements default as well
 impl<T> Default for Handle<T>
 where
     T: Default + Clone + Send + Sync + 'static,
@@ -278,10 +278,10 @@ where
         self.tx
             .send(job)
             .await
-            .expect("A panic occured in the Actor");
+            .expect("A panic occurred in the Actor");
 
-        // The receiver for the result will only return an error if the response sender is dropped. Again, this is only possible if a panic occured
-        get_result.await.expect("A panic occured in the Actor")
+        // The receiver for the result will only return an error if the response sender is dropped. Again, this is only possible if a panic occurred
+        get_result.await.expect("A panic occurred in the Actor")
     }
 }
 
@@ -375,9 +375,9 @@ where
             }
         }
 
-        // A broadcast error is not propagated, as otherwise a succesful call could produce an independent broadcast error
+        // A broadcast error is not propagated, as otherwise a successful call could produce an independent broadcast error
         if self.broadcast.receiver_count() > 0 {
-            if let Err(_) = self.broadcast.send(self.inner.clone()) {
+            if self.broadcast.send(self.inner.clone()).is_err() {
                 log::debug!(
                     "Failed to broadcast update for {method:?} because there are no active receivers"
                 );
@@ -455,10 +455,10 @@ where
         self.tx
             .send(job)
             .await
-            .expect("A panic occured in the Actor");
+            .expect("A panic occurred in the Actor");
 
-        // The receiver for the result will only return an error if the response sender is dropped. Again, this is only possible if a panic occured
-        get_result.await.expect("A panic occured in the Actor")
+        // The receiver for the result will only return an error if the response sender is dropped. Again, this is only possible if a panic occurred
+        get_result.await.expect("A panic occurred in the Actor")
     }
 
     /// Receives a clone of the current value of the actor
