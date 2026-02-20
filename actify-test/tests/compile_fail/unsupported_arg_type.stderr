@@ -1,0 +1,5 @@
+error: Unsupported argument type for actor method; use a concrete owned type (e.g. String, Vec<T>, (A, B), [T; N])
+  --> tests/compile_fail/unsupported_arg_type.rs:10:32
+   |
+10 |     fn with_slice(&self, data: [u8]) -> u8 {
+   |                                ^^^^
