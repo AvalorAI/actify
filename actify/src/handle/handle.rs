@@ -145,20 +145,20 @@ where
             broadcast_sender: broadcast_tx,
         }
     }
-}
 
-impl<T: Clone + Send + Sync + 'static> Handle<T> {
     /// Creates a new [`Handle`] and initializes a corresponding [`Throttle`].
     /// The throttle fires given a specified [`Frequency`].
-    pub fn new_throttled<C, F>(val: T, client: C, call: fn(&C, F), freq: Frequency) -> Handle<T>
+    /// See [`Handle::spawn_throttle`] for an example.
+    pub fn new_throttled<C, F>(val: T, client: C, call: fn(&C, F), freq: Frequency) -> Handle<T, V>
     where
         C: Send + Sync + 'static,
-        T: Throttled<F>,
+        V: Throttled<F>,
         F: Clone + Send + Sync + 'static,
     {
-        let handle = Self::new(val.clone());
+        let init = val.to_broadcast();
+        let handle = Self::new(val);
         let receiver = handle.subscribe();
-        Throttle::spawn_from_receiver(client, call, freq, receiver, Some(val));
+        Throttle::spawn_from_receiver(client, call, freq, receiver, Some(init));
         handle
     }
 }
@@ -196,6 +196,7 @@ impl<T: Send + Sync + 'static, V> Handle<T, V> {
         self.tx.capacity()
     }
 
+    #[doc(hidden)]
     pub async fn send_job(
         &self,
         call: ActorMethod<T>,
@@ -326,6 +327,29 @@ where
     ///
     /// The broadcast type must implement [`Throttled<F>`](crate::Throttled) to
     /// convert the value into the callback argument.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use actify::{Handle, Frequency};
+    /// # use std::sync::{Arc, Mutex};
+    /// # #[tokio::main]
+    /// # async fn main() {
+    /// struct Logger(Arc<Mutex<Vec<i32>>>);
+    /// impl Logger {
+    ///     fn log(&self, val: i32) { self.0.lock().unwrap().push(val); }
+    /// }
+    ///
+    /// let handle = Handle::new(1);
+    /// let values = Arc::new(Mutex::new(Vec::new()));
+    /// handle.spawn_throttle(Logger(values.clone()), Logger::log, Frequency::OnEvent).await;
+    ///
+    /// handle.set(2).await;
+    /// tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    /// // Fires once with the current value on creation, then on each broadcast
+    /// assert_eq!(*values.lock().unwrap(), vec![1, 2]);
+    /// # }
+    /// ```
     pub async fn spawn_throttle<C, F>(&self, client: C, call: fn(&C, F), freq: Frequency)
     where
         C: Send + Sync + 'static,

@@ -217,13 +217,18 @@ where
     /// # use actify::Handle;
     /// # #[tokio::main]
     /// # async fn main() {
-    /// let handle = Handle::new(2);
+    /// let handle = Handle::new(1);
     /// let mut cache = handle.create_cache().await;
     ///
     /// // First call returns the initialized value
-    /// assert_eq!(cache.try_recv_newest().unwrap(), Some(&2));
+    /// assert_eq!(cache.try_recv_newest().unwrap(), Some(&1));
     /// // No new updates available
     /// assert_eq!(cache.try_recv_newest().unwrap(), None);
+    ///
+    /// handle.set(2).await;
+    /// handle.set(3).await;
+    /// // Skips to newest value
+    /// assert_eq!(cache.try_recv_newest().unwrap(), Some(&3));
     /// # }
     /// ```
     ///
@@ -287,13 +292,18 @@ where
     /// # use actify::Handle;
     /// # #[tokio::main]
     /// # async fn main() {
-    /// let handle = Handle::new(2);
+    /// let handle = Handle::new(1);
     /// let mut cache = handle.create_cache().await;
     ///
     /// // First call returns the initialized value
-    /// assert_eq!(cache.try_recv().unwrap(), Some(&2));
+    /// assert_eq!(cache.try_recv().unwrap(), Some(&1));
     /// // No new updates available
     /// assert_eq!(cache.try_recv().unwrap(), None);
+    ///
+    /// handle.set(2).await;
+    /// handle.set(3).await;
+    /// // Returns oldest update first (FIFO)
+    /// assert_eq!(cache.try_recv().unwrap(), Some(&2));
     /// # }
     /// ```
     ///
@@ -333,8 +343,95 @@ where
         }
     }
 
+    /// Blocking version of [`recv`](Self::recv). Waits for the next broadcasted value (FIFO).
+    /// Must not be called from an async context.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use actify::Handle;
+    /// # #[tokio::main]
+    /// # async fn main() {
+    /// let handle = Handle::new(1);
+    /// let mut cache = handle.create_cache().await;
+    /// handle.set(2).await;
+    ///
+    /// std::thread::spawn(move || {
+    ///     // First call returns the initialized value immediately
+    ///     assert_eq!(cache.blocking_recv().unwrap(), &1);
+    ///     // Subsequent call receives the update
+    ///     assert_eq!(cache.blocking_recv().unwrap(), &2);
+    /// }).join().unwrap();
+    /// # }
+    /// ```
+    pub fn blocking_recv(&mut self) -> Result<&T, CacheRecvError> {
+        if self.first_request {
+            self.first_request = false;
+            return Ok(self.get_current());
+        }
+
+        match self.rx.blocking_recv() {
+            Ok(val) => {
+                self.inner = val;
+                Ok(self.get_current())
+            }
+            Err(e) => match e {
+                RecvError::Closed => Err(CacheRecvError::Closed),
+                RecvError::Lagged(nr) => Err(CacheRecvError::Lagged(nr)),
+            },
+        }
+    }
+
+    /// Blocking version of [`recv_newest`](Self::recv_newest). Waits for the newest broadcasted value.
+    /// Must not be called from an async context.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use actify::Handle;
+    /// # #[tokio::main]
+    /// # async fn main() {
+    /// let handle = Handle::new(1);
+    /// let mut cache = handle.create_cache().await;
+    /// handle.set(2).await;
+    /// handle.set(3).await;
+    ///
+    /// std::thread::spawn(move || {
+    ///     // First call skips to the newest available value
+    ///     assert_eq!(cache.blocking_recv_newest().unwrap(), &3);
+    /// }).join().unwrap();
+    /// # }
+    /// ```
+    pub fn blocking_recv_newest(&mut self) -> Result<&T, CacheRecvNewestError> {
+        if self.first_request {
+            self.first_request = false;
+            self.try_recv_newest()?;
+            return Ok(self.get_current());
+        }
+
+        loop {
+            match self.rx.blocking_recv() {
+                Ok(val) => {
+                    self.inner = val;
+                    if !self.rx.is_empty() {
+                        continue;
+                    }
+                    return Ok(self.get_current());
+                }
+                Err(e) => match e {
+                    RecvError::Closed => return Err(CacheRecvNewestError::Closed),
+                    RecvError::Lagged(nr) => log::debug!(
+                        "Cache of actor type {} lagged {nr:?} messages",
+                        std::any::type_name::<T>()
+                    ),
+                },
+            }
+        }
+    }
+
     /// Spawns a [`Throttle`] that fires given a specified [`Frequency`], given any broadcasted updates by the actor.
     /// Does not first update the cache to the newest value, since then the user of the cache might miss the update.
+    /// See [`Handle::spawn_throttle`](crate::Handle::spawn_throttle) for an example.
     pub fn spawn_throttle<C, F>(&self, client: C, call: fn(&C, F), freq: Frequency)
     where
         C: Send + Sync + 'static,
@@ -378,22 +475,6 @@ mod tests {
     use tokio::time::{Duration, sleep};
 
     #[tokio::test]
-    async fn test_immediate_cache_return() {
-        let handle = Handle::new(1);
-        let mut cache = handle.create_cache().await;
-        handle.set(2).await; // Not returned yet, as returning oldest value first
-        assert_eq!(cache.recv().await.unwrap(), &1)
-    }
-
-    #[tokio::test]
-    async fn test_immediate_cache_return_with_newest() {
-        let handle = Handle::new(1);
-        let mut cache = handle.create_cache().await;
-        handle.set(2).await;
-        assert_eq!(cache.recv_newest().await.unwrap(), &2)
-    }
-
-    #[tokio::test]
     async fn test_delayed_cache_return() {
         let handle = Handle::new(2);
         let mut cache = handle.create_cache().await;
@@ -408,40 +489,6 @@ mod tests {
             } => panic!("Timeout"),
             res = cache.recv() => assert_eq!(res.unwrap(), &10)
         };
-    }
-
-    #[tokio::test]
-    async fn test_try_recv_default() {
-        let handle = Handle::new(2);
-        let mut cache = handle.create_cache_from_default();
-        assert_eq!(cache.try_recv().unwrap(), Some(&0))
-    }
-
-    #[tokio::test]
-    async fn test_try_recv_newest_default() {
-        let handle = Handle::new(2);
-        let mut cache = handle.create_cache_from_default();
-        assert_eq!(cache.try_recv_newest().unwrap(), Some(&0)) // Returns the default directly
-    }
-
-    #[tokio::test]
-    async fn test_try_recv_some() {
-        let handle = Handle::new(1);
-        let mut cache = handle.create_cache().await;
-        assert_eq!(cache.try_recv().unwrap(), Some(&1));
-        handle.set(2).await;
-        handle.set(3).await; // Not returned, as returning oldes value first
-        assert_eq!(cache.try_recv().unwrap(), Some(&2))
-    }
-
-    #[tokio::test]
-    async fn test_try_recv_some_newest() {
-        let handle = Handle::new(1);
-        let mut cache = handle.create_cache().await;
-        assert_eq!(cache.try_recv_newest().unwrap(), Some(&1));
-        handle.set(2).await;
-        handle.set(3).await; // Returned, as newest value first
-        assert_eq!(cache.try_recv_newest().unwrap(), Some(&3))
     }
 
     #[tokio::test]
