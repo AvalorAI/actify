@@ -1,0 +1,5 @@
+error: Raw pointer types (*const T, *mut T) are not supported as actor method arguments because they are not Send
+  --> tests/compile_fail/raw_pointer_arg.rs:10:29
+   |
+10 |     fn with_ptr(&self, ptr: *const u8) -> u8 {
+   |                             ^

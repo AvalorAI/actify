@@ -14,5 +14,8 @@ log = "0.4"
 tokio = { version = "1.15", features = ["full"] }
 tokio-metrics = "0.4"
 
+[dev-dependencies]
+trybuild = "1"
+
 [features]
 default = []

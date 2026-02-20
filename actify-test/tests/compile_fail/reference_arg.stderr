@@ -1,0 +1,5 @@
+error: Input arguments of actor model methods must be owned types, not references (e.g. use String instead of &str)
+  --> tests/compile_fail/reference_arg.rs:10:28
+   |
+10 |     fn foo(&self, bad_ref: &str) {}
+   |                            ^
