@@ -1,8 +1,8 @@
 use proc_macro2::Span;
 use quote::quote_spanned;
 use syn::{
-    Attribute, FnArg, Generics, Ident, ImplItem, ImplItemFn, ItemImpl, PatIdent, Path, Receiver,
-    ReturnType, Type, punctuated::Punctuated, spanned::Spanned, token::Comma,
+    Attribute, FnArg, Generics, Ident, ImplItem, ImplItemFn, ItemImpl, Path, Receiver, ReturnType,
+    Type, punctuated::Punctuated, spanned::Spanned, token::Comma,
 };
 
 /// Intermediate representation for an entire impl block processed by `#[actify]`.
@@ -65,7 +65,6 @@ impl ImplInfo {
             original_impl: impl_block.clone(),
         })
     }
-
 }
 
 /// Intermediate representation for a single method within the impl block.
@@ -80,8 +79,8 @@ pub struct MethodInfo {
     pub is_async: bool,
     /// Whether `#[actify::skip_broadcast]` is present.
     pub skip_broadcast: bool,
-    /// Argument identifiers (mutability stripped).
-    pub arg_names: Punctuated<PatIdent, Comma>,
+    /// Argument identifiers. For destructuring patterns a positional name is generated.
+    pub arg_names: Punctuated<Ident, Comma>,
     /// Argument types.
     pub arg_types: Punctuated<Type, Comma>,
     /// Return type (defaults to `()`).
@@ -147,6 +146,8 @@ impl MethodInfo {
             skip_attr.is_some()
         };
 
+        validate_has_receiver(method)?;
+
         let (arg_names, arg_types) = transform_args(&method.sig.inputs)?;
 
         let output_type = match &method.sig.output {
@@ -159,18 +160,14 @@ impl MethodInfo {
             .generics
             .params
             .iter()
-            .filter_map(|param| {
-                if let syn::GenericParam::Type(type_param) = param {
-                    Some(type_param.ident.clone())
-                } else {
-                    None
-                }
+            .filter_map(|param| match param {
+                syn::GenericParam::Type(type_param) => Some(type_param.ident.clone()),
+                syn::GenericParam::Const(const_param) => Some(const_param.ident.clone()),
+                _ => None,
             })
             .collect();
 
         let attributes = filter_attributes(&method.attrs);
-
-        validate_has_receiver(method)?;
 
         Ok(MethodInfo {
             ident,
@@ -205,6 +202,8 @@ fn get_impl_type_ident(impl_type: &Type) -> Result<Ident, proc_macro2::TokenStre
 
 /// Propagate all attributes except actify-specific ones (like `skip_broadcast`)
 /// that are consumed during parsing and should not appear on generated methods.
+/// Used for public-facing generated code (handle trait) where user attributes
+/// like `#[doc]`, `#[deprecated]`, `#[must_use]` should be visible.
 fn filter_attributes(attrs: &[Attribute]) -> Vec<Attribute> {
     attrs
         .iter()
@@ -214,6 +213,21 @@ fn filter_attributes(attrs: &[Attribute]) -> Vec<Attribute> {
                 .segments
                 .iter()
                 .any(|seg| seg.ident == "skip_broadcast" || seg.ident == "broadcast")
+        })
+        .cloned()
+        .collect()
+}
+
+/// Filter attributes down to only those that affect compilation.
+/// Used for private generated code (actor trait) where user-facing attributes
+/// like `#[doc]`, `#[deprecated]`, `#[must_use]` are irrelevant.
+pub fn filter_codegen_attrs(attrs: &[Attribute]) -> Vec<Attribute> {
+    attrs
+        .iter()
+        .filter(|a| {
+            a.path().is_ident("cfg")
+                || a.path().is_ident("cfg_attr")
+                || a.path().is_ident("allow")
         })
         .cloned()
         .collect()
@@ -238,31 +252,34 @@ fn validate_has_receiver(method: &ImplItemFn) -> Result<(), proc_macro2::TokenSt
 }
 
 /// Extract and validate argument names and types from method inputs.
-/// Validates that all argument types are supported (owned types only).
-/// Strips `mut` from argument identifiers: `mut` on a parameter (e.g. `fn foo(mut x: i32)`)
-/// is a local binding detail of the method body, not part of the argument's identity.
+/// For ident patterns, uses the original name. For non-ident patterns (e.g.
+/// destructuring `(a, b): (i32, i32)`), generates a positional name so the
+/// handle can box/unbox the value; the original method destructures at the call site.
 fn transform_args(
     args: &Punctuated<FnArg, Comma>,
-) -> Result<(Punctuated<PatIdent, Comma>, Punctuated<Type, Comma>), proc_macro2::TokenStream> {
-    let mut input_arg_names: Punctuated<PatIdent, Comma> = Punctuated::new();
-    let mut input_arg_types: Punctuated<Type, Comma> = Punctuated::new();
+) -> Result<(Punctuated<Ident, Comma>, Punctuated<Type, Comma>), proc_macro2::TokenStream> {
+    let mut arg_names: Punctuated<Ident, Comma> = Punctuated::new();
+    let mut arg_types: Punctuated<Type, Comma> = Punctuated::new();
 
-    for arg in args {
+    for (i, arg) in args.iter().enumerate() {
         match arg {
             syn::FnArg::Typed(pat_type) => {
-                if let syn::Pat::Ident(mut pat_ident) = *pat_type.pat.clone() {
-                    validate_arg_type(&pat_type.ty, pat_type.ty.span())?;
-                    pat_ident.mutability = None;
-                    input_arg_names.push(pat_ident);
-                    input_arg_types.push(*pat_type.ty.clone());
-                }
+                validate_arg_type(&pat_type.ty, pat_type.ty.span())?;
+
+                let ident = match &*pat_type.pat {
+                    syn::Pat::Ident(pat_ident) => pat_ident.ident.clone(),
+                    _ => Ident::new(&format!("_arg{}", i), Span::call_site()),
+                };
+
+                arg_names.push(ident);
+                arg_types.push(*pat_type.ty.clone());
             }
             #[cfg_attr(test, deny(clippy::non_exhaustive_omitted_patterns))]
             _ => {}
         }
     }
 
-    Ok((input_arg_names, input_arg_types))
+    Ok((arg_names, arg_types))
 }
 
 /// Validate that an argument type is supported for actor method arguments.
