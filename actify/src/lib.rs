@@ -249,6 +249,38 @@
 //! }
 //! ```
 //!
+//! ## Multiple impl blocks
+//!
+//! Each `#[actify]` block generates a trait named `{Type}Handle`. To use multiple
+//! impl blocks on the same type, provide a custom trait name with `name = "..."` to
+//! avoid collisions:
+//!
+//! ```
+//! # use actify::{Handle, actify};
+//! # #[derive(Clone, Debug)]
+//! struct Counter { value: i32 }
+//!
+//! #[actify]
+//! impl Counter {
+//!     fn increment(&mut self) { self.value += 1; }
+//! }
+//!
+//! #[actify(name = "CounterGetters", skip_broadcast)]
+//! impl Counter {
+//!     fn value(&self) -> i32 { self.value }
+//! }
+//!
+//! #[tokio::main]
+//! async fn main() {
+//!     let handle = Handle::new(Counter { value: 0 });
+//!     handle.increment().await;
+//!     assert_eq!(handle.value().await, 1);
+//! }
+//! ```
+//!
+//! The first block generates `CounterHandle`, the second generates `CounterGetters`.
+//! Both traits are automatically implemented for `Handle<Counter>`.
+//!
 //! # Cache
 //!
 //! A [`Cache`] provides local, synchronous access to the actor's value by subscribing
