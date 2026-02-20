@@ -34,6 +34,11 @@ impl syn::parse::Parse for ActifyArgs {
                 input.parse::<syn::Token![=]>()?;
                 let name: syn::LitStr = input.parse()?;
                 args.custom_name = Some(name.value());
+            } else if ident == "broadcast" {
+                return Err(syn::Error::new_spanned(
+                    ident,
+                    "methods already broadcast by default; `#[actify(broadcast)]` is unnecessary",
+                ));
             } else {
                 return Err(syn::Error::new_spanned(
                     ident,

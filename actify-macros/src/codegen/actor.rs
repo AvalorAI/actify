@@ -1,12 +1,9 @@
-use crate::parse::{ImplInfo, MethodInfo};
+use crate::parse::{self, ImplInfo, MethodInfo};
 use quote::quote;
 
 /// Generate the actor trait definition (private).
 pub fn generate_trait(info: &ImplInfo) -> proc_macro2::TokenStream {
-    // Only propagate compilation-relevant impl-block attributes (e.g. #[cfg]).
-    let impl_attrs: Vec<_> = info.attributes.iter()
-        .filter(|a| a.path().is_ident("cfg") || a.path().is_ident("cfg_attr") || a.path().is_ident("allow"))
-        .collect();
+    let impl_attrs = parse::filter_codegen_attrs(&info.attributes);
     let actor_trait_ident = &info.actor_trait_ident;
 
     let methods = info.methods.iter().map(method_signature);
@@ -22,10 +19,7 @@ pub fn generate_trait(info: &ImplInfo) -> proc_macro2::TokenStream {
 
 /// Generate the actor trait implementation for `Actor<T>`.
 pub fn generate_trait_impl(info: &ImplInfo) -> proc_macro2::TokenStream {
-    // Only propagate compilation-relevant impl-block attributes (e.g. #[cfg]).
-    let impl_attrs: Vec<_> = info.attributes.iter()
-        .filter(|a| a.path().is_ident("cfg") || a.path().is_ident("cfg_attr") || a.path().is_ident("allow"))
-        .collect();
+    let impl_attrs = parse::filter_codegen_attrs(&info.attributes);
     let actor_trait_ident = &info.actor_trait_ident;
     let impl_type = &info.impl_type;
     let generics = &info.generics;
@@ -49,11 +43,7 @@ pub fn generate_trait_impl(info: &ImplInfo) -> proc_macro2::TokenStream {
 /// Generate an actor trait method signature.
 /// e.g. `async fn _foo(&mut self, args: Box<dyn Any + Send>) -> Box<dyn Any + Send>;`
 fn method_signature(method: &MethodInfo) -> proc_macro2::TokenStream {
-    // The actor trait is private with erased signatures, so only propagate
-    // attributes that affect compilation: #[cfg], #[cfg_attr], #[allow].
-    let attrs: Vec<_> = method.attributes.iter()
-        .filter(|a| a.path().is_ident("cfg") || a.path().is_ident("cfg_attr") || a.path().is_ident("allow"))
-        .collect();
+    let attrs = parse::filter_codegen_attrs(&method.attributes);
     let actor_ident = &method.actor_ident;
     let method_generics = &method.method_generics;
     let where_clause = &method.method_generics.where_clause;
@@ -71,10 +61,7 @@ fn method_body(
     method: &MethodInfo,
     call_prefix: &proc_macro2::TokenStream,
 ) -> proc_macro2::TokenStream {
-    // Same filter as method_signature: only compilation-relevant attributes.
-    let attrs: Vec<_> = method.attributes.iter()
-        .filter(|a| a.path().is_ident("cfg") || a.path().is_ident("cfg_attr") || a.path().is_ident("allow"))
-        .collect();
+    let attrs = parse::filter_codegen_attrs(&method.attributes);
     let actor_ident = &method.actor_ident;
     let method_generics = &method.method_generics;
     let where_clause = &method.method_generics.where_clause;

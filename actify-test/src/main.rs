@@ -153,6 +153,22 @@ impl ComplexActorTypes {
     {
         arr.iter().map(|b| *b as usize).sum()
     }
+
+    fn with_const_generic_and_type<T, const N: usize>(&self, _arr: [T; N]) -> usize
+    where
+        T: Send + Sync + 'static,
+        [T; N]: Send + Sync + 'static,
+    {
+        N
+    }
+
+    fn with_destructure(&self, (a, b): (i32, i32)) -> i32 {
+        a + b
+    }
+
+    fn with_mixed_destructure(&self, label: String, (x, y): (f64, f64)) -> String {
+        format!("{}: ({}, {})", label, x, y)
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -242,7 +258,8 @@ impl SkipMultipleBroadcastsActor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use actify::{Handle, VecHandle};
+    use actify::{Frequency, Handle, Throttle, VecHandle};
+    use std::sync::{Arc, Mutex};
     use std::time::Duration;
     use tokio::time::sleep;
 
@@ -273,6 +290,16 @@ mod tests {
         assert_eq!(handle.with_trait_object(Box::new(|x| x * 3)).await, 126);
         assert_eq!(handle.async_generic(|x| x + 8).await, 50);
         assert_eq!(handle.with_const_generic([1u8, 2, 3, 4]).await, 10);
+        assert_eq!(handle.with_const_generic([10u8, 20]).await, 30);
+        assert_eq!(handle.with_const_generic_and_type([1u32, 2, 3]).await, 3);
+        assert_eq!(handle.with_const_generic_and_type(["a", "b"]).await, 2);
+        assert_eq!(handle.with_destructure((3, 7)).await, 10);
+        assert_eq!(
+            handle
+                .with_mixed_destructure("point".to_string(), (1.5, 2.5))
+                .await,
+            "point: (1.5, 2.5)"
+        );
     }
 
     #[tokio::test]
@@ -403,5 +430,302 @@ mod tests {
         env_logger::Builder::new()
             .filter(None, log::LevelFilter::Info)
             .init();
+    }
+
+    /// Helper to get current number of alive tasks in the runtime
+    fn alive_tasks() -> usize {
+        tokio::runtime::Handle::current().metrics().num_alive_tasks()
+    }
+
+    /// Helper struct for throttle testing
+    #[derive(Debug, Clone)]
+    struct TestClient {
+        count: Arc<Mutex<i32>>,
+    }
+
+    impl TestClient {
+        fn new() -> Self {
+            TestClient {
+                count: Arc::new(Mutex::new(0)),
+            }
+        }
+
+        fn call(&self, _event: i32) {
+            let mut count = self.count.lock().unwrap();
+            *count += 1;
+        }
+    }
+
+    #[tokio::test]
+    async fn test_handle_task_cleanup() {
+        // Record baseline task count
+        let baseline = alive_tasks();
+
+        // Creating a Handle spawns a Listener task
+        let handle = Handle::new(42);
+        sleep(Duration::from_millis(10)).await;
+
+        let with_handle = alive_tasks();
+        assert!(
+            with_handle > baseline,
+            "Expected task count to increase after creating Handle. Baseline: {}, After: {}",
+            baseline,
+            with_handle
+        );
+
+        // Drop the handle - this should cause the Listener task to exit
+        drop(handle);
+        sleep(Duration::from_millis(100)).await;
+
+        let after_drop = alive_tasks();
+        assert_eq!(
+            after_drop, baseline,
+            "Expected task count to return to baseline after dropping Handle. Baseline: {}, After drop: {}",
+            baseline, after_drop
+        );
+    }
+
+    #[tokio::test]
+    async fn test_handle_clone_task_cleanup() {
+        // Record baseline task count
+        let baseline = alive_tasks();
+
+        // Creating a Handle spawns a Listener task
+        let handle = Handle::new(42);
+        let handle_clone = handle.clone();
+        sleep(Duration::from_millis(10)).await;
+
+        let with_handles = alive_tasks();
+        // Only one task should be spawned regardless of clones
+        assert_eq!(
+            with_handles,
+            baseline + 1,
+            "Expected exactly one task for Handle and its clone. Baseline: {}, After: {}",
+            baseline,
+            with_handles
+        );
+
+        // Dropping one clone shouldn't affect the task
+        drop(handle);
+        sleep(Duration::from_millis(50)).await;
+
+        let after_first_drop = alive_tasks();
+        assert_eq!(
+            after_first_drop,
+            baseline + 1,
+            "Task should still be running after dropping one clone. Baseline: {}, After: {}",
+            baseline,
+            after_first_drop
+        );
+
+        // Dropping the last clone should cause the task to exit
+        drop(handle_clone);
+        sleep(Duration::from_millis(100)).await;
+
+        let after_all_drop = alive_tasks();
+        assert_eq!(
+            after_all_drop, baseline,
+            "Task should exit after all Handle clones are dropped. Baseline: {}, After: {}",
+            baseline, after_all_drop
+        );
+    }
+
+    #[tokio::test]
+    async fn test_throttle_from_receiver_task_cleanup() {
+        // Record baseline task count
+        let baseline = alive_tasks();
+
+        // Create a Handle (spawns 1 task)
+        let handle = Handle::new(1);
+        sleep(Duration::from_millis(10)).await;
+
+        let with_handle = alive_tasks();
+        assert_eq!(
+            with_handle,
+            baseline + 1,
+            "Expected one task for Handle"
+        );
+
+        // Spawn a throttle from the handle's receiver (spawns another task)
+        let client = TestClient::new();
+        let receiver = handle.subscribe();
+        Throttle::spawn_from_receiver(
+            client.clone(),
+            TestClient::call,
+            Frequency::Interval(Duration::from_millis(50)),
+            receiver,
+            Some(1),
+        );
+        sleep(Duration::from_millis(10)).await;
+
+        let with_throttle = alive_tasks();
+        assert_eq!(
+            with_throttle,
+            baseline + 2,
+            "Expected two tasks: Handle + Throttle. Baseline: {}, After: {}",
+            baseline,
+            with_throttle
+        );
+
+        // Dropping the handle should cause both tasks to exit:
+        // - The Handle's Listener task exits because the channel closes
+        // - The Throttle task exits because the broadcast receiver closes
+        drop(handle);
+        sleep(Duration::from_millis(200)).await;
+
+        let after_drop = alive_tasks();
+        assert_eq!(
+            after_drop, baseline,
+            "Both tasks should exit after Handle is dropped. Baseline: {}, After: {}",
+            baseline, after_drop
+        );
+    }
+
+    #[tokio::test]
+    async fn test_throttle_spawn_interval_no_cleanup() {
+        // Note: spawn_interval creates a Throttle without a receiver,
+        // so it will run forever (until the runtime shuts down).
+        // This test documents that behavior.
+
+        let baseline = alive_tasks();
+
+        let client = TestClient::new();
+        Throttle::spawn_interval(
+            client.clone(),
+            TestClient::call,
+            Duration::from_millis(50),
+            1,
+        );
+        sleep(Duration::from_millis(10)).await;
+
+        let with_throttle = alive_tasks();
+        assert_eq!(
+            with_throttle,
+            baseline + 1,
+            "Expected one task for interval Throttle"
+        );
+
+        // Verify the throttle is working
+        sleep(Duration::from_millis(200)).await;
+        let count = *client.count.lock().unwrap();
+        assert!(
+            count > 1,
+            "Interval throttle should have fired multiple times, count: {}",
+            count
+        );
+
+        // Note: There's no way to stop an interval-based Throttle without a receiver.
+        // This is expected behavior - the task will run until the runtime exits.
+        // The task count will remain elevated.
+    }
+
+    #[tokio::test]
+    async fn test_multiple_handles_task_cleanup() {
+        let baseline = alive_tasks();
+
+        // Create multiple independent handles
+        let handle1 = Handle::new(1);
+        let handle2 = Handle::new("test");
+        let handle3 = Handle::new(1.5f64);
+        sleep(Duration::from_millis(10)).await;
+
+        let with_handles = alive_tasks();
+        assert_eq!(
+            with_handles,
+            baseline + 3,
+            "Expected three tasks for three Handles"
+        );
+
+        // Drop them one by one and verify cleanup
+        drop(handle1);
+        sleep(Duration::from_millis(100)).await;
+        assert_eq!(alive_tasks(), baseline + 2);
+
+        drop(handle2);
+        sleep(Duration::from_millis(100)).await;
+        assert_eq!(alive_tasks(), baseline + 1);
+
+        drop(handle3);
+        sleep(Duration::from_millis(100)).await;
+        assert_eq!(alive_tasks(), baseline);
+    }
+
+    #[tokio::test]
+    async fn test_cache_does_not_spawn_tasks() {
+        let baseline = alive_tasks();
+
+        let handle = Handle::new(42);
+        sleep(Duration::from_millis(10)).await;
+
+        let with_handle = alive_tasks();
+        assert_eq!(with_handle, baseline + 1, "Expected one task for Handle");
+
+        // Creating a cache should NOT spawn additional tasks
+        let _cache = handle.create_cache().await;
+        sleep(Duration::from_millis(10)).await;
+
+        let with_cache = alive_tasks();
+        assert_eq!(
+            with_cache,
+            baseline + 1,
+            "Cache should not spawn additional tasks"
+        );
+
+        // Creating more caches still shouldn't spawn tasks
+        let _cache2 = handle.create_cache().await;
+        let _cache3 = handle.create_cache_from_default();
+        sleep(Duration::from_millis(10)).await;
+
+        let with_more_caches = alive_tasks();
+        assert_eq!(
+            with_more_caches,
+            baseline + 1,
+            "Multiple caches should not spawn additional tasks"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_cache_spawn_throttle_task_cleanup() {
+        let baseline = alive_tasks();
+
+        let handle = Handle::new(42);
+        let cache = handle.create_cache().await;
+        sleep(Duration::from_millis(10)).await;
+
+        let with_handle = alive_tasks();
+        assert_eq!(with_handle, baseline + 1, "Expected one task for Handle");
+
+        // Spawning a throttle from cache spawns a new task
+        let client = TestClient::new();
+        cache.spawn_throttle(client.clone(), TestClient::call, Frequency::OnEvent);
+        sleep(Duration::from_millis(10)).await;
+
+        let with_throttle = alive_tasks();
+        assert_eq!(
+            with_throttle,
+            baseline + 2,
+            "Expected two tasks: Handle + Throttle"
+        );
+
+        // Dropping the cache doesn't affect tasks (it doesn't own them)
+        drop(cache);
+        sleep(Duration::from_millis(100)).await;
+
+        let after_cache_drop = alive_tasks();
+        assert_eq!(
+            after_cache_drop,
+            baseline + 2,
+            "Dropping cache should not affect tasks"
+        );
+
+        // Dropping the handle should cause both tasks to exit
+        drop(handle);
+        sleep(Duration::from_millis(200)).await;
+
+        let after_handle_drop = alive_tasks();
+        assert_eq!(
+            after_handle_drop, baseline,
+            "All tasks should exit after Handle is dropped"
+        );
     }
 }
