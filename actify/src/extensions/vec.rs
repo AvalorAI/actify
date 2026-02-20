@@ -23,12 +23,12 @@ where
     /// # Examples
     ///
     /// ```
-    /// # use tokio;
-    /// # #[tokio::test]
-    /// # async fn push_to_actor() {
-    /// let handle = actify::Handle::new(vec![1, 2]);
-    /// handle.push(100).await.unwrap();
-    /// assert_eq!(handle.get().await.unwrap(), vec![1, 2, 100]);
+    /// # use actify::{Handle, VecHandle};
+    /// # #[tokio::main]
+    /// # async fn main() {
+    /// let handle = Handle::new(vec![1, 2]);
+    /// handle.push(100).await;
+    /// assert_eq!(handle.get().await, vec![1, 2, 100]);
     /// # }
     /// ```
     fn push(&mut self, value: T) {
@@ -40,12 +40,11 @@ where
     /// # Examples
     ///
     /// ```
-    /// # use tokio;
-    /// # use actify;
-    /// # #[tokio::test]
-    /// # async fn actor_vec_is_empty() {
+    /// # use actify::{Handle, VecHandle};
+    /// # #[tokio::main]
+    /// # async fn main() {
     /// let handle = Handle::new(Vec::<i32>::new());
-    /// assert!(handle.is_empty().await.unwrap());
+    /// assert!(handle.is_empty().await);
     /// # }
     /// ```
     fn is_empty(&self) -> bool {
@@ -57,13 +56,13 @@ where
     /// # Examples
     ///
     /// ```
-    /// # use tokio;
-    /// # #[tokio::test]
-    /// # async fn drain_actor() {
+    /// # use actify::{Handle, VecHandle};
+    /// # #[tokio::main]
+    /// # async fn main() {
     /// let handle = Handle::new(vec![1, 2]);
-    /// let res = handle.drain(..).await.unwrap();
+    /// let res = handle.drain(..).await;
     /// assert_eq!(res, vec![1, 2]);
-    /// assert_eq!(handle.get().await.unwrap(), Vec::<i32>::new());
+    /// assert_eq!(handle.get().await, Vec::<i32>::new());
     /// # }
     /// ```
     fn drain<R>(&mut self, range: R) -> Vec<T>

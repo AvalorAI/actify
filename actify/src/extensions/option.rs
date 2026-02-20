@@ -23,12 +23,11 @@ where
     /// # Examples
     ///
     /// ```
-    /// # use tokio;
-    /// # use actify;
-    /// # #[tokio::test]
-    /// # async fn actor_option_is_some() {
+    /// # use actify::{Handle, OptionHandle};
+    /// # #[tokio::main]
+    /// # async fn main() {
     /// let handle = Handle::new(Some(1));
-    /// assert_eq!(handle.is_some().await.unwrap(), true);
+    /// assert!(handle.is_some().await);
     /// # }
     /// ```
     fn is_some(&self) -> bool {
@@ -40,12 +39,11 @@ where
     /// # Examples
     ///
     /// ```
-    /// # use tokio;
-    /// # use actify;
-    /// # #[tokio::test]
-    /// # async fn actor_option_is_none() {
+    /// # use actify::{Handle, OptionHandle};
+    /// # #[tokio::main]
+    /// # async fn main() {
     /// let handle = Handle::new(Option::<i32>::None);
-    /// assert!(handle.is_none().await.unwrap());
+    /// assert!(handle.is_none().await);
     /// # }
     /// ```
     fn is_none(&self) -> bool {
