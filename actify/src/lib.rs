@@ -217,6 +217,40 @@
 //! - `#[actify(skip_broadcast)]` — skip broadcasting for all methods in the impl block
 //! - `#[actify::broadcast]` — force broadcasting for a method in a `skip_broadcast` block
 //!
+//! ```
+//! # use actify::{Handle, actify, skip_broadcast, broadcast};
+//! # use std::fmt::Debug;
+//! # #[derive(Clone, Debug)]
+//! # struct Counter { value: i32 }
+//! #[actify(skip_broadcast)]
+//! impl Counter {
+//!     /// Does not broadcast (block default).
+//!     fn increment(&mut self) -> i32 {
+//!         self.value += 1;
+//!         self.value
+//!     }
+//!
+//!     /// Overrides the block default to broadcast.
+//!     #[actify::broadcast]
+//!     fn reset(&mut self) -> i32 {
+//!         self.value = 0;
+//!         self.value
+//!     }
+//! }
+//!
+//! #[tokio::main]
+//! async fn main() {
+//!     let handle = Handle::new(Counter { value: 0 });
+//!     let mut rx = handle.subscribe();
+//!
+//!     handle.increment().await; // No broadcast
+//!     assert!(rx.try_recv().is_err());
+//!
+//!     handle.reset().await; // Broadcasts
+//!     assert!(rx.try_recv().is_ok());
+//! }
+//! ```
+//!
 //! ## Multiple impl blocks
 //!
 //! Each `#[actify]` block generates a trait named `{Type}Handle`. To use multiple

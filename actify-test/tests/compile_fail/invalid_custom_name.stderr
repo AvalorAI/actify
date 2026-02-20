@@ -1,0 +1,5 @@
+error: invalid `name` value: must be a valid Rust identifier
+ --> tests/compile_fail/invalid_custom_name.rs:7:17
+  |
+7 | #[actify(name = "123invalid")]
+  |                 ^^^^^^^^^^^^
