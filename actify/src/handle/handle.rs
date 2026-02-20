@@ -141,13 +141,7 @@ where
             broadcast_sender: broadcast_tx,
         }
     }
-}
 
-impl<T, V> Handle<T, V>
-where
-    T: BroadcastAs<V> + Send + Sync + 'static,
-    V: Clone + Send + Sync + 'static,
-{
     /// Creates a new [`Handle`] and initializes a corresponding [`Throttle`].
     /// The throttle fires given a specified [`Frequency`].
     /// See [`Handle::spawn_throttle`] for an example.
