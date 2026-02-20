@@ -8,9 +8,10 @@ trait ActorOption<T> {
     fn is_none(&self) -> bool;
 }
 
-/// An implementation of the ActorOption extension trait for for the standard [`Option`].
-/// This extension trait is made available on the handle through the actify macro.
-/// Within the actor these methods are invoken, which in turn just extend the functionality provides by the std library.
+/// An implementation of the ActorOption extension trait for the standard [`Option`].
+/// This extension trait is made available on the [`Handle`](crate::Handle) through the actify macro
+/// as [`OptionHandle`](crate::OptionHandle).
+/// Within the actor these methods are invoked, which in turn just extend the functionality provided by the std library.
 ///
 /// [`Option`]: https://doc.rust-lang.org/std/option/enum.Option.html
 #[actify]
