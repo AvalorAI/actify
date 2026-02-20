@@ -57,10 +57,14 @@ where
     V: Clone + Send + Sync + 'static,
 {
     Box::new(move |inner: &T, method: &str| {
-        if sender.send(inner.to_broadcast()).is_err() {
-            log::trace!("No active receivers for broadcast on {method:?}");
+        if sender.receiver_count() > 0 {
+            if sender.send(inner.to_broadcast()).is_err() {
+                log::trace!("Broadcast failed because there are no active on {method:?}");
+            } else {
+                log::trace!("Broadcasted new value on {method:?}");
+            }
         } else {
-            log::trace!("Broadcasted new value on {method:?}");
+            log::trace!("Skipping broadcast because there are no active receivers on {method:?}");
         }
     })
 }
