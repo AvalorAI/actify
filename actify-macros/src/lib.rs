@@ -24,6 +24,10 @@ pub fn actify(attr: TokenStream, item: TokenStream) -> TokenStream {
         let ident = syn::parse_macro_input!(attr as syn::Ident);
         if ident == "skip_broadcast" {
             true
+        } else if ident == "broadcast" {
+            return syn::Error::new_spanned(ident, "methods already broadcast by default; `#[actify(broadcast)]` is unnecessary")
+                .to_compile_error()
+                .into();
         } else {
             return syn::Error::new_spanned(ident, "unknown actify attribute; expected `skip_broadcast`")
                 .to_compile_error()
