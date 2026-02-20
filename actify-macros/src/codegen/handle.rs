@@ -20,19 +20,25 @@ pub fn generate_trait(info: &ImplInfo) -> proc_macro2::TokenStream {
     }
 }
 
-/// Generate the handle trait implementation for `Handle<T>`.
+/// Generate the handle trait implementation for `Handle<T, V>`.
+///
+/// Adds an unconstrained `__V` type parameter so that the generated trait
+/// implementation works for all broadcast types, not just `Handle<T, T>`.
 pub fn generate_trait_impl(info: &ImplInfo) -> proc_macro2::TokenStream {
     let impl_attrs = &info.attributes;
     let handle_trait_ident = &info.handle_trait_ident;
     let impl_type = &info.impl_type;
-    let generics = &info.generics;
+    let trait_generics = &info.generics;
     let where_clause = &info.generics.where_clause;
+
+    let mut impl_generics = info.generics.clone();
+    impl_generics.params.push(syn::parse_quote!(__V));
 
     let methods = info.methods.iter().map(|m| method_body(info, m));
 
     quote! {
         #(#impl_attrs)*
-        impl #generics #handle_trait_ident #generics for actify::Handle<#impl_type> #where_clause
+        impl #impl_generics #handle_trait_ident #trait_generics for actify::Handle<#impl_type, __V> #where_clause
         {
             #(#methods)*
         }

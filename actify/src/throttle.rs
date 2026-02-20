@@ -157,9 +157,7 @@ where
         if let Some(interval) = interval {
             interval.tick().await;
         } else {
-            loop {
-                time::sleep(Duration::from_secs(10)).await; // Sleep endlessly if only updating on new values
-            }
+            std::future::pending::<()>().await;
         }
     }
 
@@ -167,9 +165,7 @@ where
         if let Some(rx) = val_rx {
             rx.recv().await
         } else {
-            loop {
-                time::sleep(Duration::from_secs(10)).await; // Sleep endlessly if not having to check for new values
-            }
+            std::future::pending::<Result<T, RecvError>>().await
         }
     }
 }

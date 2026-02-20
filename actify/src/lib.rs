@@ -284,20 +284,29 @@
 //! - [`VecHandle`] — `push`, `is_empty`, `drain` for `Handle<Vec<T>>`
 //! - [`HashMapHandle`] — `get_key`, `insert`, `is_empty` for `Handle<HashMap<K, V>>`
 //! - [`HashSetHandle`] — `insert`, `is_empty` for `Handle<HashSet<K>>`
+//!
+//! # Non-Clone types
+//!
+//! By default, [`Handle::new`] requires `T: Clone` so it can broadcast `T`.
+//! For non-Clone types, implement [`BroadcastAs<V>`] for a Clone-able summary
+//! type `V` and specify it explicitly: `Handle::<MyType, Summary>::new(val)`.
+//! Your `#[actify]` methods work normally either way.
 
-mod actors;
+mod actor;
 mod cache;
 mod extensions;
+mod handle;
 mod throttle;
 
 // Reexport for easier reference
 pub use actify_macros::{actify, broadcast, skip_broadcast};
-pub use actors::{Actor, Handle, ReadHandle};
+pub use actor::Actor;
 pub use cache::{Cache, CacheRecvError, CacheRecvNewestError};
 pub use extensions::{
     map::HashMapHandle, option::OptionHandle, set::HashSetHandle, vec::VecHandle,
 };
+pub use handle::{BroadcastAs, Handle, ReadHandle};
 pub use throttle::{Frequency, Throttle, Throttled};
 
 #[cfg(feature = "profiler")]
-pub use actors::{get_broadcast_counts, get_sorted_broadcast_counts};
+pub use actor::{get_broadcast_counts, get_sorted_broadcast_counts};
