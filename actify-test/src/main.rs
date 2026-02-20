@@ -132,6 +132,22 @@ impl ComplexActorTypes {
     {
         arr.iter().map(|b| *b as usize).sum()
     }
+
+    fn with_const_generic_and_type<T, const N: usize>(&self, _arr: [T; N]) -> usize
+    where
+        T: Send + Sync + 'static,
+        [T; N]: Send + Sync + 'static,
+    {
+        N
+    }
+
+    fn with_destructure(&self, (a, b): (i32, i32)) -> i32 {
+        a + b
+    }
+
+    fn with_mixed_destructure(&self, label: String, (x, y): (f64, f64)) -> String {
+        format!("{}: ({}, {})", label, x, y)
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -226,6 +242,16 @@ mod tests {
         assert_eq!(handle.with_trait_object(Box::new(|x| x * 3)).await, 126);
         assert_eq!(handle.async_generic(|x| x + 8).await, 50);
         assert_eq!(handle.with_const_generic([1u8, 2, 3, 4]).await, 10);
+        assert_eq!(handle.with_const_generic([10u8, 20]).await, 30);
+        assert_eq!(handle.with_const_generic_and_type([1u32, 2, 3]).await, 3);
+        assert_eq!(handle.with_const_generic_and_type(["a", "b"]).await, 2);
+        assert_eq!(handle.with_destructure((3, 7)).await, 10);
+        assert_eq!(
+            handle
+                .with_mixed_destructure("point".to_string(), (1.5, 2.5))
+                .await,
+            "point: (1.5, 2.5)"
+        );
     }
 
     #[tokio::test]
