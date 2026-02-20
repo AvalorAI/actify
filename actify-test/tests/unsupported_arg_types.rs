@@ -19,4 +19,7 @@ fn compile_fail_tests() {
     t.compile_fail("tests/compile_fail/superfluous_skip_broadcast.rs");
     t.compile_fail("tests/compile_fail/superfluous_broadcast.rs");
     t.compile_fail("tests/compile_fail/unnecessary_block_broadcast.rs");
+
+    // Invalid custom name
+    t.compile_fail("tests/compile_fail/invalid_custom_name.rs");
 }

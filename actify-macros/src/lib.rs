@@ -16,7 +16,7 @@ pub fn broadcast(_args: TokenStream, input: TokenStream) -> TokenStream {
 /// Parsed arguments from `#[actify(...)]`.
 struct ActifyArgs {
     skip_broadcast: bool,
-    custom_name: Option<String>,
+    custom_name: Option<syn::LitStr>,
 }
 
 impl syn::parse::Parse for ActifyArgs {
@@ -33,7 +33,7 @@ impl syn::parse::Parse for ActifyArgs {
             } else if ident == "name" {
                 input.parse::<syn::Token![=]>()?;
                 let name: syn::LitStr = input.parse()?;
-                args.custom_name = Some(name.value());
+                args.custom_name = Some(name);
             } else if ident == "broadcast" {
                 return Err(syn::Error::new_spanned(
                     ident,

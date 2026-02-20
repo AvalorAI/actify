@@ -52,6 +52,10 @@ impl SomeStruct {
     fn set_true(&mut self) {
         self.inner_bool = true
     }
+
+    fn set_false(&mut self) {
+        self.inner_bool = false
+    }
 }
 
 #[actify(name = "SomeStructGetters", skip_broadcast)]
@@ -266,8 +270,14 @@ mod tests {
     #[tokio::test]
     async fn test_custom_trait_name() {
         let handle = Handle::new(SomeStruct { inner_bool: false });
+
+        // UFCS — verifies the generated trait names are correct
         SomeStructHandle::set_true(&handle).await;
         assert!(SomeStructGetters::get_inner(&handle).await);
+
+        // Method-call syntax — verifies both traits resolve without ambiguity
+        handle.set_false().await;
+        assert!(!handle.get_inner().await);
     }
 
     // NOTE: "should not compile" tests live in tests/compile_fail/ and are run via trybuild.
@@ -434,7 +444,9 @@ mod tests {
 
     /// Helper to get current number of alive tasks in the runtime
     fn alive_tasks() -> usize {
-        tokio::runtime::Handle::current().metrics().num_alive_tasks()
+        tokio::runtime::Handle::current()
+            .metrics()
+            .num_alive_tasks()
     }
 
     /// Helper struct for throttle testing
@@ -540,11 +552,7 @@ mod tests {
         sleep(Duration::from_millis(10)).await;
 
         let with_handle = alive_tasks();
-        assert_eq!(
-            with_handle,
-            baseline + 1,
-            "Expected one task for Handle"
-        );
+        assert_eq!(with_handle, baseline + 1, "Expected one task for Handle");
 
         // Spawn a throttle from the handle's receiver (spawns another task)
         let client = TestClient::new();

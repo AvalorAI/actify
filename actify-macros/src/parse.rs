@@ -33,18 +33,23 @@ impl ImplInfo {
     pub fn from_impl_block(
         impl_block: &mut ItemImpl,
         skip_all_broadcasts: bool,
-        custom_name: Option<String>,
+        custom_name: Option<syn::LitStr>,
     ) -> Result<ImplInfo, proc_macro2::TokenStream> {
         let type_ident = get_impl_type_ident(&impl_block.self_ty)?;
 
         // Ensure the where clause always exists so we can unwrap safely
         impl_block.generics.make_where_clause();
 
-        let (handle_trait_ident, actor_trait_ident) = if let Some(name) = custom_name {
-            (
-                Ident::new(&name, Span::call_site()),
-                Ident::new(&format!("{name}Actor"), Span::call_site()),
-            )
+        let (handle_trait_ident, actor_trait_ident) = if let Some(lit) = custom_name {
+            let name = lit.value();
+            let handle = syn::parse_str::<Ident>(&name).map_err(|_| {
+                quote_spanned! {
+                    lit.span() =>
+                    compile_error!("invalid `name` value: must be a valid Rust identifier");
+                }
+            })?;
+            let actor = Ident::new(&format!("{name}Actor"), Span::call_site());
+            (handle, actor)
         } else {
             (
                 Ident::new(&format!("{type_ident}Handle"), Span::call_site()),
