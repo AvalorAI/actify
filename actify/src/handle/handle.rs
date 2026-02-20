@@ -206,8 +206,8 @@ impl<T: Send + Sync + 'static, V> Handle<T, V> {
         self.tx
             .send(job)
             .await
-            .expect("A panic occured in the Actor");
-        get_result.await.expect("A panic occured in the Actor")
+            .expect("A panic occurred in the Actor");
+        get_result.await.expect("A panic occurred in the Actor")
     }
 
     /// Overwrites the inner value of the actor with the new value.
