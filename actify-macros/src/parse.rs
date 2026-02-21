@@ -11,8 +11,6 @@ pub struct ImplInfo {
     pub impl_type: Box<Type>,
     /// Just the type name, e.g. `TestStruct`.
     pub type_ident: Ident,
-    /// Generated actor trait name, e.g. `TestStructActor`.
-    pub actor_trait_ident: Ident,
     /// Generated handle trait name, e.g. `TestStructHandle`.
     pub handle_trait_ident: Ident,
     /// Impl-level generics (where clause guaranteed present via `make_where_clause`).
@@ -40,21 +38,16 @@ impl ImplInfo {
         // Ensure the where clause always exists so we can unwrap safely
         impl_block.generics.make_where_clause();
 
-        let (handle_trait_ident, actor_trait_ident) = if let Some(lit) = custom_name {
+        let handle_trait_ident = if let Some(lit) = custom_name {
             let name = lit.value();
-            let handle = syn::parse_str::<Ident>(&name).map_err(|_| {
+            syn::parse_str::<Ident>(&name).map_err(|_| {
                 quote_spanned! {
                     lit.span() =>
                     compile_error!("invalid `name` value: must be a valid Rust identifier");
                 }
-            })?;
-            let actor = Ident::new(&format!("{name}Actor"), Span::call_site());
-            (handle, actor)
+            })?
         } else {
-            (
-                Ident::new(&format!("{type_ident}Handle"), Span::call_site()),
-                Ident::new(&format!("{type_ident}Actor"), Span::call_site()),
-            )
+            Ident::new(&format!("{type_ident}Handle"), Span::call_site())
         };
 
         let trait_path = impl_block.trait_.as_ref().map(|(_, path, _)| path.clone());
@@ -71,7 +64,6 @@ impl ImplInfo {
         Ok(ImplInfo {
             impl_type: impl_block.self_ty.clone(),
             type_ident,
-            actor_trait_ident,
             handle_trait_ident,
             generics: impl_block.generics.clone(),
             trait_path,
@@ -86,8 +78,6 @@ impl ImplInfo {
 pub struct MethodInfo {
     /// Original method name.
     pub ident: Ident,
-    /// Actor-side method name (prefixed with `_`).
-    pub actor_ident: Ident,
     /// Whether the method takes `&mut self`.
     pub is_mutable: bool,
     /// Whether the method is async.
@@ -102,8 +92,6 @@ pub struct MethodInfo {
     pub output_type: Box<Type>,
     /// Method-level generics (including where clause).
     pub method_generics: Generics,
-    /// Just the type parameter idents, for turbofish calls.
-    pub generic_type_params: Vec<Ident>,
     /// Filtered cfg/doc attributes.
     pub attributes: Vec<Attribute>,
 }
@@ -115,7 +103,6 @@ impl MethodInfo {
         skip_all_broadcasts: bool,
     ) -> Result<MethodInfo, proc_macro2::TokenStream> {
         let ident = method.sig.ident.clone();
-        let actor_ident = Ident::new(&format!("_{}", ident), Span::call_site());
 
         let is_mutable = method.sig.inputs.iter().any(|arg| {
             matches!(
@@ -170,23 +157,10 @@ impl MethodInfo {
             ReturnType::Default => Box::new(syn::parse_quote! { () }),
         };
 
-        let generic_type_params = method
-            .sig
-            .generics
-            .params
-            .iter()
-            .filter_map(|param| match param {
-                syn::GenericParam::Type(type_param) => Some(type_param.ident.clone()),
-                syn::GenericParam::Const(const_param) => Some(const_param.ident.clone()),
-                _ => None,
-            })
-            .collect();
-
         let attributes = filter_attributes(&method.attrs);
 
         Ok(MethodInfo {
             ident,
-            actor_ident,
             is_mutable,
             is_async,
             skip_broadcast,
@@ -194,7 +168,6 @@ impl MethodInfo {
             arg_types,
             output_type,
             method_generics: method.sig.generics.clone(),
-            generic_type_params,
             attributes,
         })
     }
@@ -228,21 +201,6 @@ fn filter_attributes(attrs: &[Attribute]) -> Vec<Attribute> {
                 .segments
                 .iter()
                 .any(|seg| seg.ident == "skip_broadcast" || seg.ident == "broadcast")
-        })
-        .cloned()
-        .collect()
-}
-
-/// Filter attributes down to only those that affect compilation.
-/// Used for private generated code (actor trait) where user-facing attributes
-/// like `#[doc]`, `#[deprecated]`, `#[must_use]` are irrelevant.
-pub fn filter_codegen_attrs(attrs: &[Attribute]) -> Vec<Attribute> {
-    attrs
-        .iter()
-        .filter(|a| {
-            a.path().is_ident("cfg")
-                || a.path().is_ident("cfg_attr")
-                || a.path().is_ident("allow")
         })
         .cloned()
         .collect()
