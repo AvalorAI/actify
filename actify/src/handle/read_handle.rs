@@ -147,5 +147,4 @@ mod tests {
         handle.set(2).await;
         assert_eq!(read_handle.get().await, 2);
     }
-
 }
