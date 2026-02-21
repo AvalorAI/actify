@@ -45,14 +45,12 @@ where
         }
     }
 
-    /// Returns `true` the first time any recv method is called, clearing the flag.
     fn is_first_request(&mut self) -> bool {
         let first = self.first_request;
         self.first_request = false;
         first
     }
 
-    /// Stores a received value and returns a reference to it.
     fn store(&mut self, val: T) -> &T {
         self.inner = val;
         &self.inner
@@ -75,7 +73,7 @@ where
         }
     }
 
-    /// Returns if any new updates are received
+    /// Returns `true` if there are pending updates from the actor that haven't been received yet.
     ///
     /// # Examples
     ///
@@ -95,8 +93,12 @@ where
         !self.rx.is_empty()
     }
 
-    /// Returns the newest value available, even if the channel is closed
-    /// Note that when the cache is initialized with a default value, this might return the default while the actor has a different value
+    /// Returns the newest value available, draining any pending updates from the channel.
+    /// If the channel is closed, returns the last known value without error.
+    ///
+    /// Note: when the cache is initialized with a default value (e.g. via
+    /// [`create_cache_from_default`](crate::Handle::create_cache_from_default)),
+    /// the returned value may differ from the actor's actual value until a broadcast occurs.
     ///
     /// # Examples
     ///
@@ -118,7 +120,11 @@ where
         self.get_current()
     }
 
-    /// Returns the current value held by the cache, without synchronizing with the actor
+    /// Returns the current cached value without synchronizing with the actor.
+    ///
+    /// Note: when the cache is initialized with a default value (e.g. via
+    /// [`create_cache_from_default`](crate::Handle::create_cache_from_default)),
+    /// the returned value may differ from the actor's actual value until a broadcast occurs.
     ///
     /// # Examples
     ///
@@ -139,12 +145,18 @@ where
         &self.inner
     }
 
-    /// Receive the newest updated value broadcasted by the actor, discarding any older messages.
-    /// The first time it will return its current value immediately.
-    /// After that, it might wait indefinitely for a new update.
-    /// Note that when the cache is initialized with a default value, this might return the default while the actor has a different value.
+    /// Receives the newest broadcasted value from the actor, discarding any older messages.
     ///
-    /// Returns [`CacheRecvNewestError::Closed`] if the actor is dropped.
+    /// On the first call, returns the current cached value immediately, even if the channel is
+    /// closed. On subsequent calls, waits until an update is available.
+    ///
+    /// Note: when the cache is initialized with a default value (e.g. via
+    /// [`create_cache_from_default`](crate::Handle::create_cache_from_default)),
+    /// the first call may return the default while the actor holds a different value.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CacheRecvNewestError::Closed`] if the actor is dropped (after the first call).
     ///
     /// # Examples
     ///
@@ -173,22 +185,29 @@ where
             match self.rx.recv().await {
                 Ok(val) => {
                     self.inner = val;
-                    if self.rx.is_empty() {
-                        return Ok(&self.inner);
-                    }
+                    break;
                 }
                 Err(RecvError::Closed) => return Err(CacheRecvNewestError::Closed),
                 Err(RecvError::Lagged(nr)) => log_lag::<T>(nr),
             }
         }
+        _ = self.drain_to_newest();
+        Ok(&self.inner)
     }
 
-    /// Receive the last updated value broadcasted by the actor (FIFO).
-    /// The first time it will return its current value immediately.
-    /// After that, it might wait indefinitely for a new update.
-    /// Note that when the cache is initialized with a default value, this might return the default while the actor has a different value.
+    /// Receives the next broadcasted value from the actor (FIFO).
     ///
-    /// Returns [`CacheRecvError`] on channel close or lag.
+    /// On the first call, returns the current cached value immediately, even if the channel is
+    /// closed. On subsequent calls, waits until an update is available.
+    ///
+    /// Note: when the cache is initialized with a default value (e.g. via
+    /// [`create_cache_from_default`](crate::Handle::create_cache_from_default)),
+    /// the first call may return the default while the actor holds a different value.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CacheRecvError::Closed`] if the actor is dropped, or
+    /// [`CacheRecvError::Lagged`] if the cache fell behind and messages were dropped.
     ///
     /// # Examples
     ///
@@ -217,9 +236,19 @@ where
         Ok(self.store(val))
     }
 
-    /// Try to receive the newest updated value broadcasted by the actor, discarding any older messages.
-    /// The first time it will return its initialized value, even if no updates are present.
-    /// After that, lacking updates will return None.
+    /// Tries to receive the newest broadcasted value from the actor, discarding any older
+    /// messages. Returns immediately without waiting.
+    ///
+    /// On the first call, returns `Some` with the current cached value, even if no updates are
+    /// present. On subsequent calls, returns `None` if no new updates are available.
+    ///
+    /// Note: when the cache is initialized with a default value (e.g. via
+    /// [`create_cache_from_default`](crate::Handle::create_cache_from_default)),
+    /// the first call may return the default while the actor holds a different value.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CacheRecvNewestError::Closed`] if the actor is dropped.
     ///
     /// # Examples
     ///
@@ -268,9 +297,21 @@ where
         }
     }
 
-    /// Try to receive the last updated value broadcasted by the actor once (FIFO).
-    /// The first time it will return its initialized value, even if no updates are present.
-    /// After that, lacking updates will return None.
+    /// Tries to receive the next broadcasted value from the actor (FIFO). Returns immediately
+    /// without waiting.
+    ///
+    /// On the first call, returns `Some` with the current cached value, even if no updates are
+    /// present or the channel is closed. On subsequent calls, returns `None` if no new updates
+    /// are available.
+    ///
+    /// Note: when the cache is initialized with a default value (e.g. via
+    /// [`create_cache_from_default`](crate::Handle::create_cache_from_default)),
+    /// the first call may return the default while the actor holds a different value.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CacheRecvError::Closed`] if the actor is dropped, or
+    /// [`CacheRecvError::Lagged`] if the cache fell behind and messages were dropped.
     ///
     /// # Examples
     ///
@@ -322,8 +363,20 @@ where
         }
     }
 
-    /// Blocking version of [`recv`](Self::recv). Waits for the next broadcasted value (FIFO).
+    /// Blocking version of [`recv`](Self::recv). Receives the next broadcasted value (FIFO).
     /// Must not be called from an async context.
+    ///
+    /// On the first call, returns the current cached value immediately, even if the channel is
+    /// closed. On subsequent calls, blocks until an update is available.
+    ///
+    /// Note: when the cache is initialized with a default value (e.g. via
+    /// [`create_cache_from_default`](crate::Handle::create_cache_from_default)),
+    /// the first call may return the default while the actor holds a different value.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CacheRecvError::Closed`] if the actor is dropped, or
+    /// [`CacheRecvError::Lagged`] if the cache fell behind and messages were dropped.
     ///
     /// # Examples
     ///
@@ -352,8 +405,19 @@ where
         Ok(self.store(val))
     }
 
-    /// Blocking version of [`recv_newest`](Self::recv_newest). Waits for the newest broadcasted value.
-    /// Must not be called from an async context.
+    /// Blocking version of [`recv_newest`](Self::recv_newest). Receives the newest broadcasted
+    /// value, discarding any older messages. Must not be called from an async context.
+    ///
+    /// On the first call, returns the newest available value immediately, even if the channel is
+    /// closed. On subsequent calls, blocks until an update is available.
+    ///
+    /// Note: when the cache is initialized with a default value (e.g. via
+    /// [`create_cache_from_default`](crate::Handle::create_cache_from_default)),
+    /// the first call may return the default while the actor holds a different value.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CacheRecvNewestError::Closed`] if the actor is dropped (after the first call).
     ///
     /// # Examples
     ///
