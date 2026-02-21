@@ -3,8 +3,6 @@ use std::any::{Any, type_name};
 use std::fmt::{self, Debug};
 use tokio::sync::{mpsc, oneshot};
 
-const WRONG_ARGS: &str = "Incorrect arguments have been provided for this method";
-
 #[cfg(feature = "profiler")]
 use std::collections::HashMap;
 #[cfg(feature = "profiler")]
@@ -67,36 +65,8 @@ impl<T> Actor<T> {
     }
 }
 
-impl<T: Clone + Send + 'static> Actor<T> {
-    pub(crate) async fn get(&mut self, _args: Box<dyn Any + Send>) -> Box<dyn Any + Send> {
-        Box::new(self.inner.clone())
-    }
-}
-
-impl<T: Send + 'static> Actor<T> {
-    pub(crate) async fn set(&mut self, args: Box<dyn Any + Send>) -> Box<dyn Any + Send> {
-        self.inner = *args.downcast().expect(WRONG_ARGS);
-        self.broadcast(&format!("{}::set", type_name::<T>()));
-        Box::new(())
-    }
-}
-
-impl<T: Send + PartialEq + 'static> Actor<T> {
-    pub(crate) async fn set_if_changed(
-        &mut self,
-        args: Box<dyn Any + Send>,
-    ) -> Box<dyn Any + Send> {
-        let new_value: T = *args.downcast().expect(WRONG_ARGS);
-        if self.inner != new_value {
-            self.inner = new_value;
-            self.broadcast(&format!("{}::set", type_name::<T>()));
-        }
-        Box::new(())
-    }
-}
-
 pub(crate) type ActorMethod<T> = Box<
-    dyn FnMut(&mut Actor<T>, Box<dyn Any + Send>) -> BoxFuture<Box<dyn Any + Send>> + Send + Sync,
+    dyn FnMut(&mut Actor<T>, Box<dyn Any + Send>) -> BoxFuture<Box<dyn Any + Send>> + Send,
 >;
 
 pub(crate) struct Job<T> {

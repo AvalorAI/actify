@@ -9,7 +9,8 @@ use crate::throttle::Throttle;
 use crate::{Cache, Frequency, Throttled};
 
 const CHANNEL_SIZE: usize = 100;
-const WRONG_RESPONSE: &str = "An incorrect response type for this method has been called";
+const DOWNCAST_FAIL: &str =
+    "Actify Macro error: failed to downcast arguments to their concrete type";
 
 /// Defines how to convert an actor's value to its broadcast type.
 ///
@@ -215,6 +216,33 @@ impl<T: Send + Sync + 'static, V> Handle<T, V> {
         get_result.await.expect("A panic occurred in the Actor")
     }
 
+    /// Sends a closure to the actor, handling all boxing/unboxing internally.
+    async fn run<F, A, R>(&self, args: A, f: F) -> R
+    where
+        F: FnOnce(&mut Actor<T>, A) -> R + Send + 'static,
+        A: Send + 'static,
+        R: Send + 'static,
+    {
+        // ActorMethod requires FnMut because Box<dyn FnOnce> can't be called.
+        // We wrap f in Option so we can .take() it out of the FnMut closure.
+        // The unwrap is safe: send_job sends exactly one job, and serve()
+        // calls it exactly once, but the compiler just can't prove that so we need a work-around.
+        let mut f = Some(f);
+        let res = self
+            .send_job(
+                Box::new(move |s: &mut Actor<T>, boxed_args: Box<dyn Any + Send>| {
+                    let f = f.take().unwrap();
+                    Box::pin(async move {
+                        let args = *boxed_args.downcast::<A>().expect(DOWNCAST_FAIL);
+                        Box::new(f(s, args)) as Box<dyn Any + Send>
+                    })
+                }),
+                Box::new(args),
+            )
+            .await;
+        *res.downcast::<R>().expect(DOWNCAST_FAIL)
+    }
+
     /// Overwrites the inner value of the actor with the new value.
     ///
     /// # Examples
@@ -229,15 +257,11 @@ impl<T: Send + Sync + 'static, V> Handle<T, V> {
     /// # }
     /// ```
     pub async fn set(&self, val: T) {
-        let res = self
-            .send_job(
-                Box::new(|s: &mut Actor<T>, args: Box<dyn std::any::Any + Send>| {
-                    Box::pin(async move { Actor::set(s, args).await })
-                }),
-                Box::new(val),
-            )
-            .await;
-        *res.downcast().expect(WRONG_RESPONSE)
+        self.run(val, |s, val| {
+            s.inner = val;
+            s.broadcast(&format!("{}::set", type_name::<T>()));
+        })
+        .await
     }
 
     /// Overwrites the inner value, but only broadcasts if it actually changed.
@@ -259,15 +283,82 @@ impl<T: Send + Sync + 'static, V> Handle<T, V> {
     where
         T: PartialEq,
     {
-        let res = self
-            .send_job(
-                Box::new(|s: &mut Actor<T>, args: Box<dyn std::any::Any + Send>| {
-                    Box::pin(async move { Actor::set_if_changed(s, args).await })
-                }),
-                Box::new(val),
-            )
-            .await;
-        *res.downcast().expect(WRONG_RESPONSE)
+        self.run(val, |s, val| {
+            if s.inner != val {
+                s.inner = val;
+                s.broadcast(&format!("{}::set", type_name::<T>()));
+            }
+        })
+        .await
+    }
+
+    /// Runs a read-only closure on the actor's value and returns the result.
+    ///
+    /// This is useful for reading parts of the actor state without cloning
+    /// the entire value, and works with non-Clone types.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use actify::Handle;
+    /// # #[tokio::main]
+    /// # async fn main() {
+    /// let handle = Handle::new(vec![1, 2, 3]);
+    ///
+    /// // Extract just what you need, without cloning the whole Vec
+    /// let len = handle.with(|v| v.len()).await;
+    /// assert_eq!(len, 3);
+    ///
+    /// let first = handle.with(|v| v.first().copied()).await;
+    /// assert_eq!(first, Some(1));
+    /// # }
+    /// ```
+    pub async fn with<R, F>(&self, f: F) -> R
+    where
+        F: FnOnce(&T) -> R + Send + 'static,
+        R: Send + 'static,
+    {
+        self.run(f, |s, f| f(&s.inner)).await
+    }
+
+    /// Runs a closure on the actor's value mutably and returns the result.
+    ///
+    /// This is useful for atomic read-modify-return operations without
+    /// defining a dedicated `#[actify]` method.
+    ///
+    /// **Note:** This always broadcasts after the closure returns, even if
+    /// the closure did not actually mutate anything. Use [`Handle::with`]
+    /// for read-only access that does not broadcast.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use actify::Handle;
+    /// # #[tokio::main]
+    /// # async fn main() {
+    /// let handle = Handle::new(vec![1, 2, 3]);
+    /// let mut rx = handle.subscribe();
+    ///
+    /// // Mutate and return a result in one atomic operation
+    /// let popped = handle.with_mut(|v| v.pop()).await;
+    /// assert_eq!(popped, Some(3));
+    /// assert_eq!(handle.get().await, vec![1, 2]);
+    ///
+    /// // The mutation triggered a broadcast
+    /// assert!(rx.try_recv().is_ok());
+    /// # }
+    /// ```
+    pub async fn with_mut<R, F>(&self, f: F) -> R
+    where
+        F: FnOnce(&mut T) -> R + Send + 'static,
+        R: Send + 'static,
+    {
+        self.run(f, |s, f| {
+            let result = f(&mut s.inner);
+            s.broadcast(&format!("{}::with_mut", type_name::<T>()));
+            result
+        })
+        .await
     }
 }
 
@@ -286,15 +377,7 @@ impl<T: Clone + Send + Sync + 'static, V> Handle<T, V> {
     /// # }
     /// ```
     pub async fn get(&self) -> T {
-        let res = self
-            .send_job(
-                Box::new(|s: &mut Actor<T>, args: Box<dyn std::any::Any + Send>| {
-                    Box::pin(async move { Actor::get(s, args).await })
-                }),
-                Box::new(()),
-            )
-            .await;
-        *res.downcast().expect(WRONG_RESPONSE)
+        self.run((), |s, _| s.inner.clone()).await
     }
 }
 
@@ -443,6 +526,25 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_with_does_not_broadcast() {
+        let handle = Handle::new(vec![1, 2, 3]);
+        let mut rx = handle.subscribe();
+
+        let _len = handle.with(|v| v.len()).await;
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn test_with_mut_broadcasts_even_without_mutation() {
+        let handle = Handle::new(vec![1, 2, 3]);
+        let mut rx = handle.subscribe();
+
+        // Read-only operation through with_mut still broadcasts
+        let _len = handle.with_mut(|v| v.len()).await;
+        assert!(rx.try_recv().is_ok());
+    }
+
+    #[tokio::test]
     async fn test_clone_actor_with_custom_broadcast() {
         let handle: Handle<BigState, usize> = Handle::new(BigState {
             data: vec![1, 2, 3],
@@ -454,14 +556,16 @@ mod tests {
         let val = handle.get().await;
         assert_eq!(val.count, 3);
 
-        handle
-            .set(BigState {
-                data: vec![1, 2, 3, 4],
-                count: 4,
-            })
-            .await;
+        let new_big_state = BigState {
+            data: vec![1, 2, 3, 4],
+            count: 4,
+        };
+        handle.set(new_big_state.clone()).await;
 
         let broadcast_val: usize = rx.recv().await.unwrap();
         assert_eq!(broadcast_val, 4);
+
+        let big_state = handle.get().await;
+        assert_eq!(big_state, new_big_state);
     }
 }
