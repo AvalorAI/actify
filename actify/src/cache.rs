@@ -10,7 +10,8 @@ use crate::{Frequency, Throttle, Throttled};
 /// A simple caching struct that can be used to locally maintain a synchronized state with an actor.
 ///
 /// Create one via [`Handle::create_cache`](crate::Handle::create_cache) (initialized with the
-/// current actor value) or [`Handle::create_cache_from_default`](crate::Handle::create_cache_from_default)
+/// current actor value), [`Handle::create_cache_from`](crate::Handle::create_cache_from) (custom
+/// initial value), or [`Handle::create_cache_from_default`](crate::Handle::create_cache_from_default)
 /// (starts from `T::default()`).
 #[derive(Debug)]
 pub struct Cache<T> {
@@ -44,7 +45,35 @@ where
         }
     }
 
-    /// Returns if any new updates are received
+    fn is_first_request(&mut self) -> bool {
+        let first = self.first_request;
+        self.first_request = false;
+        first
+    }
+
+    fn store(&mut self, val: T) -> &T {
+        self.inner = val;
+        &self.inner
+    }
+
+    /// Drains all buffered messages from the channel, keeping only the newest value.
+    /// Returns `true` if any value was stored.
+    fn drain_to_newest(&mut self) -> Result<bool, CacheRecvNewestError> {
+        let mut received = false;
+        loop {
+            match self.rx.try_recv() {
+                Ok(val) => {
+                    self.inner = val;
+                    received = true;
+                }
+                Err(TryRecvError::Empty) => return Ok(received),
+                Err(TryRecvError::Closed) => return Err(CacheRecvNewestError::Closed),
+                Err(TryRecvError::Lagged(nr)) => log_lag::<T>(nr),
+            }
+        }
+    }
+
+    /// Returns `true` if there are pending updates from the actor that haven't been received yet.
     ///
     /// # Examples
     ///
@@ -64,8 +93,12 @@ where
         !self.rx.is_empty()
     }
 
-    /// Returns the newest value available, even if the channel is closed
-    /// Note that when the cache is initialized with a default value, this might return the default while the actor has a different value
+    /// Returns the newest value available, draining any pending updates from the channel.
+    /// If the channel is closed, returns the last known value without error.
+    ///
+    /// Note: when the cache is initialized with a default value (e.g. via
+    /// [`create_cache_from_default`](crate::Handle::create_cache_from_default)),
+    /// the returned value may differ from the actor's actual value until a broadcast occurs.
     ///
     /// # Examples
     ///
@@ -87,7 +120,11 @@ where
         self.get_current()
     }
 
-    /// Returns the current value held by the cache, without synchronizing with the actor
+    /// Returns the current cached value without synchronizing with the actor.
+    ///
+    /// Note: when the cache is initialized with a default value (e.g. via
+    /// [`create_cache_from_default`](crate::Handle::create_cache_from_default)),
+    /// the returned value may differ from the actor's actual value until a broadcast occurs.
     ///
     /// # Examples
     ///
@@ -108,12 +145,18 @@ where
         &self.inner
     }
 
-    /// Receive the newest updated value broadcasted by the actor, discarding any older messages.
-    /// The first time it will return its current value immediately.
-    /// After that, it might wait indefinitely for a new update.
-    /// Note that when the cache is initialized with a default value, this might return the default while the actor has a different value.
+    /// Receives the newest broadcasted value from the actor, discarding any older messages.
     ///
-    /// Returns [`CacheRecvNewestError::Closed`] if the actor is dropped.
+    /// On the first call, returns the current cached value immediately, even if the channel is
+    /// closed. On subsequent calls, waits until an update is available.
+    ///
+    /// Note: when the cache is initialized with a default value (e.g. via
+    /// [`create_cache_from_default`](crate::Handle::create_cache_from_default)),
+    /// the first call may return the default while the actor holds a different value.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CacheRecvNewestError::Closed`] if the actor is dropped (after the first call).
     ///
     /// # Examples
     ///
@@ -134,41 +177,37 @@ where
     /// # }
     /// ```
     pub async fn recv_newest(&mut self) -> Result<&T, CacheRecvNewestError> {
-        // If requesting a value for the first time, it returns immediately
-        if self.first_request {
-            self.first_request = false;
-            self.try_recv_newest()?; // Update inner to newest if possible
-            return Ok(self.get_current());
+        if self.is_first_request() {
+            return Ok(self.get_newest());
         }
 
         loop {
             match self.rx.recv().await {
                 Ok(val) => {
                     self.inner = val;
-
-                    // If only interested in the newest, and more updates are available, process those first
-                    if !self.rx.is_empty() {
-                        continue;
-                    }
-                    return Ok(self.get_current());
+                    break;
                 }
-                Err(e) => match e {
-                    RecvError::Closed => return Err(CacheRecvNewestError::Closed),
-                    RecvError::Lagged(nr) => log::debug!(
-                        "Cache of actor type {} lagged {nr:?} messages",
-                        std::any::type_name::<T>()
-                    ),
-                },
+                Err(RecvError::Closed) => return Err(CacheRecvNewestError::Closed),
+                Err(RecvError::Lagged(nr)) => log_lag::<T>(nr),
             }
         }
+        _ = self.drain_to_newest();
+        Ok(&self.inner)
     }
 
-    /// Receive the last updated value broadcasted by the actor (FIFO).
-    /// The first time it will return its current value immediately.
-    /// After that, it might wait indefinitely for a new update.
-    /// Note that when the cache is initialized with a default value, this might return the default while the actor has a different value.
+    /// Receives the next broadcasted value from the actor (FIFO).
     ///
-    /// Returns [`CacheRecvError`] on channel close or lag.
+    /// On the first call, returns the current cached value immediately, even if the channel is
+    /// closed. On subsequent calls, waits until an update is available.
+    ///
+    /// Note: when the cache is initialized with a default value (e.g. via
+    /// [`create_cache_from_default`](crate::Handle::create_cache_from_default)),
+    /// the first call may return the default while the actor holds a different value.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CacheRecvError::Closed`] if the actor is dropped, or
+    /// [`CacheRecvError::Lagged`] if the cache fell behind and messages were dropped.
     ///
     /// # Examples
     ///
@@ -189,27 +228,27 @@ where
     /// # }
     /// ```
     pub async fn recv(&mut self) -> Result<&T, CacheRecvError> {
-        // If requesting a value for the first time, it returns immediately
-        if self.first_request {
-            self.first_request = false;
+        if self.is_first_request() {
             return Ok(self.get_current());
         }
 
-        match self.rx.recv().await {
-            Ok(val) => {
-                self.inner = val;
-                Ok(self.get_current())
-            }
-            Err(e) => match e {
-                RecvError::Closed => Err(CacheRecvError::Closed),
-                RecvError::Lagged(nr) => Err(CacheRecvError::Lagged(nr)),
-            },
-        }
+        let val = self.rx.recv().await?;
+        Ok(self.store(val))
     }
 
-    /// Try to receive the newest updated value broadcasted by the actor, discarding any older messages.
-    /// The first time it will return its initialized value, even if no updates are present.
-    /// After that, lacking updates will return None.
+    /// Tries to receive the newest broadcasted value from the actor, discarding any older
+    /// messages. Returns immediately without waiting.
+    ///
+    /// On the first call, returns `Some` with the current cached value, even if no updates are
+    /// present. On subsequent calls, returns `None` if no new updates are available.
+    ///
+    /// Note: when the cache is initialized with a default value (e.g. via
+    /// [`create_cache_from_default`](crate::Handle::create_cache_from_default)),
+    /// the first call may return the default while the actor holds a different value.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CacheRecvNewestError::Closed`] if the actor is dropped.
     ///
     /// # Examples
     ///
@@ -249,42 +288,30 @@ where
     /// # }
     /// ```
     pub fn try_recv_newest(&mut self) -> Result<Option<&T>, CacheRecvNewestError> {
-        loop {
-            match self.rx.try_recv() {
-                Ok(val) => {
-                    self.first_request = false;
-                    self.inner = val;
-
-                    // If more updates are available, process those first
-                    if !self.rx.is_empty() {
-                        continue;
-                    }
-                    return Ok(Some(self.get_current()));
-                }
-                Err(e) => match e {
-                    TryRecvError::Closed => return Err(CacheRecvNewestError::Closed),
-                    TryRecvError::Empty => {
-                        // If no new updates are present when listening for the newest value the first time
-                        // Then simply exit with the initialized value if present
-                        if self.first_request {
-                            self.first_request = false;
-                            return Ok(Some(self.get_current()));
-                        } else {
-                            return Ok(None);
-                        }
-                    }
-                    TryRecvError::Lagged(nr) => log::debug!(
-                        "Cache of actor type {} lagged {nr:?} messages",
-                        std::any::type_name::<T>()
-                    ),
-                },
-            }
+        let first = self.is_first_request();
+        let received = self.drain_to_newest()?;
+        if received || first {
+            Ok(Some(&self.inner))
+        } else {
+            Ok(None)
         }
     }
 
-    /// Try to receive the last updated value broadcasted by the actor once (FIFO).
-    /// The first time it will return its initialized value, even if no updates are present.
-    /// After that, lacking updates will return None.
+    /// Tries to receive the next broadcasted value from the actor (FIFO). Returns immediately
+    /// without waiting.
+    ///
+    /// On the first call, returns `Some` with the current cached value, even if no updates are
+    /// present or the channel is closed. On subsequent calls, returns `None` if no new updates
+    /// are available.
+    ///
+    /// Note: when the cache is initialized with a default value (e.g. via
+    /// [`create_cache_from_default`](crate::Handle::create_cache_from_default)),
+    /// the first call may return the default while the actor holds a different value.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CacheRecvError::Closed`] if the actor is dropped, or
+    /// [`CacheRecvError::Lagged`] if the cache fell behind and messages were dropped.
     ///
     /// # Examples
     ///
@@ -324,27 +351,32 @@ where
     /// # }
     /// ```
     pub fn try_recv(&mut self) -> Result<Option<&T>, CacheRecvError> {
-        // If requesting a value for the first time, it returns immediately
-        if self.first_request {
-            self.first_request = false;
+        if self.is_first_request() {
             return Ok(Some(self.get_current()));
         }
 
         match self.rx.try_recv() {
-            Ok(val) => {
-                self.inner = val;
-                Ok(Some(self.get_current()))
-            }
-            Err(e) => match e {
-                TryRecvError::Closed => Err(CacheRecvError::Closed),
-                TryRecvError::Empty => Ok(None),
-                TryRecvError::Lagged(nr) => Err(CacheRecvError::Lagged(nr)),
-            },
+            Ok(val) => Ok(Some(self.store(val))),
+            Err(TryRecvError::Empty) => Ok(None),
+            Err(TryRecvError::Closed) => Err(CacheRecvError::Closed),
+            Err(TryRecvError::Lagged(nr)) => Err(CacheRecvError::Lagged(nr)),
         }
     }
 
-    /// Blocking version of [`recv`](Self::recv). Waits for the next broadcasted value (FIFO).
+    /// Blocking version of [`recv`](Self::recv). Receives the next broadcasted value (FIFO).
     /// Must not be called from an async context.
+    ///
+    /// On the first call, returns the current cached value immediately, even if the channel is
+    /// closed. On subsequent calls, blocks until an update is available.
+    ///
+    /// Note: when the cache is initialized with a default value (e.g. via
+    /// [`create_cache_from_default`](crate::Handle::create_cache_from_default)),
+    /// the first call may return the default while the actor holds a different value.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CacheRecvError::Closed`] if the actor is dropped, or
+    /// [`CacheRecvError::Lagged`] if the cache fell behind and messages were dropped.
     ///
     /// # Examples
     ///
@@ -365,25 +397,27 @@ where
     /// # }
     /// ```
     pub fn blocking_recv(&mut self) -> Result<&T, CacheRecvError> {
-        if self.first_request {
-            self.first_request = false;
+        if self.is_first_request() {
             return Ok(self.get_current());
         }
 
-        match self.rx.blocking_recv() {
-            Ok(val) => {
-                self.inner = val;
-                Ok(self.get_current())
-            }
-            Err(e) => match e {
-                RecvError::Closed => Err(CacheRecvError::Closed),
-                RecvError::Lagged(nr) => Err(CacheRecvError::Lagged(nr)),
-            },
-        }
+        let val = self.rx.blocking_recv()?;
+        Ok(self.store(val))
     }
 
-    /// Blocking version of [`recv_newest`](Self::recv_newest). Waits for the newest broadcasted value.
-    /// Must not be called from an async context.
+    /// Blocking version of [`recv_newest`](Self::recv_newest). Receives the newest broadcasted
+    /// value, discarding any older messages. Must not be called from an async context.
+    ///
+    /// On the first call, returns the newest available value immediately, even if the channel is
+    /// closed. On subsequent calls, blocks until an update is available.
+    ///
+    /// Note: when the cache is initialized with a default value (e.g. via
+    /// [`create_cache_from_default`](crate::Handle::create_cache_from_default)),
+    /// the first call may return the default while the actor holds a different value.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CacheRecvNewestError::Closed`] if the actor is dropped (after the first call).
     ///
     /// # Examples
     ///
@@ -403,28 +437,20 @@ where
     /// # }
     /// ```
     pub fn blocking_recv_newest(&mut self) -> Result<&T, CacheRecvNewestError> {
-        if self.first_request {
-            self.first_request = false;
-            self.try_recv_newest()?;
-            return Ok(self.get_current());
+        if self.is_first_request() {
+            return Ok(self.get_newest());
         }
 
         loop {
             match self.rx.blocking_recv() {
                 Ok(val) => {
                     self.inner = val;
-                    if !self.rx.is_empty() {
-                        continue;
+                    if self.rx.is_empty() {
+                        return Ok(&self.inner);
                     }
-                    return Ok(self.get_current());
                 }
-                Err(e) => match e {
-                    RecvError::Closed => return Err(CacheRecvNewestError::Closed),
-                    RecvError::Lagged(nr) => log::debug!(
-                        "Cache of actor type {} lagged {nr:?} messages",
-                        std::any::type_name::<T>()
-                    ),
-                },
+                Err(RecvError::Closed) => return Err(CacheRecvNewestError::Closed),
+                Err(RecvError::Lagged(nr)) => log_lag::<T>(nr),
             }
         }
     }
@@ -442,6 +468,13 @@ where
         let receiver = self.rx.resubscribe();
         Throttle::spawn_from_receiver(client, call, freq, receiver, Some(current));
     }
+}
+
+fn log_lag<T>(nr: u64) {
+    log::debug!(
+        "Cache of actor type {} lagged {nr:?} messages",
+        std::any::type_name::<T>()
+    );
 }
 
 /// Error returned by [`Cache::recv`] and [`Cache::try_recv`].
@@ -471,27 +504,82 @@ pub enum CacheRecvNewestError {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
     use crate::Handle;
     use tokio::time::{Duration, sleep};
 
-    #[tokio::test]
-    async fn test_delayed_cache_return() {
+    #[tokio::test(start_paused = true)]
+    async fn test_recv_waits_for_update() {
         let handle = Handle::new(2);
         let mut cache = handle.create_cache().await;
 
-        cache.recv().await.unwrap(); // First listen exits immediately
+        assert_eq!(cache.recv().await.unwrap(), &2); // First call returns immediately
 
         tokio::select! {
             _ = async {
                 sleep(Duration::from_millis(200)).await;
                 handle.set(10).await;
-                sleep(Duration::from_millis(200)).await; // Allow recv to exit
+                sleep(Duration::from_millis(200)).await;
             } => panic!("Timeout"),
             res = cache.recv() => assert_eq!(res.unwrap(), &10)
         };
     }
 
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
+    async fn test_recv_fifo_ordering() {
+        let handle = Handle::new(0);
+        let mut cache = handle.create_cache().await;
+
+        assert_eq!(cache.recv().await.unwrap(), &0); // First call
+
+        handle.set(1).await;
+        handle.set(2).await;
+        handle.set(3).await;
+
+        assert_eq!(cache.recv().await.unwrap(), &1);
+        assert_eq!(cache.recv().await.unwrap(), &2);
+        assert_eq!(cache.recv().await.unwrap(), &3);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn test_recv_newest_skips_intermediate() {
+        let handle = Handle::new(0);
+        let mut cache = handle.create_cache().await;
+
+        assert_eq!(cache.recv_newest().await.unwrap(), &0); // First call
+
+        handle.set(1).await;
+        handle.set(2).await;
+        handle.set(3).await;
+        sleep(Duration::from_millis(1)).await; // Let broadcasts arrive
+
+        assert_eq!(cache.recv_newest().await.unwrap(), &3); // Skips 1 and 2
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn test_try_recv_returns_none_when_empty() {
+        let handle = Handle::new(1);
+        let mut cache = handle.create_cache().await;
+
+        assert_eq!(cache.try_recv().unwrap(), Some(&1)); // First call
+        assert_eq!(cache.try_recv().unwrap(), None); // No updates
+
+        handle.set(2).await;
+        assert_eq!(cache.try_recv().unwrap(), Some(&2));
+        assert_eq!(cache.try_recv().unwrap(), None);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn test_try_recv_newest_returns_none_when_empty() {
+        let handle = Handle::new(1);
+        let mut cache = handle.create_cache().await;
+
+        handle.set(2).await;
+        assert_eq!(cache.try_recv_newest().unwrap(), Some(&2)); // First call
+        assert_eq!(cache.try_recv_newest().unwrap(), None);
+    }
+
+    #[tokio::test(start_paused = true)]
     async fn test_try_set_if_changed() {
         let handle = Handle::new(1);
         let mut cache = handle.create_cache().await;
@@ -499,6 +587,91 @@ mod tests {
         handle.set_if_changed(1).await;
         assert!(cache.try_recv_newest().unwrap().is_none());
         handle.set_if_changed(2).await;
-        assert_eq!(cache.try_recv_newest().unwrap(), Some(&2))
+        assert_eq!(cache.try_recv_newest().unwrap(), Some(&2));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn test_get_current_does_not_sync() {
+        let handle = Handle::new(1);
+        let cache = handle.create_cache().await;
+
+        handle.set(99).await;
+        assert_eq!(cache.get_current(), &1); // Still the old value
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn test_get_newest_syncs() {
+        let handle = Handle::new(1);
+        let mut cache = handle.create_cache().await;
+
+        handle.set(2).await;
+        handle.set(3).await;
+        assert_eq!(cache.get_newest(), &3);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn test_has_updates() {
+        let handle = Handle::new(1);
+        let cache = handle.create_cache().await;
+
+        assert!(!cache.has_updates());
+        handle.set(2).await;
+        assert!(cache.has_updates());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn test_create_cache_from_default() {
+        let handle = Handle::new(42);
+        let mut cache = handle.create_cache_from_default();
+
+        // Starts from default, not the actor's value
+        assert_eq!(cache.get_current(), &0);
+        assert_eq!(cache.try_recv().unwrap(), Some(&0)); // First call returns default
+
+        // Only sees actor value after a broadcast
+        handle.set(99).await;
+        assert_eq!(cache.try_recv().unwrap(), Some(&99));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn test_closed_channel() {
+        let handle = Handle::new(1);
+        let mut cache = handle.create_cache().await;
+        cache.recv().await.unwrap(); // Consume first request
+
+        drop(handle);
+        assert_eq!(cache.recv().await, Err(CacheRecvError::Closed));
+        assert_eq!(cache.recv_newest().await, Err(CacheRecvNewestError::Closed));
+        assert_eq!(cache.try_recv(), Err(CacheRecvError::Closed));
+        assert_eq!(cache.try_recv_newest(), Err(CacheRecvNewestError::Closed));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn test_blocking_recv() {
+        let handle = Handle::new(1);
+        let mut cache = handle.create_cache().await;
+        handle.set(2).await;
+
+        std::thread::spawn(move || {
+            assert_eq!(cache.blocking_recv().unwrap(), &1);
+            assert_eq!(cache.blocking_recv().unwrap(), &2);
+        })
+        .join()
+        .unwrap();
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn test_blocking_recv_newest() {
+        let handle = Handle::new(1);
+        let mut cache = handle.create_cache().await;
+        handle.set(2).await;
+        handle.set(3).await;
+
+        std::thread::spawn(move || {
+            // First call drains to newest
+            assert_eq!(cache.blocking_recv_newest().unwrap(), &3);
+        })
+        .join()
+        .unwrap();
     }
 }

@@ -381,14 +381,42 @@ impl<T: Clone + Send + Sync + 'static, V> Handle<T, V> {
     }
 }
 
+impl<T, V: Clone + Send + Sync + 'static> Handle<T, V> {
+    /// Creates a [`Cache`] initialized with the given value that locally synchronizes
+    /// with broadcasted updates from the actor.
+    /// As it is not initialized with the current value, any updates before construction are missed.
+    ///
+    /// See also [`Handle::create_cache`] for a cache initialized with the current actor value,
+    /// or [`Handle::create_cache_from_default`] to start from `V::default()`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use actify::Handle;
+    /// # #[tokio::main]
+    /// # async fn main() {
+    /// let handle = Handle::new(10);
+    /// let mut cache = handle.create_cache_from(42);
+    /// assert_eq!(cache.get_current(), &42);
+    ///
+    /// handle.set(99).await;
+    /// assert_eq!(cache.get_newest(), &99);
+    /// # }
+    /// ```
+    pub fn create_cache_from(&self, initial_value: V) -> Cache<V> {
+        Cache::new(self.subscribe(), initial_value)
+    }
+}
+
 impl<T, V: Default + Clone + Send + Sync + 'static> Handle<T, V> {
     /// Creates a [`Cache`] initialized with `V::default()` that locally synchronizes
     /// with broadcasted updates from the actor.
     /// As it is not initialized with the current value, any updates before construction are missed.
     ///
-    /// See also [`Handle::create_cache`] for a cache initialized with the current actor value.
+    /// See also [`Handle::create_cache`] for a cache initialized with the current actor value,
+    /// or [`Handle::create_cache_from`] to start from a custom value.
     pub fn create_cache_from_default(&self) -> Cache<V> {
-        Cache::new(self.subscribe(), V::default())
+        self.create_cache_from(V::default())
     }
 }
 
