@@ -206,7 +206,6 @@ fn filter_attributes(attrs: &[Attribute]) -> Vec<Attribute> {
         .collect()
 }
 
-
 /// Verify the method has a receiver (`&self` or `&mut self`).
 fn validate_has_receiver(method: &ImplItemFn) -> Result<(), proc_macro2::TokenStream> {
     let has_receiver = method
