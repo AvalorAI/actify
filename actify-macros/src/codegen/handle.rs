@@ -34,7 +34,11 @@ pub fn generate_trait_impl(info: &ImplInfo) -> proc_macro2::TokenStream {
     let mut impl_generics = info.generics.clone();
     impl_generics.params.push(syn::parse_quote!(__V));
 
-    let methods = info.methods.iter().map(|m| method_body(info, m));
+    let call_prefix = build_call_prefix(info);
+    let methods = info
+        .methods
+        .iter()
+        .map(|m| method_body(m, &call_prefix, info));
 
     quote! {
         #(#impl_attrs)*
@@ -66,7 +70,11 @@ fn method_signature(method: &MethodInfo) -> proc_macro2::TokenStream {
 /// Generate the handle trait method implementation body.
 /// Boxes args, sends job to actor, the actor downcasts args, calls the original
 /// method, optionally broadcasts, and boxes the result.
-fn method_body(info: &ImplInfo, method: &MethodInfo) -> proc_macro2::TokenStream {
+fn method_body(
+    method: &MethodInfo,
+    call_prefix: &proc_macro2::TokenStream,
+    info: &ImplInfo,
+) -> proc_macro2::TokenStream {
     // #[deprecated] is a hard error on trait impl methods, #[must_use] triggers
     // a "has no effect" warning. Both only belong on the trait definition.
     let attrs: Vec<_> = method
@@ -83,7 +91,6 @@ fn method_body(info: &ImplInfo, method: &MethodInfo) -> proc_macro2::TokenStream
     let output_type = &method.output_type;
     let return_type = quote_return_type(output_type);
 
-    let call_prefix = build_call_prefix(info);
     let ident_string = format!("{}::{}", info.type_ident, ident);
 
     let awaiter = if method.is_async {
@@ -107,28 +114,23 @@ fn method_body(info: &ImplInfo, method: &MethodInfo) -> proc_macro2::TokenStream
     quote! {
         #(#attrs)*
         async fn #ident #method_generics(&self, #(#arg_names: #arg_types),*) #return_type #where_clause {
-            let res = self
-                .send_job(
-                    Box::new(
-                        |s: &mut actify::Actor<#impl_type>, args: Box<dyn std::any::Any + Send>|
-                        Box::pin(async move {
-                            let (#(#arg_names),*): (#(#arg_types),*) = *args
-                                .downcast()
-                                .expect("Downcasting failed due to an error in the Actify macro");
+            let res = self.send_job(
+                Box::new(|s: &mut actify::Actor<#impl_type>, args: Box<dyn std::any::Any + Send>|
+                Box::pin(async move {
+                    let (#(#arg_names),*): (#(#arg_types),*) = *args
+                        .downcast()
+                        .expect("Downcasting failed due to an error in the Actify macro");
 
-                            let result: #output_type = #call_prefix::#ident(&#mutability s.inner, #(#arg_names),*)#awaiter;
+                    let result: #output_type = #call_prefix::#ident(&#mutability s.inner, #(#arg_names),*)#awaiter;
 
-                            #broadcast
+                    #broadcast
 
-                            Box::new(result) as Box<dyn std::any::Any + Send>
-                        })),
-                    Box::new((#(#arg_names),*)),
-                )
-                .await;
+                    Box::new(result) as Box<dyn std::any::Any + Send>
+                })),
+                Box::new((#(#arg_names),*)),
+            ).await;
 
-            *res
-                .downcast()
-                .expect("Downcasting failed due to an error in the Actify macro")
+            *res.downcast().expect("Downcasting failed due to an error in the Actify macro")
         }
     }
 }

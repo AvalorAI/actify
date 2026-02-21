@@ -9,7 +9,8 @@ use crate::throttle::Throttle;
 use crate::{Cache, Frequency, Throttled};
 
 const CHANNEL_SIZE: usize = 100;
-const WRONG_RESPONSE: &str = "An incorrect response type for this method has been called";
+const DOWNCAST_FAIL: &str =
+    "Actify Macro error: failed to downcast arguments to their concrete type";
 
 /// Defines how to convert an actor's value to its broadcast type.
 ///
@@ -57,10 +58,14 @@ where
     V: Clone + Send + Sync + 'static,
 {
     Box::new(move |inner: &T, method: &str| {
-        if sender.send(inner.to_broadcast()).is_err() {
-            log::trace!("No active receivers for broadcast on {method:?}");
+        if sender.receiver_count() > 0 {
+            if sender.send(inner.to_broadcast()).is_err() {
+                log::trace!("Broadcast failed because there are no active on {method:?}");
+            } else {
+                log::trace!("Broadcasted new value on {method:?}");
+            }
         } else {
-            log::trace!("Broadcasted new value on {method:?}");
+            log::trace!("Skipping broadcast because there are no active receivers on {method:?}");
         }
     })
 }
@@ -141,13 +146,7 @@ where
             broadcast_sender: broadcast_tx,
         }
     }
-}
 
-impl<T, V> Handle<T, V>
-where
-    T: BroadcastAs<V> + Send + Sync + 'static,
-    V: Clone + Send + Sync + 'static,
-{
     /// Creates a new [`Handle`] and initializes a corresponding [`Throttle`].
     /// The throttle fires given a specified [`Frequency`].
     /// See [`Handle::spawn_throttle`] for an example.
@@ -213,8 +212,8 @@ impl<T: Send + Sync + 'static, V> Handle<T, V> {
         self.tx
             .send(job)
             .await
-            .expect("A panic occured in the Actor");
-        get_result.await.expect("A panic occured in the Actor")
+            .expect("A panic occurred in the Actor");
+        get_result.await.expect("A panic occurred in the Actor")
     }
 
     /// Sends a closure to the actor, handling all boxing/unboxing internally.
@@ -234,14 +233,14 @@ impl<T: Send + Sync + 'static, V> Handle<T, V> {
                 Box::new(move |s: &mut Actor<T>, boxed_args: Box<dyn Any + Send>| {
                     let f = f.take().unwrap();
                     Box::pin(async move {
-                        let args = *boxed_args.downcast::<A>().expect(WRONG_RESPONSE);
+                        let args = *boxed_args.downcast::<A>().expect(DOWNCAST_FAIL);
                         Box::new(f(s, args)) as Box<dyn Any + Send>
                     })
                 }),
                 Box::new(args),
             )
             .await;
-        *res.downcast::<R>().expect(WRONG_RESPONSE)
+        *res.downcast::<R>().expect(DOWNCAST_FAIL)
     }
 
     /// Overwrites the inner value of the actor with the new value.
@@ -326,6 +325,10 @@ impl<T: Send + Sync + 'static, V> Handle<T, V> {
     ///
     /// This is useful for atomic read-modify-return operations without
     /// defining a dedicated `#[actify]` method.
+    ///
+    /// **Note:** This always broadcasts after the closure returns, even if
+    /// the closure did not actually mutate anything. Use [`Handle::with`]
+    /// for read-only access that does not broadcast.
     ///
     /// # Examples
     ///
@@ -551,6 +554,25 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_with_does_not_broadcast() {
+        let handle = Handle::new(vec![1, 2, 3]);
+        let mut rx = handle.subscribe();
+
+        let _len = handle.with(|v| v.len()).await;
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn test_with_mut_broadcasts_even_without_mutation() {
+        let handle = Handle::new(vec![1, 2, 3]);
+        let mut rx = handle.subscribe();
+
+        // Read-only operation through with_mut still broadcasts
+        let _len = handle.with_mut(|v| v.len()).await;
+        assert!(rx.try_recv().is_ok());
+    }
+
+    #[tokio::test]
     async fn test_clone_actor_with_custom_broadcast() {
         let handle: Handle<BigState, usize> = Handle::new(BigState {
             data: vec![1, 2, 3],
@@ -562,14 +584,16 @@ mod tests {
         let val = handle.get().await;
         assert_eq!(val.count, 3);
 
-        handle
-            .set(BigState {
-                data: vec![1, 2, 3, 4],
-                count: 4,
-            })
-            .await;
+        let new_big_state = BigState {
+            data: vec![1, 2, 3, 4],
+            count: 4,
+        };
+        handle.set(new_big_state.clone()).await;
 
         let broadcast_val: usize = rx.recv().await.unwrap();
         assert_eq!(broadcast_val, 4);
+
+        let big_state = handle.get().await;
+        assert_eq!(big_state, new_big_state);
     }
 }

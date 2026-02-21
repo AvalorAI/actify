@@ -1,0 +1,5 @@
+error: methods already broadcast by default; `#[actify(broadcast)]` is unnecessary
+ --> tests/compile_fail/unnecessary_block_broadcast.rs:7:10
+  |
+7 | #[actify(broadcast)]
+  |          ^^^^^^^^^
