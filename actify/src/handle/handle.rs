@@ -9,7 +9,8 @@ use crate::throttle::Throttle;
 use crate::{Cache, Frequency, Throttled};
 
 const CHANNEL_SIZE: usize = 100;
-const WRONG_RESPONSE: &str = "An incorrect response type for this method has been called";
+const DOWNCAST_FAIL: &str =
+    "Actify Macro error: failed to downcast arguments to their concrete type";
 
 /// Defines how to convert an actor's value to its broadcast type.
 ///
@@ -232,14 +233,14 @@ impl<T: Send + Sync + 'static, V> Handle<T, V> {
                 Box::new(move |s: &mut Actor<T>, boxed_args: Box<dyn Any + Send>| {
                     let f = f.take().unwrap();
                     Box::pin(async move {
-                        let args = *boxed_args.downcast::<A>().expect(WRONG_RESPONSE);
+                        let args = *boxed_args.downcast::<A>().expect(DOWNCAST_FAIL);
                         Box::new(f(s, args)) as Box<dyn Any + Send>
                     })
                 }),
                 Box::new(args),
             )
             .await;
-        *res.downcast::<R>().expect(WRONG_RESPONSE)
+        *res.downcast::<R>().expect(DOWNCAST_FAIL)
     }
 
     /// Overwrites the inner value of the actor with the new value.
@@ -324,6 +325,10 @@ impl<T: Send + Sync + 'static, V> Handle<T, V> {
     ///
     /// This is useful for atomic read-modify-return operations without
     /// defining a dedicated `#[actify]` method.
+    ///
+    /// **Note:** This always broadcasts after the closure returns, even if
+    /// the closure did not actually mutate anything. Use [`Handle::with`]
+    /// for read-only access that does not broadcast.
     ///
     /// # Examples
     ///
@@ -518,6 +523,25 @@ mod tests {
         fn to_broadcast(&self) -> usize {
             self.count
         }
+    }
+
+    #[tokio::test]
+    async fn test_with_does_not_broadcast() {
+        let handle = Handle::new(vec![1, 2, 3]);
+        let mut rx = handle.subscribe();
+
+        let _len = handle.with(|v| v.len()).await;
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn test_with_mut_broadcasts_even_without_mutation() {
+        let handle = Handle::new(vec![1, 2, 3]);
+        let mut rx = handle.subscribe();
+
+        // Read-only operation through with_mut still broadcasts
+        let _len = handle.with_mut(|v| v.len()).await;
+        assert!(rx.try_recv().is_ok());
     }
 
     #[tokio::test]

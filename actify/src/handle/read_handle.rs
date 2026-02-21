@@ -8,7 +8,7 @@ use crate::Cache;
 /// A clonable read-only handle that can only be used to read the internal value.
 ///
 /// Obtained via [`Handle::get_read_handle`]. Supports [`ReadHandle::get`],
-/// [`ReadHandle::subscribe`], and [`ReadHandle::create_cache`].
+/// [`ReadHandle::with`], [`ReadHandle::subscribe`], and [`ReadHandle::create_cache`].
 pub struct ReadHandle<T, V = T>(Handle<T, V>);
 
 impl<T, V> ReadHandle<T, V> {
@@ -47,6 +47,50 @@ impl<T, V> ReadHandle<T, V> {
     /// ```
     pub fn subscribe(&self) -> broadcast::Receiver<V> {
         self.0.subscribe()
+    }
+}
+
+impl<T: Send + Sync + 'static, V> ReadHandle<T, V> {
+    /// Runs a read-only closure on the actor's value and returns the result.
+    ///
+    /// This is especially useful for non-Clone types where [`ReadHandle::get`]
+    /// is not available, but it works with any actor type.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use actify::{Handle, BroadcastAs};
+    /// # #[tokio::main]
+    /// # async fn main() {
+    /// // A non-Clone type — get() is not available on ReadHandle
+    /// struct Inventory { items: Vec<String> }
+    ///
+    /// #[derive(Clone, Debug)]
+    /// struct Count(usize);
+    ///
+    /// impl BroadcastAs<Count> for Inventory {
+    ///     fn to_broadcast(&self) -> Count { Count(self.items.len()) }
+    /// }
+    ///
+    /// let handle: Handle<Inventory, Count> = Handle::new(Inventory {
+    ///     items: vec!["sword".into(), "shield".into()],
+    /// });
+    /// let read_handle = handle.get_read_handle();
+    ///
+    /// // Read parts of the value without cloning the whole thing
+    /// let count = read_handle.with(|inv| inv.items.len()).await;
+    /// assert_eq!(count, 2);
+    ///
+    /// let first = read_handle.with(|inv| inv.items[0].clone()).await;
+    /// assert_eq!(first, "sword");
+    /// # }
+    /// ```
+    pub async fn with<R, F>(&self, f: F) -> R
+    where
+        F: FnOnce(&T) -> R + Send + 'static,
+        R: Send + 'static,
+    {
+        self.0.with(f).await
     }
 }
 
@@ -103,4 +147,5 @@ mod tests {
         handle.set(2).await;
         assert_eq!(read_handle.get().await, 2);
     }
+
 }
