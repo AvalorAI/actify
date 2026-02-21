@@ -5,6 +5,11 @@
 //! Actify is a pre-1.0 crate used in production. The API may still change between minor versions.
 //!
 //! Actify is an actor model built on [Tokio][tokio] that allows annotating any regular implementation block of your own type with the [`actify`](macro@actify) macro.
+//! Sharing (mutable) state across async tasks in Rust usually means juggling mutexes and channels,
+//! and a lot of boilerplate like hand-writen message enums. Actify gives you a typed, async
+//! actor for any struct — just add `#[actify]` to an `impl` block and call your methods
+//! through a clonable [`Handle`].
+//!
 //! By generating the boilerplate code for you, a few key benefits are provided:
 //!
 //! * Async actor model built on Tokio and channels

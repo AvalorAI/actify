@@ -244,6 +244,7 @@ impl<T: Send + Sync + 'static, V> Handle<T, V> {
     }
 
     /// Overwrites the inner value of the actor with the new value.
+    /// Broadcasts the new value to all subscribers.
     ///
     /// # Examples
     ///
@@ -293,6 +294,7 @@ impl<T: Send + Sync + 'static, V> Handle<T, V> {
     }
 
     /// Runs a read-only closure on the actor's value and returns the result.
+    /// Does not broadcast.
     ///
     /// This is useful for reading parts of the actor state without cloning
     /// the entire value, and works with non-Clone types.
@@ -364,6 +366,7 @@ impl<T: Send + Sync + 'static, V> Handle<T, V> {
 
 impl<T: Clone + Send + Sync + 'static, V> Handle<T, V> {
     /// Receives a clone of the current value of the actor.
+    /// Does not broadcast.
     ///
     /// # Examples
     ///
