@@ -2,7 +2,7 @@
 
 Actify is a pre-1.0 crate used in production. The API may still change between minor versions.
 
-Sharing (mutable) state across async tasks in Rust usually means juggling mutexes and channels, and a lot of boilerplate like hand-writen message enums. Actify gives you a typed, async [actor model](https://en.wikipedia.org/wiki/Actor_model) built on [Tokio](https://tokio.rs) for any struct — just add `#[actify]` to an `impl` block and call your methods through a clonable [`Handle`].
+Sharing (mutable) state across async tasks in Rust usually means juggling mutexes and channels, and a lot of boilerplate like hand-writen message enums. Actify gives you a typed, async [actor model](https://en.wikipedia.org/wiki/Actor_model) built on [Tokio](https://tokio.rs) for any struct. Just add `#[actify]` to an `impl` block and call your methods through a clonable [`Handle`].
 
 [![Crates.io][crates-badge]][crates-url]
 [![License][mit-badge]][mit-url]

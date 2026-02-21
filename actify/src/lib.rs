@@ -6,7 +6,7 @@
 //!
 //! Sharing (mutable) state across async tasks in Rust usually means juggling mutexes and channels,
 //! and a lot of boilerplate like hand-writen message enums. Actify gives you a typed, async
-//! actor model built on [Tokio][tokio] for any struct — just add `#[actify]` to an `impl` block and call your methods
+//! actor model built on [Tokio][tokio] for any struct. Just add `#[actify]` to an `impl` block and call your methods
 //! through a clonable [`Handle`].
 //!
 //! By generating the boilerplate code for you, a few key benefits are provided:
