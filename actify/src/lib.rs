@@ -324,7 +324,7 @@
 mod actor;
 mod cache;
 mod extensions;
-mod handle;
+mod handles;
 mod throttle;
 
 // Reexport for easier reference
@@ -333,7 +333,7 @@ pub use cache::{Cache, CacheRecvError, CacheRecvNewestError};
 pub use extensions::{
     map::HashMapHandle, option::OptionHandle, set::HashSetHandle, vec::VecHandle,
 };
-pub use handle::{BroadcastAs, Handle, ReadHandle};
+pub use handles::{BroadcastAs, Handle, ReadHandle};
 pub use throttle::{Frequency, Throttle, Throttled};
 
 #[doc(hidden)]

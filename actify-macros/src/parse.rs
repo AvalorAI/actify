@@ -228,6 +228,7 @@ fn validate_has_receiver(method: &ImplItemFn) -> Result<(), proc_macro2::TokenSt
 /// For ident patterns, uses the original name. For non-ident patterns (e.g.
 /// destructuring `(a, b): (i32, i32)`), generates a positional name so the
 /// handle can box/unbox the value; the original method destructures at the call site.
+#[allow(clippy::type_complexity, clippy::single_match)]
 fn transform_args(
     args: &Punctuated<FnArg, Comma>,
 ) -> Result<(Punctuated<Ident, Comma>, Punctuated<Type, Comma>), proc_macro2::TokenStream> {

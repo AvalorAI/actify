@@ -4,7 +4,7 @@ use std::fmt::{self, Debug};
 use tokio::sync::{broadcast, mpsc, oneshot};
 
 use super::read_handle::ReadHandle;
-use crate::actor::{Actor, ActorMethod, Job, serve};
+use crate::actor::{Actor, ActorMethod, BroadcastFn, Job, serve};
 use crate::throttle::Throttle;
 use crate::{Cache, Frequency, Throttled};
 
@@ -52,7 +52,7 @@ impl<T: Clone> BroadcastAs<T> for T {
 
 /// Creates the broadcast function that the [`Actor`] calls after each `&mut self` method.
 /// Converts the actor value to `V` via [`BroadcastAs`] and sends it to all subscribers.
-fn make_broadcast_fn<T, V>(sender: broadcast::Sender<V>) -> Box<dyn Fn(&T, &str) + Send + Sync>
+fn make_broadcast_fn<T, V>(sender: broadcast::Sender<V>) -> BroadcastFn<T>
 where
     T: BroadcastAs<V>,
     V: Clone + Send + Sync + 'static,
