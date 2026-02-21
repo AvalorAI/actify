@@ -2,7 +2,7 @@
 
 Actify is a pre-1.0 crate used in production. The API may still change between minor versions.
 
-Actify is an [actor model](https://en.wikipedia.org/wiki/Actor_model) built on [Tokio](https://tokio.rs) that allows annotating any regular implementation block of your own type with the `#[actify]` macro.
+Sharing (mutable) state across async tasks in Rust usually means juggling mutexes and channels, and a lot of boilerplate like hand-writen message enums. Actify gives you a typed, async [actor model](https://en.wikipedia.org/wiki/Actor_model) built on [Tokio](https://tokio.rs) for any struct — just add `#[actify]` to an `impl` block and call your methods through a clonable [`Handle`].
 
 [![Crates.io][crates-badge]][crates-url]
 [![License][mit-badge]][mit-url]
@@ -63,6 +63,33 @@ async fn main() {
 
     // The method is executed remotely on the initialized Greeter and returned through the handle
     assert_eq!(greeting, "hi Alfred".to_string())
+}
+```
+
+## Reactive Subscriptions
+
+Actors broadcast state changes automatically. Subscribers and caches let you react to updates without polling:
+
+```rust,no_run
+use actify::Handle;
+
+#[tokio::main]
+async fn main() {
+    let handle = Handle::new(0);
+
+    // Subscribe to raw broadcast events
+    let mut rx = handle.subscribe();
+
+    // Or create a local cache that stays in sync
+    let mut cache = handle.create_cache().await;
+
+    handle.set(42).await;
+
+    // The subscriber receives every change
+    assert_eq!(rx.recv().await.unwrap(), 42);
+
+    // The cache provides synchronous access to the latest value
+    assert_eq!(cache.get_newest(), &42);
 }
 ```
 
