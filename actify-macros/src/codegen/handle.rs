@@ -35,7 +35,10 @@ pub fn generate_trait_impl(info: &ImplInfo) -> proc_macro2::TokenStream {
     impl_generics.params.push(syn::parse_quote!(__V));
 
     let call_prefix = build_call_prefix(info);
-    let methods = info.methods.iter().map(|m| method_body(m, &call_prefix, info));
+    let methods = info
+        .methods
+        .iter()
+        .map(|m| method_body(m, &call_prefix, info));
 
     quote! {
         #(#impl_attrs)*
@@ -111,28 +114,23 @@ fn method_body(
     quote! {
         #(#attrs)*
         async fn #ident #method_generics(&self, #(#arg_names: #arg_types),*) #return_type #where_clause {
-            let res = self
-                .send_job(
-                    Box::new(
-                        |s: &mut actify::Actor<#impl_type>, args: Box<dyn std::any::Any + Send>|
-                        Box::pin(async move {
-                            let (#(#arg_names),*): (#(#arg_types),*) = *args
-                                .downcast()
-                                .expect("Downcasting failed due to an error in the Actify macro");
+            let res = self.send_job(
+                Box::new(|s: &mut actify::Actor<#impl_type>, args: Box<dyn std::any::Any + Send>|
+                Box::pin(async move {
+                    let (#(#arg_names),*): (#(#arg_types),*) = *args
+                        .downcast()
+                        .expect("Downcasting failed due to an error in the Actify macro");
 
-                            let result: #output_type = #call_prefix::#ident(&#mutability s.inner, #(#arg_names),*)#awaiter;
+                    let result: #output_type = #call_prefix::#ident(&#mutability s.inner, #(#arg_names),*)#awaiter;
 
-                            #broadcast
+                    #broadcast
 
-                            Box::new(result) as Box<dyn std::any::Any + Send>
-                        })),
-                    Box::new((#(#arg_names),*)),
-                )
-                .await;
+                    Box::new(result) as Box<dyn std::any::Any + Send>
+                })),
+                Box::new((#(#arg_names),*)),
+            ).await;
 
-            *res
-                .downcast()
-                .expect("Downcasting failed due to an error in the Actify macro")
+            *res.downcast().expect("Downcasting failed due to an error in the Actify macro")
         }
     }
 }
