@@ -29,6 +29,8 @@ pub fn get_sorted_broadcast_counts() -> Vec<(String, usize)> {
     v
 }
 
+pub(crate) type BroadcastFn<T> = Box<dyn Fn(&T, &str) + Send + Sync>;
+
 /// The internal actor wrapper that runs in a separate task.
 ///
 /// You do not create this directly — it is spawned by [`Handle::new`](super::Handle::new).
@@ -36,7 +38,7 @@ pub fn get_sorted_broadcast_counts() -> Vec<(String, usize)> {
 #[doc(hidden)]
 pub struct Actor<T> {
     pub inner: T,
-    broadcast_fn: Box<dyn Fn(&T, &str) + Send + Sync>,
+    broadcast_fn: BroadcastFn<T>,
 }
 
 impl<T: Debug> Debug for Actor<T> {
@@ -46,7 +48,7 @@ impl<T: Debug> Debug for Actor<T> {
 }
 
 impl<T> Actor<T> {
-    pub(crate) fn new(broadcast_fn: Box<dyn Fn(&T, &str) + Send + Sync>, inner: T) -> Self {
+    pub(crate) fn new(broadcast_fn: BroadcastFn<T>, inner: T) -> Self {
         Self {
             inner,
             broadcast_fn,
