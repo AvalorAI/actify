@@ -259,6 +259,60 @@ impl SkipMultipleBroadcastsActor {
     }
 }
 
+/// Tests that proc-macro attributes like `#[instrument]` are stripped from generated
+#[derive(Clone, Debug)]
+struct InstrumentedActor {
+    value: i32,
+}
+
+#[actify]
+impl InstrumentedActor {
+    #[tracing::instrument(skip_all)]
+    fn get_value(&self) -> i32 {
+        self.value
+    }
+
+    #[tracing::instrument(level = "debug", skip_all, fields(new_value))]
+    fn set_value(&mut self, new_value: i32) {
+        self.value = new_value;
+    }
+
+    /// Doc + instrument combined — doc should propagate, instrument should not.
+    #[tracing::instrument(skip_all)]
+    async fn async_get(&self) -> i32 {
+        self.value
+    }
+
+    #[tracing::instrument(skip_all)]
+    #[allow(unused_variables)]
+    fn unused_set(&mut self, v: i32) {
+        self.value = v;
+    }
+}
+
+/// Same test with unqualified `instrument` (via `use tracing::instrument`).
+#[derive(Clone, Debug)]
+struct UnqualifiedInstrumentActor {
+    count: u32,
+}
+
+#[allow(unused_imports)]
+use tracing::instrument;
+
+#[actify]
+impl UnqualifiedInstrumentActor {
+    #[instrument(skip_all)]
+    fn increment(&mut self) -> u32 {
+        self.count += 1;
+        self.count
+    }
+
+    #[instrument(level = "trace", skip_all)]
+    fn get_count(&self) -> u32 {
+        self.count
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -419,6 +473,26 @@ mod tests {
 
         let sorted_counts = actify::get_sorted_broadcast_counts();
         println!("{:?}", sorted_counts);
+    }
+
+    #[tokio::test]
+    async fn test_instrument_attr_stripped_from_handle() {
+        let handle = Handle::new(InstrumentedActor { value: 10 });
+
+        assert_eq!(handle.get_value().await, 10);
+        handle.set_value(42).await;
+        assert_eq!(handle.get_value().await, 42);
+        assert_eq!(handle.async_get().await, 42);
+    }
+
+    #[tokio::test]
+    async fn test_unqualified_instrument_attr() {
+        // Same test with unqualified `#[instrument]` (single-segment path)
+        let handle = Handle::new(UnqualifiedInstrumentActor { count: 0 });
+
+        assert_eq!(handle.increment().await, 1);
+        assert_eq!(handle.increment().await, 2);
+        assert_eq!(handle.get_count().await, 2);
     }
 
     #[tokio::test]

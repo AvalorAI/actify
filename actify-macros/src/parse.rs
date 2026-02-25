@@ -188,20 +188,45 @@ fn get_impl_type_ident(impl_type: &Type) -> Result<Ident, proc_macro2::TokenStre
     })
 }
 
-/// Propagate all attributes except actify-specific ones (like `skip_broadcast`)
-/// that are consumed during parsing and should not appear on generated methods.
-/// Used for public-facing generated code (handle trait) where user attributes
-/// like `#[doc]`, `#[deprecated]`, `#[must_use]` should be visible.
+/// Built-in compiler attributes that are safe to propagate onto generated trait
+/// signatures and handle impl methods.  Everything else (proc-macro attributes
+/// like `#[instrument]`, actify-specific attributes like `#[skip_broadcast]`)
+/// is stripped so it only appears on the original impl method where it belongs.
+const PROPAGATED_ATTRIBUTES: &[&str] = &[
+    "doc",
+    "allow",
+    "warn",
+    "deny",
+    "forbid",
+    "cfg",
+    "cfg_attr",
+    "deprecated",
+    "must_use",
+];
+
+/// Returns `true` if the attribute is in the [`PROPAGATED_ATTRIBUTES`] whitelist.
+///
+/// Only single-segment paths are checked (all built-in compiler attributes are
+/// single-segment). Multi-segment paths like `tracing::instrument` or
+/// `actify::skip_broadcast` are always excluded.
+fn is_propagated_attribute(attr: &Attribute) -> bool {
+    let segments = &attr.path().segments;
+    segments.len() == 1
+        && segments
+            .first()
+            .map_or(false, |seg| PROPAGATED_ATTRIBUTES.contains(&seg.ident.to_string().as_str()))
+}
+
+/// Keep only whitelisted built-in attributes for generated code.
+///
+/// Proc-macro attributes (e.g. `#[instrument]`) and actify-specific attributes
+/// (e.g. `#[skip_broadcast]`) are stripped — the former because they transform
+/// function bodies and are semantically wrong on generated plumbing code, the
+/// latter because they are consumed during parsing.
 fn filter_attributes(attrs: &[Attribute]) -> Vec<Attribute> {
     attrs
         .iter()
-        .filter(|attr| {
-            !attr
-                .path()
-                .segments
-                .iter()
-                .any(|seg| seg.ident == "skip_broadcast" || seg.ident == "broadcast")
-        })
+        .filter(|attr| is_propagated_attribute(attr))
         .cloned()
         .collect()
 }
@@ -286,5 +311,83 @@ fn validate_arg_type(ty: &Type, span: proc_macro2::Span) -> Result<(), proc_macr
             span =>
             compile_error!("Unsupported argument type for actor method; use a concrete owned type (e.g. String, Vec<T>, (A, B), [T; N])");
         }),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use syn::parse_quote;
+
+    fn attr(tokens: Attribute) -> Attribute {
+        tokens
+    }
+
+    #[test]
+    fn whitelisted_attributes_are_propagated() {
+        let attrs: Vec<Attribute> = vec![
+            attr(parse_quote!(#[doc = "hello"])),
+            attr(parse_quote!(#[allow(unused)])),
+            attr(parse_quote!(#[warn(missing_docs)])),
+            attr(parse_quote!(#[deny(warnings)])),
+            attr(parse_quote!(#[forbid(unsafe_code)])),
+            attr(parse_quote!(#[cfg(test)])),
+            attr(parse_quote!(#[cfg_attr(test, ignore)])),
+            attr(parse_quote!(#[deprecated])),
+            attr(parse_quote!(#[must_use])),
+        ];
+
+        let filtered = filter_attributes(&attrs);
+        assert_eq!(filtered.len(), attrs.len(), "all whitelisted attributes should pass through");
+    }
+
+    #[test]
+    fn instrument_is_stripped() {
+        let attrs: Vec<Attribute> = vec![
+            attr(parse_quote!(#[doc = "keep me"])),
+            attr(parse_quote!(#[instrument(level = "debug", skip_all)])),
+        ];
+
+        let filtered = filter_attributes(&attrs);
+        assert_eq!(filtered.len(), 1);
+        assert!(filtered[0].path().is_ident("doc"));
+    }
+
+    #[test]
+    fn qualified_instrument_is_stripped() {
+        let attrs: Vec<Attribute> = vec![
+            attr(parse_quote!(#[tracing::instrument(skip_all)])),
+            attr(parse_quote!(#[cfg(feature = "tracing")])),
+        ];
+
+        let filtered = filter_attributes(&attrs);
+        assert_eq!(filtered.len(), 1);
+        assert!(filtered[0].path().is_ident("cfg"));
+    }
+
+    #[test]
+    fn actify_attrs_are_stripped() {
+        let attrs: Vec<Attribute> = vec![
+            attr(parse_quote!(#[skip_broadcast])),
+            attr(parse_quote!(#[broadcast])),
+            attr(parse_quote!(#[actify::skip_broadcast])),
+            attr(parse_quote!(#[doc = "visible"])),
+        ];
+
+        let filtered = filter_attributes(&attrs);
+        assert_eq!(filtered.len(), 1);
+        assert!(filtered[0].path().is_ident("doc"));
+    }
+
+    #[test]
+    fn unknown_single_segment_attr_is_stripped() {
+        let attrs: Vec<Attribute> = vec![
+            attr(parse_quote!(#[serde(rename_all = "camelCase")])),
+            attr(parse_quote!(#[deprecated])),
+        ];
+
+        let filtered = filter_attributes(&attrs);
+        assert_eq!(filtered.len(), 1);
+        assert!(filtered[0].path().is_ident("deprecated"));
     }
 }
