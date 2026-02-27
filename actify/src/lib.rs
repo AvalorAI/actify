@@ -309,10 +309,12 @@
 //! Actify ships with extension traits that add convenience methods to handles
 //! wrapping common standard library types:
 //!
-//! - [`OptionHandle`] — `is_some`, `is_none` for `Handle<Option<T>>`
-//! - [`VecHandle`] — `push`, `is_empty`, `drain` for `Handle<Vec<T>>`
-//! - [`HashMapHandle`] — `get_key`, `insert`, `is_empty` for `Handle<HashMap<K, V>>`
-//! - [`HashSetHandle`] — `insert`, `is_empty` for `Handle<HashSet<K>>`
+//! - [`OptionHandle`] — `is_some`, `is_none`, `take`, `replace`, `unwrap_or`, `map`, and more for `Handle<Option<T>>`
+//! - [`VecHandle`] — `push`, `pop`, `len`, `sort`, `retain`, `contains`, and more for `Handle<Vec<T>>`
+//! - [`HashMapHandle`] — `get_key`, `insert`, `remove`, `keys`, `values`, `retain`, and more for `Handle<HashMap<K, V>>`
+//! - [`HashSetHandle`] — `insert`, `remove`, `contains`, `difference`, `intersection`, `union`, and more for `Handle<HashSet<K>>`
+//! - [`StringHandle`] — `push_str`, `contains`, `replace`, `trim`, `split`, and more for `Handle<String>`
+//! - [`VecDequeHandle`] — `push_back`, `push_front`, `pop_back`, `pop_front`, `retain`, and more for `Handle<VecDeque<T>>`
 //!
 //! # Non-Clone types
 //!
@@ -331,7 +333,8 @@ mod throttle;
 pub use actify_macros::{actify, broadcast, skip_broadcast};
 pub use cache::{Cache, CacheRecvError, CacheRecvNewestError};
 pub use extensions::{
-    map::HashMapHandle, option::OptionHandle, set::HashSetHandle, vec::VecHandle,
+    map::HashMapHandle, option::OptionHandle, set::HashSetHandle, string::StringHandle,
+    vec::VecHandle, vecdeque::VecDequeHandle,
 };
 pub use handles::{BroadcastAs, Handle, ReadHandle};
 pub use throttle::{Frequency, Throttle, Throttled};
