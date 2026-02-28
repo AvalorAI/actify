@@ -1,10 +1,10 @@
 use std::any::Any;
 use std::any::type_name;
 use std::fmt::{self, Debug};
-use tokio::sync::{broadcast, mpsc, oneshot};
+use tokio::sync::{broadcast, mpsc, oneshot, watch};
 
 use super::read_handle::ReadHandle;
-use crate::actor::{Actor, ActorMethod, BroadcastFn, Job, serve};
+use crate::actor::{Actor, ActorExit, ActorMethod, BroadcastFn, Job, serve};
 use crate::throttle::Throttle;
 use crate::{Cache, Frequency, Throttled};
 
@@ -83,6 +83,7 @@ where
 pub struct Handle<T, V = T> {
     pub(super) tx: mpsc::Sender<Job<T>>,
     pub(super) broadcast_sender: broadcast::Sender<V>,
+    exit_rx: watch::Receiver<ActorExit>,
 }
 
 impl<T, V> Clone for Handle<T, V> {
@@ -90,6 +91,7 @@ impl<T, V> Clone for Handle<T, V> {
         Handle {
             tx: self.tx.clone(),
             broadcast_sender: self.broadcast_sender.clone(),
+            exit_rx: self.exit_rx.clone(),
         }
     }
 }
@@ -137,13 +139,16 @@ where
     pub fn new(val: T) -> Handle<T, V> {
         let (tx, rx) = mpsc::channel(CHANNEL_SIZE);
         let (broadcast_tx, _) = broadcast::channel::<V>(CHANNEL_SIZE);
+        let (exit_tx, exit_rx) = watch::channel(ActorExit::Running);
         tokio::spawn(serve(
             rx,
             Actor::new(make_broadcast_fn(broadcast_tx.clone()), val),
+            exit_tx,
         ));
         Handle {
             tx,
             broadcast_sender: broadcast_tx,
+            exit_rx,
         }
     }
 
@@ -209,11 +214,29 @@ impl<T: Send + Sync + 'static, V> Handle<T, V> {
             args,
             respond_to,
         };
-        self.tx
-            .send(job)
-            .await
-            .expect("A panic occurred in the Actor");
-        get_result.await.expect("A panic occurred in the Actor")
+        if self.tx.send(job).await.is_err() {
+            return self.propagate_actor_panic().await;
+        }
+        if let Ok(res) = get_result.await {
+            res
+        } else {
+            self.propagate_actor_panic().await
+        }
+    }
+
+    /// Waits for the actor's exit signal, then panics with the appropriate message.
+    /// The watch channel guarantees we see the exit reason without any yield heuristics.
+    async fn propagate_actor_panic(&self) -> Box<dyn Any + Send> {
+        let mut rx = self.exit_rx.clone();
+        // If the exit reason is already set, skip the wait.
+        if *rx.borrow_and_update() == ActorExit::Running {
+            // Actor hasn't finished exiting yet — wait for the signal.
+            let _ = rx.changed().await;
+        }
+        if *rx.borrow() == ActorExit::Panicked {
+            panic!("A panic occurred in the Actor of type {}", type_name::<T>());
+        }
+        panic!("Actor of type {} is no longer running", type_name::<T>());
     }
 
     /// Sends a closure to the actor, handling all boxing/unboxing internally.
@@ -481,13 +504,6 @@ mod tests {
     use super::*;
     use crate as actify;
 
-    #[tokio::test]
-    #[should_panic]
-    async fn test_handle_panic() {
-        let handle = Handle::new(PanicStruct {});
-        handle.panic().await;
-    }
-
     #[derive(Debug, Clone)]
     struct PanicStruct {}
 
@@ -598,5 +614,60 @@ mod tests {
 
         let big_state = handle.get().await;
         assert_eq!(big_state, new_big_state);
+    }
+
+    #[tokio::test]
+    async fn test_actor_panic_propagates() {
+        let handle = Handle::new(PanicStruct {});
+        let h = handle.clone();
+
+        let result = tokio::spawn(async move { h.panic().await }).await;
+
+        let join_err = result.unwrap_err();
+        let panic_msg = join_err
+            .into_panic()
+            .downcast_ref::<String>()
+            .cloned()
+            .unwrap();
+        assert!(
+            panic_msg.contains("A panic occurred"),
+            "expected actor-panic message, got: {panic_msg}"
+        );
+    }
+
+    #[test]
+    fn test_orphaned_handle_panics_after_runtime_shutdown() {
+        // Create a runtime, spawn an actor, prove it works, then drop the runtime.
+        let actor_rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let handle = actor_rt.block_on(async {
+            let h = Handle::new(0i32);
+            h.set(42).await;
+            assert_eq!(h.get().await, 42);
+            h
+        });
+        drop(actor_rt); // cancels actor — ExitGuard sends Stopped
+
+        // Try to use the orphaned handle from a fresh runtime.
+        let caller_rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        caller_rt.block_on(async {
+            let h = handle.clone();
+            let result = tokio::spawn(async move { h.set(99).await }).await;
+            let join_err = result.unwrap_err();
+            let panic_msg = join_err
+                .into_panic()
+                .downcast_ref::<String>()
+                .cloned()
+                .unwrap();
+            assert!(
+                panic_msg.contains("no longer running"),
+                "expected stopped message, got: {panic_msg}"
+            );
+        });
     }
 }

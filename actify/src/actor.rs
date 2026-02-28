@@ -1,7 +1,7 @@
 use futures::future::BoxFuture;
 use std::any::{Any, type_name};
 use std::fmt::{self, Debug};
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{mpsc, oneshot, watch};
 
 #[cfg(feature = "profiler")]
 use std::collections::HashMap;
@@ -77,10 +77,36 @@ pub(crate) struct Job<T> {
     pub respond_to: oneshot::Sender<Box<dyn Any + Send>>,
 }
 
+/// The reason the actor task exited.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum ActorExit {
+    Running,
+    Panicked,
+    Stopped,
+}
+
+/// Sends the exit reason through the watch channel when the actor task ends.
+/// `std::thread::panicking()` returns true during async task unwind,
+/// so this correctly distinguishes panics from normal shutdown / cancellation.
+struct ExitGuard(watch::Sender<ActorExit>);
+
+impl Drop for ExitGuard {
+    fn drop(&mut self) {
+        let reason = if std::thread::panicking() {
+            ActorExit::Panicked
+        } else {
+            ActorExit::Stopped
+        };
+        let _ = self.0.send(reason);
+    }
+}
+
 pub(crate) async fn serve<T: Send + Sync + 'static>(
     mut rx: mpsc::Receiver<Job<T>>,
     mut actor: Actor<T>,
+    exit_tx: watch::Sender<ActorExit>,
 ) {
+    let _guard = ExitGuard(exit_tx);
     while let Some(mut job) = rx.recv().await {
         let res = (*job.call)(&mut actor, job.args).await;
         if job.respond_to.send(res).is_err() {
