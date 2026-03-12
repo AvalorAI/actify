@@ -10,6 +10,10 @@ trait ActorMap<K, V> {
 
     fn insert(&mut self, key: K, val: V) -> Option<V>;
 
+    fn remove(&mut self, key: K) -> Option<V>;
+
+    fn clear(&mut self);
+
     fn is_empty(&self) -> bool;
 }
 
@@ -63,6 +67,49 @@ where
     /// ```
     fn insert(&mut self, key: K, val: V) -> Option<V> {
         self.insert(key, val)
+    }
+
+    /// Removes a key from the map, returning the value at the key if the key was previously in the map.
+    /// Equivalent to [`HashMap::remove`](std::collections::HashMap::remove).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use actify::{Handle, HashMapHandle};
+    /// # use std::collections::HashMap;
+    /// # #[tokio::main]
+    /// # async fn main() {
+    /// let handle = Handle::new(HashMap::new());
+    /// handle.insert("test", 10).await;
+    /// let res = handle.remove("test").await;
+    /// assert_eq!(res, Some(10));
+    ///
+    /// let res = handle.remove("test").await;
+    /// assert_eq!(res, None);
+    /// # }
+    /// ```
+    fn remove(&mut self, key: K) -> Option<V> {
+        self.remove(&key)
+    }
+
+    /// Clears the map, removing all key-value pairs.
+    /// Equivalent to [`HashMap::clear`](std::collections::HashMap::clear).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use actify::{Handle, HashMapHandle};
+    /// # use std::collections::HashMap;
+    /// # #[tokio::main]
+    /// # async fn main() {
+    /// let handle = Handle::new(HashMap::new());
+    /// handle.insert("test", 10).await;
+    /// handle.clear().await;
+    /// assert!(handle.is_empty().await);
+    /// # }
+    /// ```
+    fn clear(&mut self) {
+        self.clear()
     }
 
     /// Returns `true` if the map contains no elements.
