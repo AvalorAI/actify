@@ -10,7 +10,15 @@ trait ActorMap<K, V> {
 
     fn insert(&mut self, key: K, val: V) -> Option<V>;
 
+    fn remove(&mut self, key: K) -> Option<V>;
+
+    fn clear(&mut self);
+
     fn is_empty(&self) -> bool;
+
+    fn keys(&self) -> Vec<K>;
+
+    fn values(&self) -> Vec<V>;
 }
 
 /// Extension methods for `Handle<HashMap<K, V>>`, exposed as [`HashMapHandle`](crate::HashMapHandle).
@@ -65,6 +73,49 @@ where
         self.insert(key, val)
     }
 
+    /// Removes a key from the map, returning the value at the key if the key was previously in the map.
+    /// Equivalent to [`HashMap::remove`](std::collections::HashMap::remove).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use actify::{Handle, HashMapHandle};
+    /// # use std::collections::HashMap;
+    /// # #[tokio::main]
+    /// # async fn main() {
+    /// let handle = Handle::new(HashMap::new());
+    /// handle.insert("test", 10).await;
+    /// let res = handle.remove("test").await;
+    /// assert_eq!(res, Some(10));
+    ///
+    /// let res = handle.remove("test").await;
+    /// assert_eq!(res, None);
+    /// # }
+    /// ```
+    fn remove(&mut self, key: K) -> Option<V> {
+        self.remove(&key)
+    }
+
+    /// Clears the map, removing all key-value pairs.
+    /// Equivalent to [`HashMap::clear`](std::collections::HashMap::clear).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use actify::{Handle, HashMapHandle};
+    /// # use std::collections::HashMap;
+    /// # #[tokio::main]
+    /// # async fn main() {
+    /// let handle = Handle::new(HashMap::new());
+    /// handle.insert("test", 10).await;
+    /// handle.clear().await;
+    /// assert!(handle.is_empty().await);
+    /// # }
+    /// ```
+    fn clear(&mut self) {
+        self.clear()
+    }
+
     /// Returns `true` if the map contains no elements.
     ///
     /// # Examples
@@ -80,5 +131,49 @@ where
     /// ```
     fn is_empty(&self) -> bool {
         self.is_empty()
+    }
+
+    /// Returns a `Vec` of all keys in the map.
+    /// Equivalent to [`HashMap::keys`](std::collections::HashMap::keys), but collected into a `Vec`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use actify::{Handle, HashMapHandle};
+    /// # use std::collections::HashMap;
+    /// # #[tokio::main]
+    /// # async fn main() {
+    /// let handle = Handle::new(HashMap::new());
+    /// handle.insert("a", 1).await;
+    /// handle.insert("b", 2).await;
+    /// let mut keys = handle.keys().await;
+    /// keys.sort();
+    /// assert_eq!(keys, vec!["a", "b"]);
+    /// # }
+    /// ```
+    fn keys(&self) -> Vec<K> {
+        self.keys().cloned().collect()
+    }
+
+    /// Returns a `Vec` of all values in the map.
+    /// Equivalent to [`HashMap::values`](std::collections::HashMap::values), but collected into a `Vec`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use actify::{Handle, HashMapHandle};
+    /// # use std::collections::HashMap;
+    /// # #[tokio::main]
+    /// # async fn main() {
+    /// let handle = Handle::new(HashMap::new());
+    /// handle.insert("a", 1).await;
+    /// handle.insert("b", 2).await;
+    /// let mut values = handle.values().await;
+    /// values.sort();
+    /// assert_eq!(values, vec![1, 2]);
+    /// # }
+    /// ```
+    fn values(&self) -> Vec<V> {
+        self.values().cloned().collect()
     }
 }
