@@ -5,6 +5,8 @@ trait ActorOption<T> {
     fn is_some(&self) -> bool;
 
     fn is_none(&self) -> bool;
+
+    fn set_some(&mut self, val: T);
 }
 
 /// An implementation of the ActorOption extension trait for the standard [`Option`].
@@ -48,5 +50,22 @@ where
     /// ```
     fn is_none(&self) -> bool {
         self.is_none()
+    }
+
+    /// Sets the option to `Some(val)`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use actify::{Handle, OptionHandle};
+    /// # #[tokio::main]
+    /// # async fn main() {
+    /// let handle = Handle::new(Option::<i32>::None);
+    /// handle.set_some(42).await;
+    /// assert!(handle.is_some().await);
+    /// # }
+    /// ```
+    fn set_some(&mut self, val: T) {
+        *self = Some(val);
     }
 }
