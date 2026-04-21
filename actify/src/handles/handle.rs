@@ -5,7 +5,7 @@ use tokio::sync::{broadcast, mpsc, oneshot};
 
 use super::read_handle::ReadHandle;
 use crate::actor::{Actor, ActorMethod, BroadcastFn, Job, serve};
-use crate::throttle::Throttle;
+use crate::throttle::{AsyncThrottle, ThrottledFuture, Throttle};
 use crate::{Cache, Frequency, Throttled};
 
 const CHANNEL_SIZE: usize = 100;
@@ -473,6 +473,66 @@ where
         let current = self.get().await;
         let receiver = self.subscribe();
         Throttle::spawn_from_receiver(client, call, freq, receiver, Some(current.to_broadcast()));
+    }
+
+    /// Spawns an [`AsyncThrottle`] attached to this handle.
+    ///
+    /// The callback receives `&C` and returns a [`ThrottledFuture`] — either
+    /// an inline `|c, v| Box::pin(async move { ... })` closure or a method
+    /// reference whose method returns `ThrottledFuture<'_>`. The borrow lets
+    /// the future hold `&C` across `.await` points, so state owned by the
+    /// client persists across invocations.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use actify::{Handle, Frequency, ThrottledFuture};
+    /// # use std::sync::{Arc, Mutex};
+    /// # #[tokio::main]
+    /// # async fn main() {
+    /// struct Logger(Mutex<Vec<i32>>);
+    ///
+    /// impl Logger {
+    ///     fn log(&self, val: i32) -> ThrottledFuture<'_> {
+    ///         Box::pin(async move {
+    ///             tokio::task::yield_now().await;
+    ///             self.0.lock().unwrap().push(val);
+    ///         })
+    ///     }
+    /// }
+    ///
+    /// let handle = Handle::new(1);
+    /// let logger = Arc::new(Logger(Mutex::new(Vec::new())));
+    /// handle
+    ///     .spawn_async_throttle(logger.clone(), |l: &Arc<Logger>, v| l.log(v), Frequency::OnEvent)
+    ///     .await;
+    ///
+    /// handle.set(2).await;
+    /// tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    /// // Fires once with the current value on creation, then on each broadcast
+    /// assert_eq!(*logger.0.lock().unwrap(), vec![1, 2]);
+    /// # }
+    /// ```
+    pub async fn spawn_async_throttle<C, F, Fun>(
+        &self,
+        client: C,
+        call: Fun,
+        freq: Frequency,
+    ) where
+        C: Send + Sync + 'static,
+        V: Throttled<F>,
+        F: Clone + Send + Sync + 'static,
+        Fun: for<'a> Fn(&'a C, F) -> ThrottledFuture<'a> + Send + Sync + 'static,
+    {
+        let current = self.get().await;
+        let receiver = self.subscribe();
+        AsyncThrottle::spawn_from_receiver(
+            client,
+            call,
+            freq,
+            receiver,
+            Some(current.to_broadcast()),
+        );
     }
 }
 

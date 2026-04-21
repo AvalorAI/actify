@@ -5,6 +5,7 @@ use tokio::sync::broadcast::{
     error::{RecvError, TryRecvError},
 };
 
+use crate::throttle::{AsyncThrottle, ThrottledFuture};
 use crate::{Frequency, Throttle, Throttled};
 
 /// A simple caching struct that can be used to locally maintain a synchronized state with an actor.
@@ -467,6 +468,22 @@ where
         let current = self.inner.clone();
         let receiver = self.rx.resubscribe();
         Throttle::spawn_from_receiver(client, call, freq, receiver, Some(current));
+    }
+
+    /// Spawns an [`AsyncThrottle`] attached to this cache.
+    ///
+    /// The callback receives `&C` and returns a [`ThrottledFuture`]. See
+    /// [`Handle::spawn_async_throttle`](crate::Handle::spawn_async_throttle) for the usage pattern.
+    pub fn spawn_async_throttle<C, F, Fun>(&self, client: C, call: Fun, freq: Frequency)
+    where
+        C: Send + Sync + 'static,
+        T: Throttled<F>,
+        F: Clone + Send + Sync + 'static,
+        Fun: for<'a> Fn(&'a C, F) -> ThrottledFuture<'a> + Send + Sync + 'static,
+    {
+        let current = self.inner.clone();
+        let receiver = self.rx.resubscribe();
+        AsyncThrottle::spawn_from_receiver(client, call, freq, receiver, Some(current));
     }
 }
 
