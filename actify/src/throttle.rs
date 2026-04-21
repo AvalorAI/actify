@@ -1,7 +1,20 @@
 use std::fmt::{self, Debug};
+use std::future::Future;
+use std::pin::Pin;
 use tokio::sync::broadcast::error::RecvError;
 use tokio::sync::broadcast::{self, Receiver};
 use tokio::time::{self, Duration, Interval};
+
+/// Low-level signature of the async callback used by [`AsyncThrottle`].
+///
+/// Most users should prefer [`AsyncThrottle::spawn_from_receiver_with_client`]
+/// (or [`Handle::spawn_async_throttle_with_client`](crate::Handle::spawn_async_throttle_with_client)),
+/// which accept a plain `async fn(C, F)` and handle the boxing for you.
+///
+/// Use this type directly only when the client cannot be `Clone`. The callback
+/// receives `&C` and returns a pinned, boxed future whose lifetime may borrow
+/// from that reference — typically constructed with `Box::pin(async move { ... })`.
+pub type AsyncCall<C, F> = for<'a> fn(&'a C, F) -> Pin<Box<dyn Future<Output = ()> + Send + 'a>>;
 
 /// The Frequency is used to tune the speed of a [`Throttle`].
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -26,6 +39,115 @@ pub trait Throttled<F> {
 impl<T: Clone> Throttled<T> for T {
     fn parse(&self) -> T {
         self.clone()
+    }
+}
+
+/// Shared event/timing state for both [`Throttle`] and [`AsyncThrottle`].
+///
+/// Owns the broadcast receiver, the interval timer, and the `event_processed`
+/// flag used by [`Frequency::OnEventWhen`]. Callers drive it via [`Self::first_tick`]
+/// (which consumes the immediate initial interval tick) and [`Self::next`] (which
+/// awaits the next timer/event and reports whether the callback should fire).
+struct ThrottleState<T> {
+    frequency: Frequency,
+    val_rx: Option<broadcast::Receiver<T>>,
+    current_val: Option<T>,
+    interval: Option<Interval>,
+    event_processed: bool,
+}
+
+impl<T: Clone> ThrottleState<T> {
+    fn new(
+        frequency: Frequency,
+        val_rx: Option<broadcast::Receiver<T>>,
+        current_val: Option<T>,
+    ) -> Self {
+        let interval = match frequency {
+            Frequency::OnEvent => None,
+            Frequency::Interval(d) | Frequency::OnEventWhen(d) => Some(time::interval(d)),
+        };
+        Self {
+            frequency,
+            val_rx,
+            current_val,
+            interval,
+            event_processed: true,
+        }
+    }
+
+    /// Consume the interval's initial immediate tick so the loop starts on a real wait.
+    async fn first_tick(&mut self) {
+        if let Some(iv) = &mut self.interval {
+            iv.tick().await;
+        }
+    }
+
+    /// Returns `Some(true)` if the caller should fire, `Some(false)` to skip this
+    /// iteration, or `None` if the broadcast receiver has closed and the loop should exit.
+    async fn next(&mut self) -> Option<bool> {
+        loop {
+            let received_msg = tokio::select!(
+                _ = keep_time(&mut self.interval) => false,
+                res = check_value(&mut self.val_rx) => {
+                    match res {
+                        Ok(val) => {
+                            self.event_processed = false;
+                            self.current_val = Some(val);
+                            true
+                        }
+                        Err(RecvError::Closed) => {
+                            log::debug!(
+                                "Attached actor of type {} closed - exiting throttle",
+                                std::any::type_name::<T>()
+                            );
+                            return None;
+                        }
+                        Err(RecvError::Lagged(nr)) => {
+                            log::debug!(
+                                "Throttle of type {} lagged {nr} messages",
+                                std::any::type_name::<T>()
+                            );
+                            continue;
+                        }
+                    }
+                },
+            );
+
+            let should_fire = match self.frequency {
+                Frequency::OnEvent => received_msg,
+                Frequency::Interval(_) => !received_msg,
+                Frequency::OnEventWhen(_) => !received_msg && !self.event_processed,
+            };
+            if should_fire && matches!(self.frequency, Frequency::OnEventWhen(_)) {
+                self.event_processed = true;
+            }
+            return Some(should_fire);
+        }
+    }
+
+    fn current<F>(&self) -> Option<F>
+    where
+        T: Throttled<F>,
+    {
+        self.current_val.as_ref().map(|v| v.parse())
+    }
+}
+
+async fn keep_time(interval: &mut Option<Interval>) {
+    if let Some(interval) = interval {
+        interval.tick().await;
+    } else {
+        std::future::pending::<()>().await;
+    }
+}
+
+async fn check_value<T: Clone>(
+    val_rx: &mut Option<broadcast::Receiver<T>>,
+) -> Result<T, RecvError> {
+    if let Some(rx) = val_rx {
+        rx.recv().await
+    } else {
+        std::future::pending::<Result<T, RecvError>>().await
     }
 }
 
@@ -70,360 +192,394 @@ where
         receiver: Receiver<T>,
         init: Option<T>,
     ) {
-        let mut throttle = Throttle {
+        let throttle = Throttle {
             frequency,
             client,
             call,
             val_rx: Some(receiver),
             current_val: init,
         };
-        tokio::spawn(async move { throttle.tick().await });
+        tokio::spawn(throttle.run());
     }
 
     pub fn spawn_interval(client: C, call: fn(&C, F), interval: Duration, val: T) {
-        let mut throttle = Throttle {
+        let throttle = Throttle {
             frequency: Frequency::Interval(interval),
             client,
             call,
             val_rx: None,
             current_val: Some(val),
         };
-        tokio::spawn(async move { throttle.tick().await });
+        tokio::spawn(throttle.run());
     }
 
-    async fn tick(&mut self) {
-        let mut interval = match self.frequency {
-            Frequency::OnEvent => None,
-            Frequency::Interval(duration) => Some(time::interval(duration)),
-            Frequency::OnEventWhen(duration) => Some(time::interval(duration)),
-        };
+    async fn run(self) {
+        let Throttle {
+            frequency,
+            client,
+            call,
+            val_rx,
+            current_val,
+        } = self;
+        let mut state = ThrottleState::new(frequency, val_rx, current_val);
+        state.first_tick().await;
 
-        if let Some(iv) = &mut interval {
-            iv.tick().await; // First tick completes immediately, so ignore by calling prior
+        // Always execute the call once in case it was initialized
+        if let Some(val) = state.current::<F>() {
+            call(&client, val);
         }
-
-        self.execute_call(); // Always execute the call once in case it was initialized
-
-        let mut event_processed = true;
-        loop {
-            // Wait or update cache
-            let received_msg = tokio::select!(
-                _ = Throttle::<C, T, F>::keep_time(&mut interval) => false,
-                res = Throttle::<C, T, F>::check_value(&mut self.val_rx) => {
-                    match res {
-                        Ok(val) => {
-                            event_processed = false;
-                            self.current_val = Some(val);
-                            true
-                        }
-                        Err(RecvError::Closed) => {
-                            log::debug!("Attached actor of type {} closed - exiting throttle", std::any::type_name::<T>());
-                            break
-                        }
-                        Err(RecvError::Lagged(nr)) => {
-                            log::debug!("Throttle of type {} lagged {nr} messages", std::any::type_name::<T>());
-                            continue
-                        }
-                    }
-
-                },
-            );
-
-            match self.frequency {
-                Frequency::OnEvent if received_msg => self.execute_call(),
-                Frequency::Interval(_) if !received_msg => self.execute_call(),
-                Frequency::OnEventWhen(_) if !received_msg && !event_processed => {
-                    event_processed = true;
-                    self.execute_call()
+        while let Some(should_fire) = state.next().await {
+            if should_fire {
+                if let Some(val) = state.current::<F>() {
+                    call(&client, val);
                 }
-                _ => continue,
             }
-        }
-    }
-
-    fn execute_call(&self) {
-        // Either parse the value to a different type F, or to itself when T = F
-        let val = if let Some(inner) = &self.current_val {
-            inner.parse()
-        } else {
-            return; // If cache empty, skip call
-        };
-
-        // Perform the call
-        (self.call)(&self.client, F::clone(&val));
-    }
-
-    async fn keep_time(interval: &mut Option<Interval>) {
-        if let Some(interval) = interval {
-            interval.tick().await;
-        } else {
-            std::future::pending::<()>().await;
-        }
-    }
-
-    async fn check_value(val_rx: &mut Option<broadcast::Receiver<T>>) -> Result<T, RecvError> {
-        if let Some(rx) = val_rx {
-            rx.recv().await
-        } else {
-            std::future::pending::<Result<T, RecvError>>().await
         }
     }
 }
 
+type BoxedAsyncCall<C, F> =
+    Box<dyn for<'a> Fn(&'a C, F) -> Pin<Box<dyn Future<Output = ()> + Send + 'a>> + Send + Sync>;
+
+/// Async variant of [`Throttle`] that forwards updates to an async callback.
+///
+/// Two construction paths are available:
+/// - **Preferred**: [`spawn_from_receiver_with_client`](Self::spawn_from_receiver_with_client) /
+///   [`spawn_interval_with_client`](Self::spawn_interval_with_client) accept a plain
+///   `async fn(C, F)` when `C: Clone` and handle all the boxing boilerplate for you.
+/// - Escape hatch: [`spawn_from_receiver`](Self::spawn_from_receiver) /
+///   [`spawn_interval`](Self::spawn_interval) take an [`AsyncCall`] function pointer
+///   that returns a pinned, boxed future. Use this when the client cannot be `Clone`.
+pub struct AsyncThrottle<C, T, F> {
+    frequency: Frequency,
+    client: C,
+    call: BoxedAsyncCall<C, F>,
+    val_rx: Option<broadcast::Receiver<T>>,
+    current_val: Option<T>,
+}
+
+impl<C, T, F> fmt::Debug for AsyncThrottle<C, T, F> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("AsyncThrottle")
+            .field("frequency", &self.frequency)
+            .field("client", &std::any::type_name::<C>().to_string())
+            .field("call", &"<async callback>")
+            .field("val_rx", &self.val_rx)
+            .field(
+                "current_val",
+                &std::any::type_name::<Option<T>>().to_string(),
+            )
+            .finish()
+    }
+}
+
+impl<C, T, F> AsyncThrottle<C, T, F>
+where
+    C: Send + Sync + 'static,
+    T: Clone + Throttled<F> + Send + Sync + 'static,
+    F: Clone + Send + Sync + 'static,
+{
+    /// Low-level constructor that accepts a raw [`AsyncCall`] function pointer.
+    ///
+    /// Prefer [`spawn_from_receiver_with_client`](Self::spawn_from_receiver_with_client)
+    /// when `C: Clone` — it avoids the `Box::pin(async move { ... })` boilerplate.
+    pub fn spawn_from_receiver(
+        client: C,
+        call: AsyncCall<C, F>,
+        frequency: Frequency,
+        receiver: Receiver<T>,
+        init: Option<T>,
+    ) {
+        Self::spawn_boxed(
+            client,
+            Box::new(move |c, val| call(c, val)),
+            frequency,
+            Some(receiver),
+            init,
+        );
+    }
+
+    /// Low-level constructor that accepts a raw [`AsyncCall`] function pointer.
+    ///
+    /// Prefer [`spawn_interval_with_client`](Self::spawn_interval_with_client) when `C: Clone`.
+    pub fn spawn_interval(client: C, call: AsyncCall<C, F>, interval: Duration, val: T) {
+        Self::spawn_boxed(
+            client,
+            Box::new(move |c, v| call(c, v)),
+            Frequency::Interval(interval),
+            None,
+            Some(val),
+        );
+    }
+
+    fn spawn_boxed(
+        client: C,
+        call: BoxedAsyncCall<C, F>,
+        frequency: Frequency,
+        val_rx: Option<broadcast::Receiver<T>>,
+        current_val: Option<T>,
+    ) {
+        let throttle = AsyncThrottle {
+            frequency,
+            client,
+            call,
+            val_rx,
+            current_val,
+        };
+        tokio::spawn(throttle.run());
+    }
+
+    async fn run(self) {
+        let AsyncThrottle {
+            frequency,
+            client,
+            call,
+            val_rx,
+            current_val,
+        } = self;
+        let mut state = ThrottleState::new(frequency, val_rx, current_val);
+        state.first_tick().await;
+
+        if let Some(val) = state.current::<F>() {
+            call(&client, val).await;
+        }
+        while let Some(should_fire) = state.next().await {
+            if should_fire {
+                if let Some(val) = state.current::<F>() {
+                    call(&client, val).await;
+                }
+            }
+        }
+    }
+}
+
+impl<C, T, F> AsyncThrottle<C, T, F>
+where
+    C: Clone + Send + Sync + 'static,
+    T: Clone + Throttled<F> + Send + Sync + 'static,
+    F: Clone + Send + Sync + 'static,
+{
+    /// Spawns an [`AsyncThrottle`] from an `async fn(C, F)` style callback.
+    ///
+    /// This is the preferred constructor: the client is cloned per invocation
+    /// and passed to the callback by value, so you can hand in a plain `async fn`
+    /// without the `Box::pin(async move { ... })` boilerplate that
+    /// [`spawn_from_receiver`](Self::spawn_from_receiver) requires.
+    pub fn spawn_from_receiver_with_client<Fun, Fut>(
+        client: C,
+        call: Fun,
+        frequency: Frequency,
+        receiver: Receiver<T>,
+        init: Option<T>,
+    ) where
+        Fun: Fn(C, F) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = ()> + Send + 'static,
+    {
+        Self::spawn_boxed(
+            client,
+            wrap_with_client(call),
+            frequency,
+            Some(receiver),
+            init,
+        );
+    }
+
+    /// Interval-driven counterpart to [`spawn_from_receiver_with_client`](Self::spawn_from_receiver_with_client).
+    pub fn spawn_interval_with_client<Fun, Fut>(client: C, call: Fun, interval: Duration, val: T)
+    where
+        Fun: Fn(C, F) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = ()> + Send + 'static,
+    {
+        Self::spawn_boxed(
+            client,
+            wrap_with_client(call),
+            Frequency::Interval(interval),
+            None,
+            Some(val),
+        );
+    }
+}
+
+fn wrap_with_client<C, F, Fun, Fut>(call: Fun) -> BoxedAsyncCall<C, F>
+where
+    C: Clone + Send + 'static,
+    F: Send + 'static,
+    Fun: Fn(C, F) -> Fut + Send + Sync + 'static,
+    Fut: Future<Output = ()> + Send + 'static,
+{
+    Box::new(move |c: &C, val: F| {
+        let cloned = c.clone();
+        Box::pin(call(cloned, val)) as Pin<Box<dyn Future<Output = ()> + Send>>
+    })
+}
+
 #[cfg(test)]
 mod tests {
-    use crate::Handle;
-
     use super::*;
+    use crate::Handle;
     use std::sync::{Arc, Mutex};
+    use tokio::sync::broadcast;
     use tokio::time::{Duration, Instant, sleep};
 
+    // ---- ThrottleState tests ----------------------------------------------
+
     #[tokio::test(start_paused = true)]
-    async fn test_first_shot() {
+    async fn state_on_event_fires_on_message() {
+        let (tx, rx) = broadcast::channel(8);
+        let mut state = ThrottleState::<i32>::new(Frequency::OnEvent, Some(rx), None);
+        state.first_tick().await;
+
+        tx.send(42).unwrap();
+        assert_eq!(state.next().await, Some(true));
+        assert_eq!(state.current::<i32>(), Some(42));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn state_interval_fires_without_events() {
+        let (_tx, rx) = broadcast::channel::<i32>(8);
+        let mut state = ThrottleState::new(
+            Frequency::Interval(Duration::from_millis(100)),
+            Some(rx),
+            Some(1),
+        );
+        state.first_tick().await;
+
+        assert_eq!(state.next().await, Some(true));
+        assert_eq!(state.next().await, Some(true));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn state_interval_skips_on_event_but_stores_value() {
+        let (tx, rx) = broadcast::channel(8);
+        let mut state = ThrottleState::new(
+            Frequency::Interval(Duration::from_millis(100)),
+            Some(rx),
+            Some(1),
+        );
+        state.first_tick().await;
+
+        tx.send(42).unwrap();
+        assert_eq!(state.next().await, Some(false));
+        assert_eq!(state.current::<i32>(), Some(42));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn state_on_event_when_suppresses_early_event() {
+        let (tx, rx) = broadcast::channel(8);
+        let mut state = ThrottleState::new(
+            Frequency::OnEventWhen(Duration::from_millis(100)),
+            Some(rx),
+            None,
+        );
+        state.first_tick().await;
+
+        tx.send(42).unwrap();
+        assert_eq!(state.next().await, Some(false));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn state_on_event_when_fires_after_interval() {
+        let (tx, rx) = broadcast::channel(8);
+        let mut state = ThrottleState::new(
+            Frequency::OnEventWhen(Duration::from_millis(100)),
+            Some(rx),
+            None,
+        );
+        state.first_tick().await;
+
+        tx.send(42).unwrap();
+        assert_eq!(state.next().await, Some(false)); // event stored, interval not elapsed
+        assert_eq!(state.next().await, Some(true)); // interval elapses → fire
+        assert_eq!(state.next().await, Some(false)); // no new event → stay quiet
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn state_exits_when_sender_dropped() {
+        let (tx, rx) = broadcast::channel::<i32>(8);
+        let mut state = ThrottleState::new(Frequency::OnEvent, Some(rx), None);
+        state.first_tick().await;
+
+        drop(tx);
+        assert_eq!(state.next().await, None);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn state_continues_after_lag() {
+        let (tx, rx) = broadcast::channel(2);
+        let mut state = ThrottleState::<i32>::new(Frequency::OnEvent, Some(rx), None);
+        state.first_tick().await;
+
+        for i in 0..10 {
+            let _ = tx.send(i);
+        }
+        // Lagged is swallowed inside `next`; it then recovers and delivers an Ok.
+        assert_eq!(state.next().await, Some(true));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn state_current_applies_parse() {
+        let (_tx, rx) = broadcast::channel::<A>(8);
+        let state = ThrottleState::new(Frequency::OnEvent, Some(rx), Some(A {}));
+        let _: B = state.current::<B>().expect("parse A -> B");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn state_current_is_none_without_init() {
+        let (_tx, rx) = broadcast::channel::<i32>(8);
+        let state = ThrottleState::<i32>::new(Frequency::OnEvent, Some(rx), None);
+        assert_eq!(state.current::<i32>(), None);
+    }
+
+    // ---- Throttle tests ---------------------------------------------------
+
+    #[tokio::test(start_paused = true)]
+    async fn throttle_invokes_sync_callback_on_init_and_event() {
         let handle = Handle::new(1);
         let counter = CounterClient::new();
-
-        // Spawn throttle that should only activate once on creation
         handle
             .spawn_throttle(counter.clone(), CounterClient::call, Frequency::OnEvent)
             .await;
-        sleep(Duration::from_millis(200)).await;
+        handle.set(2).await;
+        sleep(Duration::from_millis(10)).await;
 
-        let count = *counter.count.lock().unwrap();
-        assert_eq!(count, 1)
+        // Initial fire with current value + one broadcast event.
+        assert_eq!(*counter.count.lock().unwrap(), 2);
     }
 
     #[tokio::test(start_paused = true)]
-    async fn test_throttle_from_cache() {
-        let handle = Handle::new(1);
+    async fn throttle_interval_consumes_first_immediate_tick() {
+        // Guards `ThrottleState::first_tick`: under `Frequency::Interval`, the init
+        // fire lands at t=0 and the first timer-driven fire must land at t=D, not at
+        // t=0. If `first_tick` stops swallowing the interval's immediate tick, the
+        // second fire would collapse onto the first.
+        let d = Duration::from_millis(200);
         let counter = CounterClient::new();
-        let cache = handle.create_cache().await;
+        Throttle::spawn_interval(counter.clone(), CounterClient::call, d, 1);
 
-        // Spawn throttle that should only activate once on creation
-        cache.spawn_throttle(counter.clone(), CounterClient::call, Frequency::OnEvent);
-        sleep(Duration::from_millis(200)).await;
+        sleep(d + Duration::from_millis(10)).await;
 
-        let count = *counter.count.lock().unwrap();
-        assert_eq!(count, 1)
+        let fires = counter.fires_at.lock().unwrap().clone();
+        assert_eq!(fires.len(), 2);
+        assert_eq!(fires[0], Duration::ZERO);
+        assert_eq!(fires[1], d);
     }
 
     #[tokio::test(start_paused = true)]
-    async fn test_exit_on_shutdown() {
-        let handle = Handle::new(1);
-        let receiver = handle.subscribe();
-
-        let counter = CounterClient::new();
-
-        // Spawn throttle
-        Throttle::spawn_from_receiver(
-            counter.clone(),
-            CounterClient::call,
-            Frequency::Interval(Duration::from_millis(100)),
-            receiver,
-            None,
-        );
-
-        sleep(Duration::from_millis(500)).await;
-
-        let count_before_drop = *counter.count.lock().unwrap();
-
-        // The throttle will stop, as no handles are present anymore
-        drop(handle);
-
-        sleep(Duration::from_millis(500)).await;
-
-        let count_after_drop = *counter.count.lock().unwrap();
-
-        // No updates have arrived even though the frequency is a constant interval, as the throttle has exited
-        assert_eq!(count_before_drop, count_after_drop);
-    }
-
-    #[tokio::test(start_paused = true)]
-    async fn test_on_event() {
-        // The Handle update event should be received directly after the interval has passed
-        let timer = 200.;
-        let handle = Handle::new(1);
-        let mut interval = time::interval(Duration::from_millis(timer as u64));
-        interval.tick().await; // Completed immediately
-
-        // Start counter
-        let counter = CounterClient::new();
-
-        // Spawn throttle
-        let receiver = handle.subscribe();
-        Throttle::spawn_from_receiver(
-            counter.clone(),
-            CounterClient::call,
-            Frequency::OnEvent,
-            receiver,
-            None,
-        );
-
-        interval.tick().await; // Should wait up to exactly 200ms
-        handle.set(2).await; // Update handle, firing event
-        sleep(Duration::from_millis(10)).await; // Allow call to be executed to happen
-
-        let time = *counter.elapsed.lock().unwrap() as f64;
-        let count = *counter.count.lock().unwrap();
-        assert_eq!(count, 1);
-        assert!((timer - time).abs() / timer < 0.1);
-    }
-
-    #[tokio::test(start_paused = true)]
-    async fn test_hot_on_event_when() {
-        // The Handle update event should be received directly after the interval has passed
-        let timer = 200.;
-        let handle = Handle::new(1);
-        let mut interval = time::interval(Duration::from_millis(timer as u64));
-        interval.tick().await; // Completed immediately
-
-        // Start counter
-        let counter = CounterClient::new();
-
-        // Spawn throttle
-        let receiver = handle.subscribe();
-        Throttle::spawn_from_receiver(
-            counter.clone(),
-            CounterClient::call,
-            Frequency::OnEventWhen(Duration::from_millis(timer as u64)),
-            receiver,
-            None,
-        );
-
-        // Many updates are triggered in quick succesion
-        for i in 0..10 {
-            handle.set(i).await;
-            sleep(Duration::from_millis((timer / 10.) as u64)).await;
-        }
-
-        sleep(Duration::from_millis(5)).await;
-
-        let time = *counter.elapsed.lock().unwrap() as f64;
-        let count = *counter.count.lock().unwrap();
-
-        // Still the counter has been invoked 1 time
-        // The interval has not been exceeded between calls, but it did since the last update
-        assert!((timer - time).abs() / timer < 0.1 && count == 1);
-    }
-
-    #[tokio::test(start_paused = true)]
-    async fn test_interval() {
-        // The interval passed to the throttle used to send the value each time
-
-        let timer = 200.;
-        let mut interval = time::interval(Duration::from_millis(timer as u64));
-        interval.tick().await; // Completed immediately
-
-        // Start counter
-        let counter = CounterClient::new();
-
-        // Spawn throttle
-        Throttle::spawn_interval(
-            counter.clone(),
-            CounterClient::call,
-            Duration::from_millis(timer as u64),
-            1,
-        );
-
-        for _ in 0..5 {
-            interval.tick().await; // Should wait up to exactly 200ms
-        }
-        sleep(Duration::from_millis(20)).await; // Allow last call to be processed
-
-        // All updates should be processed
-        let time = *counter.elapsed.lock().unwrap() as f64;
-        let count = *counter.count.lock().unwrap();
-        assert!((timer * 5. - time).abs() / (5. * timer) < 0.1 && count == 6);
-    }
-
-    #[tokio::test(start_paused = true)]
-    async fn test_on_event_when_interval_passed() {
-        // The interval passed to the throttle is shorter than the time to the event, so its value is passed to the client call
-        // Throttle interval passes at 0.55 timer, does nothing
-        // Event fires at 1. timer
-        // Throttle interval passes at 1.1 timer, and processes event
-        // Throttle interval passes at 1.65 timer, does nothing
-
-        let timer = 200.;
-        let handle = Handle::new(1);
-        let mut interval = time::interval(Duration::from_millis(timer as u64));
-        interval.tick().await; // Completed immediately
-
-        // Start counter
-        let counter = CounterClient::new();
-
-        // Spawn throttle
-        let receiver = handle.subscribe();
-        Throttle::spawn_from_receiver(
-            counter.clone(),
-            CounterClient::call,
-            Frequency::OnEventWhen(Duration::from_millis((timer * 0.55) as u64)),
-            receiver,
-            None,
-        );
-
-        interval.tick().await; // Should wait up to exactly 200ms
-        handle.set(2).await; // Update handle, firing event
-        interval.tick().await;
-
-        // Update should be received directly after the interval
-        let time = *counter.elapsed.lock().unwrap() as f64;
-        let count = *counter.count.lock().unwrap();
-        assert!((timer * 1.1 - time).abs() / (timer * 1.1) < 0.1 && count == 1);
-    }
-
-    #[tokio::test(start_paused = true)]
-    async fn test_on_event_when_too_soon() {
-        // The interval passed to the throttle is longer than the time to the event, so its value is disregarded
-        // Event fires at 1. timer
-        // Test terminates before throttle interval passed at 1.5 timer
-
-        let timer = 200.;
-        let handle = Handle::new(1);
-        let mut interval = time::interval(Duration::from_millis(timer as u64));
-        interval.tick().await; // Completed immediately
-
-        // Start counter
-        let counter = CounterClient::new();
-
-        // Spawn throttle
-        let receiver = handle.subscribe();
-        Throttle::spawn_from_receiver(
-            counter.clone(),
-            CounterClient::call,
-            Frequency::OnEventWhen(Duration::from_millis((timer * 1.5) as u64)),
-            receiver,
-            None,
-        );
-
-        interval.tick().await; // Should wait up to exactly 200ms
-        handle.set(2).await; // Update handle, firing event
-
-        // Update should not be processed
-        let time = *counter.elapsed.lock().unwrap();
-        let count = *counter.count.lock().unwrap();
-        assert!(count == 0);
-        assert_eq!(time, 0);
-    }
-
-    #[tokio::test(start_paused = true)]
-    async fn test_throttle_parsing() {
-        // Parsing to self should succeed
+    async fn throttle_parsing_infers_types() {
+        // Compile-only: a single source type (A) feeds throttles that expect B or C
+        // via the `Throttled<F>` blanket + custom impls.
         Throttle::spawn_interval(
             DummyClient {},
             DummyClient::call_a,
             Duration::from_millis(100),
             A {},
         );
-
-        // Parsing to either B or C should be infered by the compiler
         Throttle::spawn_interval(
             DummyClient {},
             DummyClient::call_b,
             Duration::from_millis(100),
             A {},
         );
-
         Throttle::spawn_interval(
             DummyClient {},
             DummyClient::call_c,
@@ -431,6 +587,50 @@ mod tests {
             A {},
         );
     }
+
+    // ---- AsyncThrottle tests ----------------------------------------------
+
+    #[tokio::test(start_paused = true)]
+    async fn async_throttle_awaits_callback() {
+        let handle = Handle::new(1);
+        let counter = CounterClient::new();
+
+        AsyncThrottle::spawn_from_receiver(
+            counter.clone(),
+            CounterClient::async_call,
+            Frequency::OnEvent,
+            handle.subscribe(),
+            None,
+        );
+        handle.set(2).await;
+        sleep(Duration::from_millis(10)).await;
+
+        // `async_call` has a `yield_now().await` before mutating state; the
+        // counter only updates if `run` awaited the returned future.
+        assert_eq!(*counter.count.lock().unwrap(), 1);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn async_throttle_with_client_passes_owned_clone() {
+        let handle = Handle::new(1);
+        let counter = CounterClient::new();
+
+        // `plain_async_call` takes `self` by value; this only compiles if the
+        // `_with_client` wrapper clones the client per invocation.
+        AsyncThrottle::spawn_from_receiver_with_client(
+            counter.clone(),
+            CounterClient::plain_async_call,
+            Frequency::OnEvent,
+            handle.subscribe(),
+            Some(1),
+        );
+        handle.set(2).await;
+        sleep(Duration::from_millis(10)).await;
+
+        assert_eq!(*counter.count.lock().unwrap(), 2);
+    }
+
+    // ---- Test fixtures ----------------------------------------------------
 
     #[derive(Debug, Clone)]
     struct A {}
@@ -464,26 +664,35 @@ mod tests {
 
     #[derive(Debug, Clone)]
     struct CounterClient {
-        start: Instant,
-        elapsed: Arc<Mutex<u128>>,
         count: Arc<Mutex<i32>>,
+        start: Instant,
+        fires_at: Arc<Mutex<Vec<Duration>>>,
     }
 
     impl CounterClient {
         fn new() -> Self {
             CounterClient {
-                start: Instant::now(),
-                elapsed: Arc::new(Mutex::new(0)),
                 count: Arc::new(Mutex::new(0)),
+                start: Instant::now(),
+                fires_at: Arc::new(Mutex::new(Vec::new())),
             }
         }
 
         fn call(&self, _event: i32) {
-            let mut time = self.elapsed.lock().unwrap();
-            *time = self.start.elapsed().as_millis();
+            *self.count.lock().unwrap() += 1;
+            self.fires_at.lock().unwrap().push(self.start.elapsed());
+        }
 
-            let mut count = self.count.lock().unwrap();
-            *count += 1;
+        fn async_call<'a>(&'a self, _event: i32) -> Pin<Box<dyn Future<Output = ()> + Send + 'a>> {
+            Box::pin(async move {
+                tokio::task::yield_now().await;
+                *self.count.lock().unwrap() += 1;
+            })
+        }
+
+        async fn plain_async_call(self, _event: i32) {
+            tokio::task::yield_now().await;
+            *self.count.lock().unwrap() += 1;
         }
     }
 }

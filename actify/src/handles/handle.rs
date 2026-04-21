@@ -5,7 +5,7 @@ use tokio::sync::{broadcast, mpsc, oneshot};
 
 use super::read_handle::ReadHandle;
 use crate::actor::{Actor, ActorMethod, BroadcastFn, Job, serve};
-use crate::throttle::Throttle;
+use crate::throttle::{AsyncCall, AsyncThrottle, Throttle};
 use crate::{Cache, Frequency, Throttled};
 
 const CHANNEL_SIZE: usize = 100;
@@ -473,6 +473,92 @@ where
         let current = self.get().await;
         let receiver = self.subscribe();
         Throttle::spawn_from_receiver(client, call, freq, receiver, Some(current.to_broadcast()));
+    }
+
+    /// Low-level variant that takes a raw [`AsyncCall`] function pointer.
+    ///
+    /// Prefer [`spawn_async_throttle_with_client`](Self::spawn_async_throttle_with_client) when
+    /// `C: Clone` — it accepts a plain `async fn(C, F)` and handles the boxing for you.
+    /// Use this only when the client cannot be cloned.
+    pub async fn spawn_async_throttle<C, F>(
+        &self,
+        client: C,
+        call: AsyncCall<C, F>,
+        freq: Frequency,
+    ) where
+        C: Send + Sync + 'static,
+        V: Throttled<F>,
+        F: Clone + Send + Sync + 'static,
+    {
+        let current = self.get().await;
+        let receiver = self.subscribe();
+        AsyncThrottle::spawn_from_receiver(
+            client,
+            call,
+            freq,
+            receiver,
+            Some(current.to_broadcast()),
+        );
+    }
+
+    /// Spawns an [`AsyncThrottle`] from a plain `async fn(C, F)` callback.
+    ///
+    /// This is the preferred way to attach an async throttle to a [`Handle`].
+    /// The client is cloned per invocation and passed to the callback by value,
+    /// so the call site stays free of `Box::pin(async move { ... })` boilerplate.
+    /// Fall back to [`spawn_async_throttle`](Self::spawn_async_throttle) only when
+    /// the client cannot be `Clone`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use actify::{Handle, Frequency};
+    /// # use std::sync::{Arc, Mutex};
+    /// # #[tokio::main]
+    /// # async fn main() {
+    /// #[derive(Clone)]
+    /// struct Logger(Arc<Mutex<Vec<i32>>>);
+    ///
+    /// impl Logger {
+    ///     async fn log(self, val: i32) {
+    ///         tokio::task::yield_now().await;
+    ///         self.0.lock().unwrap().push(val);
+    ///     }
+    /// }
+    ///
+    /// let handle = Handle::new(1);
+    /// let values = Arc::new(Mutex::new(Vec::new()));
+    /// handle
+    ///     .spawn_async_throttle_with_client(Logger(values.clone()), Logger::log, Frequency::OnEvent)
+    ///     .await;
+    ///
+    /// handle.set(2).await;
+    /// tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    /// // Fires once with the current value on creation, then on each broadcast
+    /// assert_eq!(*values.lock().unwrap(), vec![1, 2]);
+    /// # }
+    /// ```
+    pub async fn spawn_async_throttle_with_client<C, F, Fun, Fut>(
+        &self,
+        client: C,
+        call: Fun,
+        freq: Frequency,
+    ) where
+        C: Clone + Send + Sync + 'static,
+        V: Throttled<F>,
+        F: Clone + Send + Sync + 'static,
+        Fun: Fn(C, F) -> Fut + Send + Sync + 'static,
+        Fut: std::future::Future<Output = ()> + Send + 'static,
+    {
+        let current = self.get().await;
+        let receiver = self.subscribe();
+        AsyncThrottle::spawn_from_receiver_with_client(
+            client,
+            call,
+            freq,
+            receiver,
+            Some(current.to_broadcast()),
+        );
     }
 }
 

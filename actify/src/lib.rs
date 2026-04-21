@@ -334,7 +334,7 @@ pub use extensions::{
     map::HashMapHandle, option::OptionHandle, set::HashSetHandle, vec::VecHandle,
 };
 pub use handles::{BroadcastAs, Handle, ReadHandle};
-pub use throttle::{Frequency, Throttle, Throttled};
+pub use throttle::{AsyncCall, AsyncThrottle, Frequency, Throttle, Throttled};
 
 #[doc(hidden)]
 pub use actor::Actor;

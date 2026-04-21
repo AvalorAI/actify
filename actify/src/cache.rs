@@ -5,6 +5,7 @@ use tokio::sync::broadcast::{
     error::{RecvError, TryRecvError},
 };
 
+use crate::throttle::{AsyncCall, AsyncThrottle};
 use crate::{Frequency, Throttle, Throttled};
 
 /// A simple caching struct that can be used to locally maintain a synchronized state with an actor.
@@ -467,6 +468,55 @@ where
         let current = self.inner.clone();
         let receiver = self.rx.resubscribe();
         Throttle::spawn_from_receiver(client, call, freq, receiver, Some(current));
+    }
+
+    /// Low-level variant that takes a raw [`AsyncCall`] function pointer.
+    ///
+    /// Prefer [`spawn_async_throttle_with_client`](Self::spawn_async_throttle_with_client) when
+    /// `C: Clone` — it accepts a plain `async fn(C, F)` and handles the boxing for you.
+    /// Use this only when the client cannot be cloned.
+    pub fn spawn_async_throttle<C, F>(
+        &self,
+        client: C,
+        call: AsyncCall<C, F>,
+        freq: Frequency,
+    ) where
+        C: Send + Sync + 'static,
+        T: Throttled<F>,
+        F: Clone + Send + Sync + 'static,
+    {
+        let current = self.inner.clone();
+        let receiver = self.rx.resubscribe();
+        AsyncThrottle::spawn_from_receiver(client, call, freq, receiver, Some(current));
+    }
+
+    /// Spawns an [`AsyncThrottle`] from a plain `async fn(C, F)` callback.
+    ///
+    /// This is the preferred way to attach an async throttle to a [`Cache`].
+    /// The client is cloned per invocation, so the call site stays free of
+    /// `Box::pin` boilerplate. Fall back to [`spawn_async_throttle`](Self::spawn_async_throttle)
+    /// only when the client cannot be `Clone`.
+    pub fn spawn_async_throttle_with_client<C, F, Fun, Fut>(
+        &self,
+        client: C,
+        call: Fun,
+        freq: Frequency,
+    ) where
+        C: Clone + Send + Sync + 'static,
+        T: Throttled<F>,
+        F: Clone + Send + Sync + 'static,
+        Fun: Fn(C, F) -> Fut + Send + Sync + 'static,
+        Fut: std::future::Future<Output = ()> + Send + 'static,
+    {
+        let current = self.inner.clone();
+        let receiver = self.rx.resubscribe();
+        AsyncThrottle::spawn_from_receiver_with_client(
+            client,
+            call,
+            freq,
+            receiver,
+            Some(current),
+        );
     }
 }
 
