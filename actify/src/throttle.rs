@@ -208,6 +208,25 @@ mod tests {
     }
 
     #[tokio::test(start_paused = true)]
+    async fn test_spawn_throttle_update_during_construction() {
+        let handle = Handle::new(1);
+        let counter = CounterClient::new();
+        let update_handle = handle.clone();
+        // On the current-thread test runtime, this task first runs when spawn_throttle awaits the
+        // actor, so the update is broadcast exactly in between its subscribe and get
+        let update = tokio::spawn(async move { update_handle.set(2).await });
+
+        handle
+            .spawn_throttle(counter.clone(), CounterClient::call, Frequency::OnEvent)
+            .await;
+        update.await.unwrap();
+        sleep(Duration::from_millis(10)).await;
+
+        // The update must not be lost: the throttle fires once on creation and once for the update
+        assert_eq!(*counter.count.lock().unwrap(), 2);
+    }
+
+    #[tokio::test(start_paused = true)]
     async fn test_exit_on_shutdown() {
         let handle = Handle::new(1);
         let receiver = handle.subscribe();
