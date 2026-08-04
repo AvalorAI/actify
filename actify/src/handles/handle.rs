@@ -429,12 +429,14 @@ where
     V: Clone + Send + Sync + 'static,
 {
     /// Creates an initialized [`Cache`] that locally synchronizes with the remote actor.
-    /// As it is initialized with the current value, any updates before construction are included.
+    /// As it is initialized with the current value, any updates before or during construction are included.
     ///
     /// See also [`Handle::create_cache_from_default`] for a cache that starts from `V::default()`.
     pub async fn create_cache(&self) -> Cache<V> {
+        // Subscribe before get, so an update arriving in between is queued rather than lost.
+        let rx = self.subscribe();
         let init = self.get().await;
-        Cache::new(self.subscribe(), init.to_broadcast())
+        Cache::new(rx, init.to_broadcast())
     }
 
     /// Spawns a [`Throttle`] that fires given a specified [`Frequency`].
@@ -470,8 +472,9 @@ where
         V: Throttled<F>,
         F: Clone + Send + Sync + 'static,
     {
-        let current = self.get().await;
+        // Subscribe before get, so an update arriving in between is queued rather than lost.
         let receiver = self.subscribe();
+        let current = self.get().await;
         Throttle::spawn_from_receiver(client, call, freq, receiver, Some(current.to_broadcast()));
     }
 }

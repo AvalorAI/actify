@@ -509,6 +509,21 @@ mod tests {
     use tokio::time::{Duration, sleep};
 
     #[tokio::test(start_paused = true)]
+    async fn test_create_cache_update_during_construction() {
+        let handle = Handle::new(1);
+        let update_handle = handle.clone();
+        // On the current-thread test runtime, this task first runs when create_cache awaits the
+        // actor, so the update is broadcast exactly in between its subscribe and get
+        let update = tokio::spawn(async move { update_handle.set(2).await });
+
+        let mut cache = handle.create_cache().await;
+        update.await.unwrap();
+
+        // The update must not be lost: it is either part of the seed or still queued
+        assert_eq!(cache.get_newest(), &2);
+    }
+
+    #[tokio::test(start_paused = true)]
     async fn test_recv_waits_for_update() {
         let handle = Handle::new(2);
         let mut cache = handle.create_cache().await;

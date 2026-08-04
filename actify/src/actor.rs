@@ -67,9 +67,8 @@ impl<T> Actor<T> {
     }
 }
 
-pub(crate) type ActorMethod<T> = Box<
-    dyn FnMut(&mut Actor<T>, Box<dyn Any + Send>) -> BoxFuture<Box<dyn Any + Send>> + Send,
->;
+pub(crate) type ActorMethod<T> =
+    Box<dyn FnMut(&mut Actor<T>, Box<dyn Any + Send>) -> BoxFuture<Box<dyn Any + Send>> + Send>;
 
 pub(crate) struct Job<T> {
     pub call: ActorMethod<T>,

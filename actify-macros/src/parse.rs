@@ -212,9 +212,9 @@ const PROPAGATED_ATTRIBUTES: &[&str] = &[
 fn is_propagated_attribute(attr: &Attribute) -> bool {
     let segments = &attr.path().segments;
     segments.len() == 1
-        && segments
-            .first()
-            .map_or(false, |seg| PROPAGATED_ATTRIBUTES.contains(&seg.ident.to_string().as_str()))
+        && segments.first().map_or(false, |seg| {
+            PROPAGATED_ATTRIBUTES.contains(&seg.ident.to_string().as_str())
+        })
 }
 
 /// Keep only whitelisted built-in attributes for generated code.
@@ -338,7 +338,11 @@ mod tests {
         ];
 
         let filtered = filter_attributes(&attrs);
-        assert_eq!(filtered.len(), attrs.len(), "all whitelisted attributes should pass through");
+        assert_eq!(
+            filtered.len(),
+            attrs.len(),
+            "all whitelisted attributes should pass through"
+        );
     }
 
     #[test]
