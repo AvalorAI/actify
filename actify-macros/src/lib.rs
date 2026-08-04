@@ -63,11 +63,7 @@ pub fn actify(attr: TokenStream, item: TokenStream) -> TokenStream {
     let args = syn::parse_macro_input!(attr as ActifyArgs);
 
     let mut impl_block = syn::parse_macro_input!(item as syn::ItemImpl);
-    match parse::ImplInfo::from_impl_block(
-        &mut impl_block,
-        args.skip_broadcast,
-        args.custom_name,
-    ) {
+    match parse::ImplInfo::from_impl_block(&mut impl_block, args.skip_broadcast, args.custom_name) {
         Ok(info) => codegen::generate(&info).into(),
         Err(err) => err.into(),
     }
