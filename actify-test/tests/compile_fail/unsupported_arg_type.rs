@@ -1,6 +1,3 @@
-// The impl block is emitted alongside the errors, so its bodies compile too.
-#![allow(unused_variables)]
-
 // Unsupported argument types (e.g. slices) should be rejected
 // with a clear error message suggesting concrete owned types.
 use actify::actify;
