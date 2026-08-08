@@ -1,0 +1,5 @@
+error: Actor methods must return owned types or 'static references: a result borrowed from the actor state cannot outlive the call (e.g. return String instead of &str)
+  --> tests/compile_fail/reference_return.rs:13:23
+   |
+13 |     fn name(&self) -> &str {
+   |                       ^^^^

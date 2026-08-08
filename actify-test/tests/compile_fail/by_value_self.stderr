@@ -1,0 +1,5 @@
+error: Actor methods cannot take self by value: the actor owns its state for its entire lifetime, so use &self or &mut self
+  --> tests/compile_fail/by_value_self.rs:11:16
+   |
+11 |     fn consume(self) -> i32 {
+   |                ^^^^

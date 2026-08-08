@@ -1,0 +1,5 @@
+error: Unsafe methods cannot be actified: the generated handle would call them from safe code, so the safety contract could not be upheld
+  --> tests/compile_fail/unsafe_method.rs:11:5
+   |
+11 |     unsafe fn danger(&self) -> i32 {
+   |     ^^^^^^

@@ -21,8 +21,14 @@ fn compile_fail_tests() {
     t.compile_fail("tests/compile_fail/impl_trait_arg.rs");
     t.compile_fail("tests/compile_fail/unsupported_arg_type.rs");
 
+    // Return type validation
+    t.compile_fail("tests/compile_fail/reference_return.rs");
+    t.compile_fail("tests/compile_fail/impl_trait_return.rs");
+
     // Method validation
     t.compile_fail("tests/compile_fail/static_method.rs");
+    t.compile_fail("tests/compile_fail/unsafe_method.rs");
+    t.compile_fail("tests/compile_fail/by_value_self.rs");
 
     // Superfluous broadcast attributes
     t.compile_fail("tests/compile_fail/superfluous_skip_broadcast.rs");
