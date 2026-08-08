@@ -634,6 +634,29 @@ mod tests {
         assert_eq!(cache.get_newest(), &3);
     }
 
+    /// Reading the cache must not change what a later receive returns: the
+    /// first-call semantics of the recv methods belong to those methods.
+    #[tokio::test(start_paused = true)]
+    async fn test_get_newest_leaves_first_receive_intact() {
+        let handle = Handle::new(1);
+        let mut cache = handle.create_cache().await;
+
+        assert_eq!(cache.get_newest(), &1);
+
+        // The first receive still yields the initial value
+        assert_eq!(cache.try_recv().unwrap(), Some(&1));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn test_get_newest_leaves_first_receive_newest_intact() {
+        let handle = Handle::new(1);
+        let mut cache = handle.create_cache().await;
+
+        assert_eq!(cache.get_newest(), &1);
+
+        assert_eq!(cache.try_recv_newest().unwrap(), Some(&1));
+    }
+
     #[tokio::test(start_paused = true)]
     async fn test_has_updates() {
         let handle = Handle::new(1);
