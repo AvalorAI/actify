@@ -424,8 +424,7 @@ mod tests {
             let _handle_2 = Handle::new("test");
             let handle_3 = Handle::new(1.); // This goes out of scope
             let _handle_1_clone = handle_1.clone();
-            let cache_3 = handle_3.create_cache().await; // But the cache doesn't
-            cache_3
+            handle_3.create_cache().await // But the cache doesn't
         };
 
         sleep(Duration::from_secs(1)).await;

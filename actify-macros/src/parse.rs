@@ -212,9 +212,9 @@ const PROPAGATED_ATTRIBUTES: &[&str] = &[
 fn is_propagated_attribute(attr: &Attribute) -> bool {
     let segments = &attr.path().segments;
     segments.len() == 1
-        && segments.first().map_or(false, |seg| {
-            PROPAGATED_ATTRIBUTES.contains(&seg.ident.to_string().as_str())
-        })
+        && segments
+            .first()
+            .is_some_and(|seg| PROPAGATED_ATTRIBUTES.contains(&seg.ident.to_string().as_str()))
 }
 
 /// Keep only whitelisted built-in attributes for generated code.
@@ -273,7 +273,6 @@ fn transform_args(
                 arg_names.push(ident);
                 arg_types.push(*pat_type.ty.clone());
             }
-            #[cfg_attr(test, deny(clippy::non_exhaustive_omitted_patterns))]
             _ => {}
         }
     }
