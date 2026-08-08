@@ -1,4 +1,4 @@
-name: actify-test
+name: CI
 
 on:
   push:
@@ -6,12 +6,94 @@ on:
   pull_request:
     branches: ["main"]
 
-jobs:
-  build-and-test:
-    runs-on: ubuntu-latest
+permissions:
+  contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # The toolchain used to generate the trybuild .stderr files. Compiler error
+  # output changes between rustc releases, so the trybuild job pins this
+  # version. To regenerate the .stderr files, see CONTRIBUTING.md.
+  TRYBUILD_TOOLCHAIN: "1.87.0"
+
+jobs:
+  fmt:
+    runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
-      - name: Build
-        run: cargo test --workspace
+        with:
+          components: rustfmt
+      - run: cargo fmt --all --check
+
+  clippy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      # Trybuild tests are skipped here (see the trybuild job): they pin exact
+      # rustc diagnostics and only run on the pinned toolchain.
+      - run: cargo test --workspace --all-features
+
+  # Workspace feature unification means `cargo test --workspace` always builds
+  # actify with the profiler feature enabled (actify-test requires it). This job
+  # is the only place the default (no-feature) build of actify is compiled.
+  test-features:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Test default features
+        run: cargo test -p actify
+      - name: Test profiler feature
+        run: cargo test -p actify --features profiler
+
+  docs:
+    runs-on: ubuntu-latest
+    env:
+      RUSTDOCFLAGS: "-D warnings"
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo doc --workspace --no-deps --all-features
+
+  msrv:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@1.85
+      - uses: Swatinem/rust-cache@v2
+      # check, not test: building dev-dependencies would raise the effective MSRV.
+      - run: cargo check -p actify -p actify-macros --all-features
+
+  trybuild:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.TRYBUILD_TOOLCHAIN }}
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test -p actify-test --test unsupported_arg_types
+        env:
+          TRYBUILD_TESTS: "1"

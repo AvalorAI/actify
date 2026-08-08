@@ -25,7 +25,7 @@ pub fn get_broadcast_counts() -> HashMap<String, usize> {
 /// Returns a sorted Vec of all broadcast counts per method
 pub fn get_sorted_broadcast_counts() -> Vec<(String, usize)> {
     let mut v: Vec<_> = get_broadcast_counts().into_iter().collect();
-    v.sort_by(|a, b| b.1.cmp(&a.1));
+    v.sort_by_key(|entry| std::cmp::Reverse(entry.1));
     v
 }
 

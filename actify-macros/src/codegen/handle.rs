@@ -108,29 +108,31 @@ fn method_body(
     let broadcast = if method.skip_broadcast {
         None
     } else {
-        Some(quote! { s.broadcast(#ident_string); })
+        Some(quote! { __actify_s.broadcast(#ident_string); })
     };
 
+    // The __actify_ prefix prevents collisions with user argument names, which
+    // are bound as-is inside the generated body (e.g. an argument named `s`).
     quote! {
         #(#attrs)*
         async fn #ident #method_generics(&self, #(#arg_names: #arg_types),*) #return_type #where_clause {
-            let res = self.send_job(
-                Box::new(|s: &mut actify::Actor<#impl_type>, args: Box<dyn std::any::Any + Send>|
+            let __actify_res = self.send_job(
+                Box::new(|__actify_s: &mut actify::Actor<#impl_type>, __actify_args: Box<dyn std::any::Any + Send>|
                 Box::pin(async move {
-                    let (#(#arg_names),*): (#(#arg_types),*) = *args
+                    let (#(#arg_names),*): (#(#arg_types),*) = *__actify_args
                         .downcast()
                         .expect("Downcasting failed due to an error in the Actify macro");
 
-                    let result: #output_type = #call_prefix::#ident(&#mutability s.inner, #(#arg_names),*)#awaiter;
+                    let __actify_result: #output_type = #call_prefix::#ident(&#mutability __actify_s.inner, #(#arg_names),*)#awaiter;
 
                     #broadcast
 
-                    Box::new(result) as Box<dyn std::any::Any + Send>
+                    Box::new(__actify_result) as Box<dyn std::any::Any + Send>
                 })),
                 Box::new((#(#arg_names),*)),
             ).await;
 
-            *res.downcast().expect("Downcasting failed due to an error in the Actify macro")
+            *__actify_res.downcast().expect("Downcasting failed due to an error in the Actify macro")
         }
     }
 }
@@ -161,10 +163,8 @@ fn build_call_prefix(info: &ImplInfo) -> proc_macro2::TokenStream {
 
 /// Quote a return type, omitting the `->` for unit returns.
 fn quote_return_type(ty: &syn::Type) -> proc_macro2::TokenStream {
-    if let syn::Type::Tuple(tuple) = ty {
-        if tuple.elems.is_empty() {
-            return quote! {};
-        }
+    match ty {
+        syn::Type::Tuple(tuple) if tuple.elems.is_empty() => quote! {},
+        _ => quote! { -> #ty },
     }
-    quote! { -> #ty }
 }
