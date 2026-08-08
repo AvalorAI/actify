@@ -58,6 +58,11 @@ where
 
     /// Drains all buffered messages from the channel, keeping only the newest value.
     /// Returns `true` if any value was stored.
+    ///
+    /// A closed channel is only reported once its queue is exhausted: an actor
+    /// that broadcasts a final update and then stops leaves that update behind,
+    /// and it is usually the one worth having. Closing is permanent, so the
+    /// next call reports it.
     fn drain_to_newest(&mut self) -> Result<bool, CacheRecvNewestError> {
         let mut received = false;
         loop {
@@ -67,6 +72,7 @@ where
                     received = true;
                 }
                 Err(TryRecvError::Empty) => return Ok(received),
+                Err(TryRecvError::Closed) if received => return Ok(true),
                 Err(TryRecvError::Closed) => return Err(CacheRecvNewestError::Closed),
                 Err(TryRecvError::Lagged(nr)) => log_lag::<T>(nr),
             }
@@ -156,7 +162,8 @@ where
     ///
     /// # Errors
     ///
-    /// Returns [`CacheRecvNewestError::Closed`] if the actor is dropped (after the first call).
+    /// Returns [`CacheRecvNewestError::Closed`] once the actor has been dropped
+    /// and every update it broadcast has been delivered (after the first call).
     ///
     /// # Examples
     ///
@@ -248,7 +255,9 @@ where
     ///
     /// # Errors
     ///
-    /// Returns [`CacheRecvNewestError::Closed`] if the actor is dropped.
+    /// Returns [`CacheRecvNewestError::Closed`] once the actor has been dropped
+    /// and every update it broadcast has been delivered. A final update sent
+    /// just before the actor stopped is therefore still returned.
     ///
     /// # Examples
     ///
@@ -417,7 +426,8 @@ where
     ///
     /// # Errors
     ///
-    /// Returns [`CacheRecvNewestError::Closed`] if the actor is dropped (after the first call).
+    /// Returns [`CacheRecvNewestError::Closed`] once the actor has been dropped
+    /// and every update it broadcast has been delivered (after the first call).
     ///
     /// # Examples
     ///
@@ -659,6 +669,38 @@ mod tests {
         assert_eq!(cache.recv_newest().await, Err(CacheRecvNewestError::Closed));
         assert_eq!(cache.try_recv(), Err(CacheRecvError::Closed));
         assert_eq!(cache.try_recv_newest(), Err(CacheRecvNewestError::Closed));
+    }
+
+    /// A value broadcast just before the actor stops is still buffered in the
+    /// channel, so it must be delivered before the channel is reported closed.
+    #[tokio::test(start_paused = true)]
+    async fn test_last_value_before_close_is_not_lost() {
+        let handle = Handle::new(1);
+        let mut cache = handle.create_cache().await;
+        cache.try_recv_newest().unwrap(); // Consume first request
+
+        handle.set(2).await;
+        drop(handle); // The actor stops, but its last update is queued
+        sleep(Duration::from_millis(10)).await; // Let the actor task exit
+
+        assert_eq!(cache.try_recv_newest().unwrap(), Some(&2));
+        // Only once the queue is drained does the closed channel surface
+        assert_eq!(cache.try_recv_newest(), Err(CacheRecvNewestError::Closed));
+    }
+
+    /// The same guarantee for the awaiting variant.
+    #[tokio::test(start_paused = true)]
+    async fn test_recv_newest_returns_last_value_before_close() {
+        let handle = Handle::new(1);
+        let mut cache = handle.create_cache().await;
+        cache.recv_newest().await.unwrap(); // Consume first request
+
+        handle.set(2).await;
+        drop(handle);
+        sleep(Duration::from_millis(10)).await;
+
+        assert_eq!(cache.recv_newest().await.unwrap(), &2);
+        assert_eq!(cache.recv_newest().await, Err(CacheRecvNewestError::Closed));
     }
 
     #[tokio::test(start_paused = true)]
