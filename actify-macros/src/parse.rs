@@ -129,18 +129,8 @@ impl MethodInfo {
         });
         let is_async = method.sig.asyncness.is_some();
 
-        let skip_attr = method.attrs.iter().find(|attr| {
-            attr.path()
-                .segments
-                .iter()
-                .any(|seg| seg.ident == "skip_broadcast")
-        });
-        let broadcast_attr = method.attrs.iter().find(|attr| {
-            attr.path()
-                .segments
-                .iter()
-                .any(|seg| seg.ident == "broadcast")
-        });
+        let skip_attr = find_marker_attribute(&method.attrs, "skip_broadcast");
+        let broadcast_attr = find_marker_attribute(&method.attrs, "broadcast");
 
         let mut errors = None;
 
@@ -274,6 +264,22 @@ fn filter_attributes(attrs: &[Attribute]) -> Vec<Attribute> {
         .filter(|attr| is_propagated_attribute(attr))
         .cloned()
         .collect()
+}
+
+/// Find one of actify's marker attributes (`broadcast`, `skip_broadcast`).
+///
+/// Only the two spellings actify actually exports are recognised: bare
+/// (`#[broadcast]`, via a `use`) and crate-qualified (`#[actify::broadcast]`).
+/// Matching a name anywhere in the path would claim another crate's attribute,
+/// and the author would be told their own attribute is a superfluous actify one.
+fn find_marker_attribute<'a>(attrs: &'a [Attribute], name: &str) -> Option<&'a Attribute> {
+    attrs.iter().find(|attr| {
+        let path = attr.path();
+        path.is_ident(name)
+            || (path.segments.len() == 2
+                && path.segments[0].ident == "actify"
+                && path.segments[1].ident == name)
+    })
 }
 
 /// Verify the method has a receiver and that it borrows rather than consumes.
@@ -494,6 +500,45 @@ mod tests {
         let filtered = filter_attributes(&attrs);
         assert_eq!(filtered.len(), 1);
         assert!(filtered[0].path().is_ident("doc"));
+    }
+
+    #[test]
+    fn marker_attributes_are_recognised_bare_and_qualified() {
+        let attrs: Vec<Attribute> = vec![attr(parse_quote!(#[broadcast]))];
+        assert!(find_marker_attribute(&attrs, "broadcast").is_some());
+
+        let attrs: Vec<Attribute> = vec![attr(parse_quote!(#[actify::broadcast]))];
+        assert!(find_marker_attribute(&attrs, "broadcast").is_some());
+
+        let attrs: Vec<Attribute> = vec![attr(parse_quote!(#[skip_broadcast]))];
+        assert!(find_marker_attribute(&attrs, "skip_broadcast").is_some());
+
+        let attrs: Vec<Attribute> = vec![attr(parse_quote!(#[actify::skip_broadcast]))];
+        assert!(find_marker_attribute(&attrs, "skip_broadcast").is_some());
+    }
+
+    /// Another crate's attribute must not be mistaken for one of actify's, or
+    /// the user is told their own attribute is a superfluous actify one.
+    #[test]
+    fn marker_attributes_of_other_crates_are_ignored() {
+        let attrs: Vec<Attribute> = vec![attr(parse_quote!(#[other_crate::broadcast]))];
+        assert!(find_marker_attribute(&attrs, "broadcast").is_none());
+
+        let attrs: Vec<Attribute> = vec![attr(parse_quote!(#[broadcast::configure]))];
+        assert!(find_marker_attribute(&attrs, "broadcast").is_none());
+
+        let attrs: Vec<Attribute> = vec![attr(parse_quote!(#[a::b::skip_broadcast]))];
+        assert!(find_marker_attribute(&attrs, "skip_broadcast").is_none());
+    }
+
+    /// `skip_broadcast` must not register as `broadcast`.
+    #[test]
+    fn marker_attribute_names_do_not_overlap() {
+        let attrs: Vec<Attribute> = vec![attr(parse_quote!(#[skip_broadcast]))];
+        assert!(find_marker_attribute(&attrs, "broadcast").is_none());
+
+        let attrs: Vec<Attribute> = vec![attr(parse_quote!(#[actify::skip_broadcast]))];
+        assert!(find_marker_attribute(&attrs, "broadcast").is_none());
     }
 
     #[test]
