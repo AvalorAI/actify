@@ -86,20 +86,25 @@ pub(crate) struct Job<T> {
     pub respond_to: oneshot::Sender<Box<dyn Any + Send>>,
 }
 
-/// Why the actor task is no longer serving jobs.
-#[derive(Clone, Copy, Debug, PartialEq)]
+/// Why an actor stopped serving jobs.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ActorExit {
-    Running,
+    /// A method panicked, unwinding the actor task.
     Panicked,
+    /// The actor task ended without unwinding, because every handle to it was
+    /// dropped or the runtime shut down and cancelled it.
     Stopped,
 }
+
+/// The exit reason, or `None` while the actor is still serving jobs.
+pub(crate) type ExitState = Option<ActorExit>;
 
 /// Reports the exit reason when the actor task ends, however it ends.
 ///
 /// `std::thread::panicking()` is true while a panic unwinds the task, which is
 /// what separates a panicking actor method from a runtime shutdown or a
 /// cancelled task - both of which drop the task without unwinding.
-struct ExitGuard(watch::Sender<ActorExit>);
+struct ExitGuard(watch::Sender<ExitState>);
 
 impl Drop for ExitGuard {
     fn drop(&mut self) {
@@ -108,14 +113,14 @@ impl Drop for ExitGuard {
         } else {
             ActorExit::Stopped
         };
-        let _ = self.0.send(reason);
+        let _ = self.0.send(Some(reason));
     }
 }
 
 pub(crate) async fn serve<T: Send + Sync + 'static>(
     mut rx: mpsc::Receiver<Job<T>>,
     mut actor: Actor<T>,
-    exit_tx: watch::Sender<ActorExit>,
+    exit_tx: watch::Sender<ExitState>,
 ) {
     let _guard = ExitGuard(exit_tx);
     while let Some(job) = rx.recv().await {

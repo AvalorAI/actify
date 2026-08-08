@@ -4,7 +4,7 @@ use std::fmt::{self, Debug};
 use tokio::sync::{broadcast, mpsc, oneshot, watch};
 
 use super::read_handle::ReadHandle;
-use crate::actor::{Actor, ActorExit, ActorMethod, BroadcastFn, Job, serve};
+use crate::actor::{Actor, ActorExit, ActorMethod, BroadcastFn, ExitState, Job, serve};
 use crate::throttle::Throttle;
 use crate::{Cache, Frequency, Throttled};
 
@@ -83,7 +83,7 @@ where
 pub struct Handle<T, V = T> {
     pub(super) tx: mpsc::Sender<Job<T>>,
     pub(super) broadcast_sender: broadcast::Sender<V>,
-    pub(super) exit_rx: watch::Receiver<ActorExit>,
+    pub(super) exit_rx: watch::Receiver<ExitState>,
 }
 
 impl<T, V> Clone for Handle<T, V> {
@@ -139,7 +139,7 @@ where
     pub fn new(val: T) -> Handle<T, V> {
         let (tx, rx) = mpsc::channel(CHANNEL_SIZE);
         let (broadcast_tx, _) = broadcast::channel::<V>(CHANNEL_SIZE);
-        let (exit_tx, exit_rx) = watch::channel(ActorExit::Running);
+        let (exit_tx, exit_rx) = watch::channel(None);
         tokio::spawn(serve(
             rx,
             Actor::new(make_broadcast_fn(broadcast_tx.clone()), val),
@@ -194,6 +194,24 @@ impl<T, V> Handle<T, V> {
     pub fn get_read_handle(&self) -> ReadHandle<T, V> {
         ReadHandle::new(self.clone())
     }
+
+    /// Waits until the actor stops serving jobs, and reports why.
+    ///
+    /// Returns immediately if it has already stopped.
+    async fn wait_for_exit(&self) -> ActorExit {
+        let mut exit_rx = self.exit_rx.clone();
+        loop {
+            if let Some(exit) = *exit_rx.borrow_and_update() {
+                return exit;
+            }
+
+            // The sender is dropped without a value only if the actor task was
+            // discarded before it ever ran, which still means it is gone.
+            if exit_rx.changed().await.is_err() {
+                return ActorExit::Stopped;
+            }
+        }
+    }
 }
 
 impl<T: Send + Sync + 'static, V> Handle<T, V> {
@@ -229,12 +247,7 @@ impl<T: Send + Sync + 'static, V> Handle<T, V> {
     /// reports its failure, so this waits for it rather than guessing from
     /// scheduling order.
     async fn report_actor_gone(&self) -> Box<dyn Any + Send> {
-        let mut exit_rx = self.exit_rx.clone();
-        if *exit_rx.borrow_and_update() == ActorExit::Running {
-            let _ = exit_rx.changed().await;
-        }
-
-        if *exit_rx.borrow() == ActorExit::Panicked {
+        if self.wait_for_exit().await == ActorExit::Panicked {
             panic!("A panic occurred in the Actor of type {}", type_name::<T>());
         }
         panic!("Actor of type {} is no longer running", type_name::<T>());
