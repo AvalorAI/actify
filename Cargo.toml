@@ -6,6 +6,3 @@ members = [
     "actify-macros",
     "actify-test",
 ]
-
-[patch.crates-io]
-actify-macros = { path = "actify-macros" }
