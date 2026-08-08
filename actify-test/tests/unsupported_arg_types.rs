@@ -31,4 +31,8 @@ fn compile_fail_tests() {
 
     // Invalid custom name
     t.compile_fail("tests/compile_fail/invalid_custom_name.rs");
+
+    // Error reporting quality
+    t.compile_fail("tests/compile_fail/multiple_errors.rs");
+    t.compile_fail("tests/compile_fail/error_does_not_cascade.rs");
 }

@@ -3,3 +3,15 @@ error: Unsupported argument type for actor method; use a concrete owned type (e.
    |
 10 |     fn with_slice(&self, data: [u8]) -> u8 {
    |                                ^^^^
+
+error[E0277]: the size for values of type `[u8]` cannot be known at compilation time
+  --> tests/compile_fail/unsupported_arg_type.rs:10:32
+   |
+10 |     fn with_slice(&self, data: [u8]) -> u8 {
+   |                                ^^^^ doesn't have a size known at compile-time
+   |
+   = help: the trait `Sized` is not implemented for `[u8]`
+help: function arguments must have a statically known size, borrowed slices always have a known size
+   |
+10 |     fn with_slice(&self, data: &[u8]) -> u8 {
+   |                                +

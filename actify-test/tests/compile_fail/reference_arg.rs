@@ -7,7 +7,7 @@ struct MyActor;
 
 #[actify]
 impl MyActor {
-    fn foo(&self, bad_ref: &str) {}
+    fn foo(&self, _bad_ref: &str) {}
 }
 
 fn main() {}
