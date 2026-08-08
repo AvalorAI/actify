@@ -329,29 +329,31 @@
 //!
 //! # Execution model
 //!
-//! Each actor is one Tokio task that runs one job at a time, taking the next
-//! only after the current one returns. Calls never interleave, so `&mut self`
-//! methods need no lock. A slow method blocks every other caller of that actor.
+//! Each actor is one Tokio task. It runs one job at a time and takes the next
+//! only after the current one returns, so calls never interleave and
+//! `&mut self` methods need no lock. A slow method delays every other call to
+//! that actor.
 //!
-//! An actor method that calls its own handle deadlocks: the reply can only be
-//! produced by the actor, which is busy inside the method. The same applies to
-//! two actors that call each other.
+//! Jobs queue in a bounded channel, so callers wait when it is full.
+//!
+//! A method that calls its own handle never returns: it waits for a reply that
+//! only this actor can produce, and this actor is busy running the method. Two
+//! actors calling each other block the same way.
 //!
 //! ```no_run
 //! # use actify::{Handle, actify};
-//! # #[derive(Clone, Debug)]
-//! # struct Counter { handle: Option<Handle<i32>> }
+//! #[derive(Clone, Debug)]
+//! struct Counter {
+//!     own: Option<Handle<Counter>>,
+//! }
+//!
 //! #[actify]
 //! impl Counter {
 //!     async fn deadlocks(&self) {
-//!         // The actor is inside this method, so nothing can serve the call
-//!         self.handle.as_ref().unwrap().get().await;
+//!         self.own.as_ref().unwrap().get().await;
 //!     }
 //! }
 //! ```
-//!
-//! Jobs queue in a bounded channel, so callers wait once enough calls are
-//! outstanding.
 //!
 //! # Actor lifetime and panics
 //!

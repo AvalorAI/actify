@@ -1,6 +1,6 @@
 //! This workspace is used to test the functionalities of actify as would any user that imports the library
 
-use actify::actify;
+use actify::{Handle, actify};
 use std::{collections::HashMap, fmt::Debug};
 
 fn main() {}
@@ -544,6 +544,26 @@ mod tests {
         assert!(cache_3.try_recv_newest().is_err());
     }
 
+    /// An actor runs one job at a time, so a method calling its own handle
+    /// waits for a reply only this actor can produce. The crate docs state
+    /// this; the test keeps that statement true.
+    #[tokio::test(start_paused = true)]
+    async fn test_calling_own_handle_never_completes() {
+        let handle = Handle::new(SelfCaller {
+            own: None,
+            value: 7,
+        });
+        handle
+            .set(SelfCaller {
+                own: Some(handle.clone()),
+                value: 7,
+            })
+            .await;
+
+        let outcome = tokio::time::timeout(Duration::from_secs(60), handle.call_self()).await;
+        assert!(outcome.is_err(), "the self-call returned {outcome:?}");
+    }
+
     #[tokio::test]
     async fn test_drain_vec() {
         let actor_handle = Handle::new(vec![1, 2, 3]);
@@ -943,5 +963,20 @@ mod tests {
             after_handle_drop, baseline,
             "All tasks should exit after Handle is dropped"
         );
+    }
+}
+
+/// An actor holding a handle to itself, which is the shape that deadlocks.
+#[allow(dead_code)]
+#[derive(Clone, Debug)]
+struct SelfCaller {
+    own: Option<Handle<SelfCaller>>,
+    value: i32,
+}
+
+#[actify]
+impl SelfCaller {
+    async fn call_self(&self) -> i32 {
+        self.own.as_ref().unwrap().get().await.value
     }
 }
