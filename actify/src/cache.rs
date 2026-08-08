@@ -58,6 +58,11 @@ where
 
     /// Drains all buffered messages from the channel, keeping only the newest value.
     /// Returns `true` if any value was stored.
+    ///
+    /// A closed channel is only reported once its queue is exhausted: an actor
+    /// that broadcasts a final update and then stops leaves that update behind,
+    /// and it is usually the one worth having. Closing is permanent, so the
+    /// next call reports it.
     fn drain_to_newest(&mut self) -> Result<bool, CacheRecvNewestError> {
         let mut received = false;
         loop {
@@ -67,6 +72,7 @@ where
                     received = true;
                 }
                 Err(TryRecvError::Empty) => return Ok(received),
+                Err(TryRecvError::Closed) if received => return Ok(true),
                 Err(TryRecvError::Closed) => return Err(CacheRecvNewestError::Closed),
                 Err(TryRecvError::Lagged(nr)) => log_lag::<T>(nr),
             }
@@ -156,7 +162,8 @@ where
     ///
     /// # Errors
     ///
-    /// Returns [`CacheRecvNewestError::Closed`] if the actor is dropped (after the first call).
+    /// Returns [`CacheRecvNewestError::Closed`] once the actor has been dropped
+    /// and every update it broadcast has been delivered (after the first call).
     ///
     /// # Examples
     ///
@@ -248,7 +255,9 @@ where
     ///
     /// # Errors
     ///
-    /// Returns [`CacheRecvNewestError::Closed`] if the actor is dropped.
+    /// Returns [`CacheRecvNewestError::Closed`] once the actor has been dropped
+    /// and every update it broadcast has been delivered. A final update sent
+    /// just before the actor stopped is therefore still returned.
     ///
     /// # Examples
     ///
@@ -417,7 +426,8 @@ where
     ///
     /// # Errors
     ///
-    /// Returns [`CacheRecvNewestError::Closed`] if the actor is dropped (after the first call).
+    /// Returns [`CacheRecvNewestError::Closed`] once the actor has been dropped
+    /// and every update it broadcast has been delivered (after the first call).
     ///
     /// # Examples
     ///
