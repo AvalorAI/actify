@@ -504,6 +504,10 @@ mod tests {
 
     /// A panicking actor method must surface as a panic naming that cause, not
     /// as the generic message used when the actor merely stopped.
+    ///
+    /// The caller's panic is raised by the handle: the actor's own payload
+    /// unwinds the actor task and is not forwarded, which is why the assertion
+    /// checks for the handle's message and against the actor's.
     #[tokio::test]
     async fn test_actor_panic_is_reported_as_a_panic() {
         let handle = Handle::new(PanicStruct {});
@@ -512,9 +516,16 @@ mod tests {
         let result = tokio::spawn(async move { clone.panic().await }).await;
 
         let message = panic_message(result.unwrap_err());
+        assert_eq!(
+            message,
+            format!(
+                "A panic occurred in the Actor of type {}",
+                type_name::<PanicStruct>()
+            )
+        );
         assert!(
-            message.contains("A panic occurred"),
-            "expected an actor-panic message, got: {message}"
+            !message.contains(SYNC_PANIC_PAYLOAD),
+            "the actor's own payload is not forwarded to the caller: {message}"
         );
     }
 
@@ -528,27 +539,43 @@ mod tests {
         let result = tokio::spawn(async move { clone.panic_async().await }).await;
 
         let message = panic_message(result.unwrap_err());
+        assert_eq!(
+            message,
+            format!(
+                "A panic occurred in the Actor of type {}",
+                type_name::<PanicStruct>()
+            )
+        );
         assert!(
-            message.contains("A panic occurred"),
-            "expected an actor-panic message, got: {message}"
+            !message.contains(ASYNC_PANIC_PAYLOAD),
+            "the actor's own payload is not forwarded to the caller: {message}"
         );
     }
 
-    /// Every clone shares the actor, so all of them report the panic, not just
-    /// the one whose call brought the actor down.
+    /// One clone's call kills the shared actor, so every other clone is left
+    /// holding a handle to a dead actor - and learns it was a panic that
+    /// killed it, not an ordinary shutdown.
     #[tokio::test]
     async fn test_actor_panic_is_reported_to_other_clones() {
         let handle = Handle::new(PanicStruct {});
         let victim = handle.clone();
         let bystander = handle.clone();
 
+        // The same call succeeds while the actor is alive, so the failure
+        // below can only come from the actor being gone
+        assert_eq!(handle.innocent().await, 7);
+
         let _ = tokio::spawn(async move { victim.panic().await }).await;
 
-        let result = tokio::spawn(async move { bystander.panic().await }).await;
+        let result = tokio::spawn(async move { bystander.innocent().await }).await;
+
         let message = panic_message(result.unwrap_err());
-        assert!(
-            message.contains("A panic occurred") || message.contains("no longer running"),
-            "expected the actor to be reported as gone, got: {message}"
+        assert_eq!(
+            message,
+            format!(
+                "A panic occurred in the Actor of type {}",
+                type_name::<PanicStruct>()
+            )
         );
     }
 
@@ -626,17 +653,28 @@ mod tests {
         );
     }
 
+    /// Payloads distinctive enough that a test can tell whose panic it caught:
+    /// the actor's own, or the one the handle raises on the caller's behalf.
+    const SYNC_PANIC_PAYLOAD: &str = "sync actor method blew up";
+    const ASYNC_PANIC_PAYLOAD: &str = "async actor method blew up";
+
     #[derive(Debug, Clone)]
     struct PanicStruct {}
 
     #[actify_macros::actify]
     impl PanicStruct {
         fn panic(&self) {
-            panic!()
+            panic!("{SYNC_PANIC_PAYLOAD}")
         }
 
         async fn panic_async(&self) {
-            panic!()
+            panic!("{ASYNC_PANIC_PAYLOAD}")
+        }
+
+        /// A method that cannot fail on its own, so any panic it raises must
+        /// have come from the actor being gone.
+        fn innocent(&self) -> i32 {
+            7
         }
     }
 
