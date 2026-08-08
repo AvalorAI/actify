@@ -1,9 +1,17 @@
 use proc_macro2::Span;
-use quote::quote_spanned;
 use syn::{
-    Attribute, FnArg, Generics, Ident, ImplItem, ImplItemFn, ItemImpl, Path, Receiver, ReturnType,
-    Type, punctuated::Punctuated, spanned::Spanned, token::Comma,
+    Attribute, Error, FnArg, Generics, Ident, ImplItem, ImplItemFn, ItemImpl, Path, Receiver,
+    ReturnType, Type, punctuated::Punctuated, spanned::Spanned, token::Comma,
 };
+
+/// Merge an error into an accumulator so that one pass over the impl block can
+/// report every problem it finds, instead of one per recompile.
+fn accumulate(errors: &mut Option<Error>, error: Error) {
+    match errors {
+        Some(existing) => existing.combine(error),
+        None => *errors = Some(error),
+    }
+}
 
 /// Intermediate representation for an entire impl block processed by `#[actify]`.
 pub struct ImplInfo {
@@ -32,7 +40,7 @@ impl ImplInfo {
         impl_block: &mut ItemImpl,
         skip_all_broadcasts: bool,
         custom_name: Option<syn::LitStr>,
-    ) -> Result<ImplInfo, proc_macro2::TokenStream> {
+    ) -> syn::Result<ImplInfo> {
         let type_ident = get_impl_type_ident(&impl_block.self_ty)?;
 
         // Ensure the where clause always exists so we can unwrap safely
@@ -41,10 +49,10 @@ impl ImplInfo {
         let handle_trait_ident = if let Some(lit) = custom_name {
             let name = lit.value();
             syn::parse_str::<Ident>(&name).map_err(|_| {
-                quote_spanned! {
-                    lit.span() =>
-                    compile_error!("invalid `name` value: must be a valid Rust identifier");
-                }
+                Error::new_spanned(
+                    &lit,
+                    "invalid `name` value: must be a valid Rust identifier",
+                )
             })?
         } else {
             Ident::new(&format!("{type_ident}Handle"), Span::call_site())
@@ -54,11 +62,20 @@ impl ImplInfo {
 
         let attributes = filter_attributes(&impl_block.attrs);
 
+        // Parse every method before returning, so one pass reports all problems.
+        let mut errors = None;
         let mut methods = Vec::new();
         for item in &impl_block.items {
             if let ImplItem::Fn(method) = item {
-                methods.push(MethodInfo::from_impl_method(method, skip_all_broadcasts)?);
+                match MethodInfo::from_impl_method(method, skip_all_broadcasts) {
+                    Ok(info) => methods.push(info),
+                    Err(error) => accumulate(&mut errors, error),
+                }
             }
+        }
+
+        if let Some(errors) = errors {
+            return Err(errors);
         }
 
         Ok(ImplInfo {
@@ -98,10 +115,7 @@ pub struct MethodInfo {
 
 impl MethodInfo {
     /// Parse a single `ImplItemFn` into its intermediate representation.
-    fn from_impl_method(
-        method: &ImplItemFn,
-        skip_all_broadcasts: bool,
-    ) -> Result<MethodInfo, proc_macro2::TokenStream> {
+    fn from_impl_method(method: &ImplItemFn, skip_all_broadcasts: bool) -> syn::Result<MethodInfo> {
         let ident = method.sig.ident.clone();
 
         let is_mutable = method.sig.inputs.iter().any(|arg| {
@@ -128,18 +142,26 @@ impl MethodInfo {
                 .any(|seg| seg.ident == "broadcast")
         });
 
+        let mut errors = None;
+
         if skip_all_broadcasts {
             if let Some(attr) = skip_attr {
-                return Err(quote_spanned! {
-                    attr.span() =>
-                    compile_error!("#[skip_broadcast] is superfluous: the impl block already skips all broadcasts via #[actify(skip_broadcast)]");
-                });
+                accumulate(
+                    &mut errors,
+                    Error::new(
+                        attr.span(),
+                        "#[skip_broadcast] is superfluous: the impl block already skips all broadcasts via #[actify(skip_broadcast)]",
+                    ),
+                );
             }
         } else if let Some(attr) = broadcast_attr {
-            return Err(quote_spanned! {
-                attr.span() =>
-                compile_error!("#[broadcast] is superfluous: methods already broadcast by default; use #[actify(skip_broadcast)] on the impl block to change the default");
-            });
+            accumulate(
+                &mut errors,
+                Error::new(
+                    attr.span(),
+                    "#[broadcast] is superfluous: methods already broadcast by default; use #[actify(skip_broadcast)] on the impl block to change the default",
+                ),
+            );
         }
 
         let skip_broadcast = if skip_all_broadcasts {
@@ -148,9 +170,21 @@ impl MethodInfo {
             skip_attr.is_some()
         };
 
-        validate_has_receiver(method)?;
+        if let Err(error) = validate_has_receiver(method) {
+            accumulate(&mut errors, error);
+        }
 
-        let (arg_names, arg_types) = transform_args(&method.sig.inputs)?;
+        let (arg_names, arg_types) = match transform_args(&method.sig.inputs) {
+            Ok(args) => args,
+            Err(error) => {
+                accumulate(&mut errors, error);
+                (Punctuated::new(), Punctuated::new())
+            }
+        };
+
+        if let Some(errors) = errors {
+            return Err(errors);
+        }
 
         let output_type = match &method.sig.output {
             ReturnType::Type(_, ty) => ty.clone(),
@@ -175,18 +209,20 @@ impl MethodInfo {
 
 /// Extract the type name from a named type path (e.g. `MyStruct` from `MyStruct<T>`).
 /// Returns the last path segment's ident, so `crate::module::Foo<T>` yields `Foo`.
-fn get_impl_type_ident(impl_type: &Type) -> Result<Ident, proc_macro2::TokenStream> {
+fn get_impl_type_ident(impl_type: &Type) -> syn::Result<Ident> {
     let last_segment = match impl_type {
         Type::Path(type_path) => type_path.path.segments.last(),
         _ => None,
     };
 
-    last_segment.map(|segment| segment.ident.clone()).ok_or_else(|| {
-        quote_spanned! {
-            impl_type.span() =>
-            compile_error!("The actify macro requires a named type path (e.g. `impl MyStruct`), not a reference, tuple, or other type expression");
-        }
-    })
+    last_segment
+        .map(|segment| segment.ident.clone())
+        .ok_or_else(|| {
+            Error::new_spanned(
+                impl_type,
+                "The actify macro requires a named type path (e.g. `impl MyStruct`), not a reference, tuple, or other type expression",
+            )
+        })
 }
 
 /// Built-in compiler attributes that are safe to propagate onto generated trait
@@ -233,7 +269,7 @@ fn filter_attributes(attrs: &[Attribute]) -> Vec<Attribute> {
 }
 
 /// Verify the method has a receiver (`&self` or `&mut self`).
-fn validate_has_receiver(method: &ImplItemFn) -> Result<(), proc_macro2::TokenStream> {
+fn validate_has_receiver(method: &ImplItemFn) -> syn::Result<()> {
     let has_receiver = method
         .sig
         .inputs
@@ -241,10 +277,10 @@ fn validate_has_receiver(method: &ImplItemFn) -> Result<(), proc_macro2::TokenSt
         .any(|arg| matches!(arg, FnArg::Receiver(_)));
 
     if !has_receiver {
-        return Err(quote_spanned! {
-            method.span() =>
-            compile_error!("Static method cannot be actified: the method requires a receiver to the impl type, using either &self or &mut self");
-        });
+        return Err(Error::new(
+            method.span(),
+            "Static method cannot be actified: the method requires a receiver to the impl type, using either &self or &mut self",
+        ));
     }
 
     Ok(())
@@ -257,14 +293,20 @@ fn validate_has_receiver(method: &ImplItemFn) -> Result<(), proc_macro2::TokenSt
 #[allow(clippy::type_complexity, clippy::single_match)]
 fn transform_args(
     args: &Punctuated<FnArg, Comma>,
-) -> Result<(Punctuated<Ident, Comma>, Punctuated<Type, Comma>), proc_macro2::TokenStream> {
+) -> syn::Result<(Punctuated<Ident, Comma>, Punctuated<Type, Comma>)> {
     let mut arg_names: Punctuated<Ident, Comma> = Punctuated::new();
     let mut arg_types: Punctuated<Type, Comma> = Punctuated::new();
+    let mut errors = None;
 
     for (i, arg) in args.iter().enumerate() {
         match arg {
             syn::FnArg::Typed(pat_type) => {
-                validate_arg_type(&pat_type.ty, pat_type.ty.span())?;
+                // Every argument is checked, so a method with several invalid
+                // ones reports them all at once.
+                if let Err(error) = validate_arg_type(&pat_type.ty, pat_type.ty.span()) {
+                    accumulate(&mut errors, error);
+                    continue;
+                }
 
                 let ident = match &*pat_type.pat {
                     syn::Pat::Ident(pat_ident) => pat_ident.ident.clone(),
@@ -278,11 +320,14 @@ fn transform_args(
         }
     }
 
-    Ok((arg_names, arg_types))
+    match errors {
+        Some(errors) => Err(errors),
+        None => Ok((arg_names, arg_types)),
+    }
 }
 
 /// Validate that an argument type is supported for actor method arguments.
-fn validate_arg_type(ty: &Type, span: proc_macro2::Span) -> Result<(), proc_macro2::TokenStream> {
+fn validate_arg_type(ty: &Type, span: proc_macro2::Span) -> syn::Result<()> {
     match ty {
         // Valid owned types
         Type::Path(_)
@@ -292,25 +337,25 @@ fn validate_arg_type(ty: &Type, span: proc_macro2::Span) -> Result<(), proc_macr
         | Type::Paren(_)
         | Type::Group(_) => Ok(()),
 
-        Type::Reference(_) => Err(quote_spanned! {
-            span =>
-            compile_error!("Input arguments of actor model methods must be owned types, not references (e.g. use String instead of &str)");
-        }),
+        Type::Reference(_) => Err(Error::new(
+            span,
+            "Input arguments of actor model methods must be owned types, not references (e.g. use String instead of &str)",
+        )),
 
-        Type::Ptr(_) => Err(quote_spanned! {
-            span =>
-            compile_error!("Raw pointer types (*const T, *mut T) are not supported as actor method arguments because they are not Send");
-        }),
+        Type::Ptr(_) => Err(Error::new(
+            span,
+            "Raw pointer types (*const T, *mut T) are not supported as actor method arguments because they are not Send",
+        )),
 
-        Type::ImplTrait(_) => Err(quote_spanned! {
-            span =>
-            compile_error!("impl Trait is not supported as an actor method argument; use a named generic type parameter with trait bounds instead (e.g. fn method<F: Fn()>(&self, f: F))");
-        }),
+        Type::ImplTrait(_) => Err(Error::new(
+            span,
+            "impl Trait is not supported as an actor method argument; use a named generic type parameter with trait bounds instead (e.g. fn method<F: Fn()>(&self, f: F))",
+        )),
 
-        _ => Err(quote_spanned! {
-            span =>
-            compile_error!("Unsupported argument type for actor method; use a concrete owned type (e.g. String, Vec<T>, (A, B), [T; N])");
-        }),
+        _ => Err(Error::new(
+            span,
+            "Unsupported argument type for actor method; use a concrete owned type (e.g. String, Vec<T>, (A, B), [T; N])",
+        )),
     }
 }
 

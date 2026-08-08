@@ -1,5 +1,17 @@
 error: Input arguments of actor model methods must be owned types, not references (e.g. use String instead of &str)
-  --> tests/compile_fail/multiple_errors.rs:11:30
+  --> tests/compile_fail/multiple_errors.rs:14:30
    |
-11 |     fn first(&self, bad_ref: &str) {}
+14 |     fn first(&self, bad_ref: &str) {}
    |                              ^
+
+error: Raw pointer types (*const T, *mut T) are not supported as actor method arguments because they are not Send
+  --> tests/compile_fail/multiple_errors.rs:16:31
+   |
+16 |     fn second(&self, bad_ptr: *const u8) {}
+   |                               ^
+
+error: impl Trait is not supported as an actor method argument; use a named generic type parameter with trait bounds instead (e.g. fn method<F: Fn()>(&self, f: F))
+  --> tests/compile_fail/multiple_errors.rs:18:31
+   |
+18 |     fn third(&self, bad_impl: impl Fn()) {}
+   |                               ^^^^

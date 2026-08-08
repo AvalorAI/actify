@@ -1,3 +1,6 @@
+// The impl block is emitted alongside the errors, so its bodies compile too.
+#![allow(unused_variables)]
+
 // EXPECTED: every invalid argument is reported, not just the first one.
 // Reporting one error per compile cycle forces users to fix a block of
 // methods one recompile at a time.

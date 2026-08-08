@@ -1,3 +1,6 @@
+// The impl block is emitted alongside the errors, so its bodies compile too.
+#![allow(unused_variables)]
+
 // EXPECTED: only the macro's own diagnostic is reported.
 // When the macro discards the impl block on error, the type loses every
 // method in it, so each call site produces an extra "no method named ..."

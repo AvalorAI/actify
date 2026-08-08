@@ -55,16 +55,34 @@ impl syn::parse::Parse for ActifyArgs {
     }
 }
 
+/// Emit diagnostics together with the impl block they came from.
+///
+/// Returning only the errors would delete every method of the type, so each
+/// call site would report a further "no method named ..." error and bury the
+/// diagnostic that actually explains the problem.
+fn report(error: syn::Error, impl_block: &syn::ItemImpl) -> TokenStream {
+    let compile_errors = error.to_compile_error();
+    quote::quote! {
+        #compile_errors
+        #impl_block
+    }
+    .into()
+}
+
 /// The actify macro expands an impl block of a rust struct to support usage in an actor model.
 /// Effectively, this macro allows to remotely call an actor method through a handle.
 /// By using traits, the methods on the handle have the same signatures, so that type checking is enforced
 #[proc_macro_attribute]
 pub fn actify(attr: TokenStream, item: TokenStream) -> TokenStream {
-    let args = syn::parse_macro_input!(attr as ActifyArgs);
-
     let mut impl_block = syn::parse_macro_input!(item as syn::ItemImpl);
+
+    let args = match syn::parse::<ActifyArgs>(attr) {
+        Ok(args) => args,
+        Err(error) => return report(error, &impl_block),
+    };
+
     match parse::ImplInfo::from_impl_block(&mut impl_block, args.skip_broadcast, args.custom_name) {
         Ok(info) => codegen::generate(&info).into(),
-        Err(err) => err.into(),
+        Err(error) => report(error, &impl_block),
     }
 }
