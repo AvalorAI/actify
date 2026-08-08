@@ -87,11 +87,8 @@ pub(crate) struct Job<T> {
 }
 
 /// Why an actor stopped serving jobs.
-///
-/// Reported by [`Handle::closed`](crate::Handle::closed).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[non_exhaustive]
-pub enum ActorExit {
+pub(crate) enum ActorExit {
     /// A method panicked, unwinding the actor task.
     Panicked,
     /// The actor task ended without unwinding, because every handle to it was

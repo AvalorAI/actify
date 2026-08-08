@@ -195,64 +195,10 @@ impl<T, V> Handle<T, V> {
         ReadHandle::new(self.clone())
     }
 
-    /// Returns whether the actor is still serving jobs.
-    ///
-    /// This is advisory. The actor can stop between the check and the next
-    /// call, which would still panic, so this cannot make a call safe — it
-    /// only avoids obviously pointless work. To react to an actor stopping,
-    /// await [`closed`](Self::closed), which cannot race: once an actor has
-    /// stopped it never resumes.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// # use actify::Handle;
-    /// # #[tokio::main]
-    /// # async fn main() {
-    /// let handle = Handle::new(1);
-    /// assert!(handle.is_alive());
-    /// # }
-    /// ```
-    pub fn is_alive(&self) -> bool {
-        // An actor discarded before it ever ran cannot report an exit, so the
-        // channel still holds no reason. Its sender is gone with the task,
-        // which has_changed reports as an error.
-        self.exit_rx.borrow().is_none() && self.exit_rx.has_changed().is_ok()
-    }
-
     /// Waits until the actor stops serving jobs, and reports why.
     ///
-    /// Returns immediately if it has already stopped. This is the race-free
-    /// counterpart to [`is_alive`](Self::is_alive): an actor never resumes, so
-    /// the answer cannot go stale.
-    ///
-    /// Cancel safe: dropping the returned future loses nothing.
-    ///
-    /// # Which exits this can observe
-    ///
-    /// Holding a handle keeps the actor alive, so this resolves when the actor
-    /// [panics](ActorExit::Panicked) or its runtime cancels it — the exits a
-    /// supervisor cannot see coming. It does *not* resolve for the ordinary
-    /// shutdown where the last handle is dropped, because the handle awaiting
-    /// here is one of them. That shutdown is driven by your own code, which
-    /// already knows it is happening.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// # use actify::Handle;
-    /// # use std::time::Duration;
-    /// # #[tokio::main]
-    /// # async fn main() {
-    /// let handle = Handle::new(1);
-    ///
-    /// tokio::select! {
-    ///     exit = handle.closed() => panic!("the actor stopped: {exit:?}"),
-    ///     _ = tokio::time::sleep(Duration::from_millis(10)) => {} // Still serving
-    /// }
-    /// # }
-    /// ```
-    pub async fn closed(&self) -> ActorExit {
+    /// Returns immediately if it has already stopped.
+    async fn wait_for_exit(&self) -> ActorExit {
         let mut exit_rx = self.exit_rx.clone();
         loop {
             if let Some(exit) = *exit_rx.borrow_and_update() {
@@ -301,7 +247,7 @@ impl<T: Send + Sync + 'static, V> Handle<T, V> {
     /// reports its failure, so this waits for it rather than guessing from
     /// scheduling order.
     async fn report_actor_gone(&self) -> Box<dyn Any + Send> {
-        if self.closed().await == ActorExit::Panicked {
+        if self.wait_for_exit().await == ActorExit::Panicked {
             panic!("A panic occurred in the Actor of type {}", type_name::<T>());
         }
         panic!("Actor of type {} is no longer running", type_name::<T>());
@@ -568,104 +514,6 @@ where
 mod tests {
     use super::*;
     use crate as actify;
-
-    #[tokio::test]
-    async fn test_is_alive_while_the_actor_serves() {
-        let handle = Handle::new(1);
-        assert!(handle.is_alive());
-
-        handle.set(2).await; // Still serving after a job
-        assert!(handle.is_alive());
-    }
-
-    /// closed() must not resolve while the actor is still serving, or a
-    /// supervisor awaiting it would act on a shutdown that never happened.
-    #[tokio::test(start_paused = true)]
-    async fn test_closed_pends_while_the_actor_serves() {
-        let handle = Handle::new(1);
-
-        assert!(
-            never_resolves(handle.closed()).await,
-            "closed() resolved for an actor that is still serving"
-        );
-    }
-
-    #[tokio::test]
-    async fn test_closed_reports_a_panicked_actor() {
-        let handle = Handle::new(PanicStruct {});
-        let victim = handle.clone();
-        assert!(handle.is_alive());
-
-        let _ = tokio::spawn(async move { victim.panic().await }).await;
-
-        assert_eq!(handle.closed().await, ActorExit::Panicked);
-        assert!(!handle.is_alive());
-    }
-
-    /// The handle doing the watching keeps the actor alive, so the ordinary
-    /// "last handle dropped" shutdown is deliberately not observable here.
-    /// Without this the API reads as though awaiting it would eventually
-    /// resolve, and a supervisor would wait forever.
-    #[tokio::test(start_paused = true)]
-    async fn test_closed_cannot_observe_its_own_handle_being_the_last() {
-        let handle = Handle::new(1);
-        let watcher = handle.clone();
-        drop(handle); // watcher is now the only handle, so the actor serves on
-
-        assert!(
-            never_resolves(watcher.closed()).await,
-            "closed() resolved while a handle to the actor is still held"
-        );
-    }
-
-    /// Returns whether a future is still pending once nothing else can make
-    /// progress.
-    ///
-    /// Tests using this run on a paused clock, where tokio advances time
-    /// itself as soon as every task is idle. The timeout therefore elapses
-    /// immediately and asserts "this cannot resolve on its own", rather than
-    /// waiting out a duration chosen to look convincing.
-    async fn never_resolves<F: std::future::Future>(future: F) -> bool {
-        tokio::time::timeout(std::time::Duration::from_secs(1), future)
-            .await
-            .is_err()
-    }
-
-    /// A runtime shutdown cancels the actor without unwinding it, so it must
-    /// not be reported as a panic.
-    #[test]
-    fn test_closed_reports_a_cancelled_actor_as_stopped() {
-        let actor_rt = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .unwrap();
-        let handle = actor_rt.block_on(async { Handle::new(1) });
-
-        drop(actor_rt);
-
-        let caller_rt = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .unwrap();
-        caller_rt.block_on(async {
-            assert!(!handle.is_alive());
-            assert_eq!(handle.closed().await, ActorExit::Stopped);
-        });
-    }
-
-    /// Both are readable through a read handle, which shares the same actor.
-    #[tokio::test]
-    async fn test_read_handle_observes_the_actor_lifetime() {
-        let handle = Handle::new(PanicStruct {});
-        let read_handle = handle.get_read_handle();
-        assert!(read_handle.is_alive());
-
-        let victim = handle.clone();
-        let _ = tokio::spawn(async move { victim.panic().await }).await;
-
-        assert_eq!(read_handle.closed().await, ActorExit::Panicked);
-        assert!(!read_handle.is_alive());
-    }
 
     /// A panicking actor method must surface as a panic naming that cause, not
     /// as the generic message used when the actor merely stopped.

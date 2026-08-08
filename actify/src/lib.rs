@@ -336,8 +336,6 @@ pub use extensions::{
 pub use handles::{BroadcastAs, Handle, ReadHandle};
 pub use throttle::{Frequency, Throttle, Throttled};
 
-pub use actor::ActorExit;
-
 #[doc(hidden)]
 pub use actor::Actor;
 
