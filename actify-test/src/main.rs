@@ -544,25 +544,28 @@ mod tests {
         assert!(cache_3.try_recv_newest().is_err());
     }
 
-    /// An actor runs one job at a time, so a method calling its own handle
-    /// waits for a reply only this actor can produce. The crate docs state
+    /// An actor runs one job at a time, so two actors calling each other each
+    /// wait for a reply the other cannot produce yet. The crate docs state
     /// this; the test keeps that statement true.
     #[tokio::test(start_paused = true)]
-    async fn test_calling_own_handle_never_completes() {
-        let handle = Handle::new(SelfCaller {
-            own: None,
-            value: 7,
-        });
-        handle
-            .set(SelfCaller {
-                own: Some(handle.clone()),
-                value: 7,
+    async fn test_actors_calling_each_other_never_complete() {
+        let parser = Handle::new(Parser { store: None });
+        let store = Handle::new(Store { parser: None });
+
+        parser
+            .set(Parser {
+                store: Some(store.clone()),
+            })
+            .await;
+        store
+            .set(Store {
+                parser: Some(parser.clone()),
             })
             .await;
 
         assert!(
-            never_resolves(handle.call_self()).await,
-            "the self-call returned instead of blocking"
+            never_resolves(parser.parse()).await,
+            "the cycle returned instead of blocking"
         );
     }
 
@@ -980,17 +983,33 @@ mod tests {
     }
 }
 
-/// An actor holding a handle to itself, which is the shape that deadlocks.
+/// Two actors holding handles to each other, which is the shape that deadlocks.
 #[allow(dead_code)]
 #[derive(Clone, Debug)]
-struct SelfCaller {
-    own: Option<Handle<SelfCaller>>,
-    value: i32,
+struct Parser {
+    store: Option<Handle<Store>>,
+}
+
+#[allow(dead_code)]
+#[derive(Clone, Debug)]
+struct Store {
+    parser: Option<Handle<Parser>>,
 }
 
 #[actify]
-impl SelfCaller {
-    async fn call_self(&self) -> i32 {
-        self.own.as_ref().unwrap().get().await.value
+impl Parser {
+    async fn parse(&self) {
+        self.store.as_ref().unwrap().save().await;
+    }
+
+    async fn is_ready(&self) -> bool {
+        true
+    }
+}
+
+#[actify]
+impl Store {
+    async fn save(&self) {
+        self.parser.as_ref().unwrap().is_ready().await;
     }
 }

@@ -336,21 +336,38 @@
 //!
 //! Jobs queue in a bounded channel, so callers wait when it is full.
 //!
-//! A method that calls its own handle never returns: it waits for a reply that
-//! only this actor can produce, and this actor is busy running the method. Two
-//! actors calling each other block the same way.
+//! Two actors that call each other never return: each waits for a reply the
+//! other can only produce once it is free. The same holds for a method calling
+//! its own handle.
 //!
 //! ```no_run
 //! # use actify::{Handle, actify};
 //! #[derive(Clone, Debug)]
-//! struct Counter {
-//!     own: Option<Handle<Counter>>,
+//! struct Parser {
+//!     store: Option<Handle<Store>>,
+//! }
+//!
+//! #[derive(Clone, Debug)]
+//! struct Store {
+//!     parser: Option<Handle<Parser>>,
 //! }
 //!
 //! #[actify]
-//! impl Counter {
-//!     async fn deadlocks(&self) {
-//!         self.own.as_ref().unwrap().get().await;
+//! impl Parser {
+//!     async fn parse(&self) {
+//!         self.store.as_ref().unwrap().save().await;
+//!     }
+//!
+//!     async fn is_ready(&self) -> bool {
+//!         true
+//!     }
+//! }
+//!
+//! #[actify]
+//! impl Store {
+//!     async fn save(&self) {
+//!         // Parser is still inside parse, so this call is never served
+//!         self.parser.as_ref().unwrap().is_ready().await;
 //!     }
 //! }
 //! ```
