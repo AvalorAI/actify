@@ -1,0 +1,8 @@
+error[E0562]: `impl Trait` is not allowed in the type of variable bindings
+  --> tests/compile_fail/impl_trait_return.rs:11:26
+   |
+11 |     fn counter(&self) -> impl Iterator<Item = u8> {
+   |                          ^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `impl Trait` is only allowed in arguments and return types of functions and methods
+   = note: see issue #63065 <https://github.com/rust-lang/rust/issues/63065> for more information
