@@ -28,11 +28,15 @@ pub fn generate_trait_impl(info: &ImplInfo) -> proc_macro2::TokenStream {
     let impl_attrs = &info.attributes;
     let handle_trait_ident = &info.handle_trait_ident;
     let impl_type = &info.impl_type;
-    let trait_generics = &info.generics;
-    let where_clause = &info.generics.where_clause;
 
-    let mut impl_generics = info.generics.clone();
-    impl_generics.params.push(syn::parse_quote!(__V));
+    // Bounds and `const` declarations belong only in the impl's parameter list.
+    // The trait reference takes the parameter names alone, which is what
+    // TypeGenerics renders; the full Generics would emit `T: Clone` there.
+    let (_, trait_generics, where_clause) = info.generics.split_for_impl();
+
+    let mut generics_with_broadcast = info.generics.clone();
+    generics_with_broadcast.params.push(syn::parse_quote!(__V));
+    let (impl_generics, _, _) = generics_with_broadcast.split_for_impl();
 
     let call_prefix = build_call_prefix(info);
     let methods = info
@@ -139,25 +143,18 @@ fn method_body(
 
 /// Build the fully qualified syntax prefix for calling the original method.
 /// This is the same for every method in the impl block:
-/// - Direct impl, no generics: `TypeName`
-/// - Direct impl, with generics: `TypeName::<T>`
+/// - Direct impl: `<Type>`
 /// - Trait impl: `<Type as Trait>`
+///
+/// The self type is used exactly as written, so `impl<T> Wrapper<Vec<T>>` calls
+/// `<Wrapper<Vec<T>>>::method`. Rebuilding it from the impl block's parameter
+/// list would instead produce `Wrapper::<T>`, which names a different type.
 fn build_call_prefix(info: &ImplInfo) -> proc_macro2::TokenStream {
-    let type_ident = &info.type_ident;
+    let impl_type = &info.impl_type;
 
     match &info.trait_path {
-        None => {
-            if info.generics.params.is_empty() {
-                quote! { #type_ident }
-            } else {
-                let generics = &info.generics;
-                quote! { #type_ident::#generics }
-            }
-        }
-        Some(path) => {
-            let impl_type = &info.impl_type;
-            quote! { <#impl_type as #path> }
-        }
+        None => quote! { <#impl_type> },
+        Some(path) => quote! { <#impl_type as #path> },
     }
 }
 

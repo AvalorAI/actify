@@ -170,7 +170,7 @@ struct ConstActor<const N: usize> {
 
 #[actify]
 impl<const N: usize> ConstActor<N> {
-    fn capacity(&self) -> usize {
+    fn slots(&self) -> usize {
         N
     }
 }
@@ -495,7 +495,7 @@ mod tests {
     #[tokio::test]
     async fn test_impl_level_const_generic() {
         let handle = Handle::new(ConstActor { data: [0_u8; 4] });
-        assert_eq!(handle.capacity().await, 4);
+        assert_eq!(handle.slots().await, 4);
     }
 
     /// Argument names like `s`, `args`, `res` and `result` must not clash with
