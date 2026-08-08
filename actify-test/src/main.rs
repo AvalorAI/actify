@@ -560,8 +560,10 @@ mod tests {
             })
             .await;
 
-        let outcome = tokio::time::timeout(Duration::from_secs(60), handle.call_self()).await;
-        assert!(outcome.is_err(), "the self-call returned {outcome:?}");
+        assert!(
+            never_resolves(handle.call_self()).await,
+            "the self-call returned instead of blocking"
+        );
     }
 
     #[tokio::test]
@@ -646,6 +648,18 @@ mod tests {
     }
 
     /// Helper to get current number of alive tasks in the runtime
+    /// Returns whether a future is still pending once nothing else can make
+    /// progress.
+    ///
+    /// The tests using this run on a paused clock, where tokio advances time
+    /// as soon as every task is idle, so the timeout elapses immediately and
+    /// its length is irrelevant.
+    async fn never_resolves<F: std::future::Future>(future: F) -> bool {
+        tokio::time::timeout(Duration::from_secs(1), future)
+            .await
+            .is_err()
+    }
+
     fn alive_tasks() -> usize {
         tokio::runtime::Handle::current()
             .metrics()
