@@ -4,6 +4,7 @@ use tokio::sync::broadcast;
 
 use super::handle::{BroadcastAs, Handle};
 use crate::Cache;
+use crate::actor::ActorExit;
 
 /// A clonable read-only handle that can only be used to read the internal value.
 ///
@@ -47,6 +48,21 @@ impl<T, V> ReadHandle<T, V> {
     /// ```
     pub fn subscribe(&self) -> broadcast::Receiver<V> {
         self.0.subscribe()
+    }
+
+    /// Returns whether the actor is still serving jobs.
+    ///
+    /// See [`Handle::is_alive`] — this is advisory, and
+    /// [`closed`](Self::closed) is the race-free alternative.
+    pub fn is_alive(&self) -> bool {
+        self.0.is_alive()
+    }
+
+    /// Waits until the actor stops serving jobs, and reports why.
+    ///
+    /// See [`Handle::closed`].
+    pub async fn closed(&self) -> ActorExit {
+        self.0.closed().await
     }
 }
 
