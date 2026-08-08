@@ -115,6 +115,21 @@ impl NonDebug {
     fn foo(&self) {}
 }
 
+/// Argument names that collide with identifiers used in the generated code
+#[allow(dead_code)]
+#[derive(Clone, Debug)]
+struct ShadowingActor {
+    value: String,
+}
+
+#[actify]
+impl ShadowingActor {
+    fn store(&mut self, s: String, args: Vec<i32>, res: u8, result: bool) -> String {
+        self.value = format!("{s}-{args:?}-{res}-{result}");
+        self.value.clone()
+    }
+}
+
 #[derive(Clone, Debug)]
 struct ComplexActorTypes;
 
@@ -412,6 +427,18 @@ mod tests {
         assert_eq!(actor_handle.foo(0, HashMap::new()).await, 1.);
         assert_eq!(actor_handle.bar(5, |i: usize| i + 10).await, 15);
         assert_eq!(actor_handle.baz(0).await, 2.);
+    }
+
+    /// Argument names like `s`, `args`, `res` and `result` must not clash with
+    /// the identifiers the macro uses internally in the generated method body
+    #[tokio::test]
+    async fn test_shadowing_arg_names() {
+        let handle = Handle::new(ShadowingActor {
+            value: String::new(),
+        });
+
+        let stored = handle.store("x".to_string(), vec![1, 2], 3, true).await;
+        assert_eq!(stored, "x-[1, 2]-3-true");
     }
 
     #[tokio::test]
