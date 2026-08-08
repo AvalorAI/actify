@@ -491,6 +491,35 @@ mod tests {
         handle.panic().await;
     }
 
+    /// The profiler counts broadcasts per method name, so each method must
+    /// report its own name.
+    ///
+    /// The counters are process-global and shared with every test running in
+    /// parallel, so this uses a type no other test touches and only inspects
+    /// the keys belonging to it.
+    #[cfg(feature = "profiler")]
+    #[tokio::test]
+    async fn test_set_if_changed_broadcasts_under_its_own_name() {
+        #[derive(Debug, Clone, PartialEq)]
+        struct SetIfChangedProbe(i32);
+
+        let handle = Handle::new(SetIfChangedProbe(0));
+        handle.set_if_changed(SetIfChangedProbe(1)).await;
+
+        let counts = crate::get_broadcast_counts();
+        let keys: Vec<_> = counts
+            .keys()
+            .filter(|key| key.contains("SetIfChangedProbe"))
+            .collect();
+
+        assert_eq!(keys.len(), 1, "expected a single label, got {keys:?}");
+        assert!(
+            keys[0].ends_with("::set_if_changed"),
+            "broadcast was labelled {}",
+            keys[0]
+        );
+    }
+
     #[derive(Debug, Clone)]
     struct PanicStruct {}
 
