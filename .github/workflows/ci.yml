@@ -5,6 +5,8 @@ on:
     branches: ["main"]
   pull_request:
     branches: ["main"]
+  # release.yml runs this same gate against the tagged commit before publishing.
+  workflow_call:
 
 permissions:
   contents: read

@@ -1,0 +1,86 @@
+name: Release
+
+on:
+  push:
+    tags: ["v[0-9]+.[0-9]+.[0-9]+"]
+
+permissions:
+  contents: read
+
+# Third-party actions are pinned by commit SHA. A tag can be repointed by
+# whoever controls the action repository.
+jobs:
+  versions:
+    name: Versions
+    runs-on: ubuntu-latest
+    outputs:
+      macros: ${{ steps.read.outputs.macros }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable
+        with:
+          toolchain: stable
+      - id: read
+        run: |
+          set -euo pipefail
+          meta=$(cargo metadata --no-deps --format-version 1)
+          actify=$(jq -r '.packages[] | select(.name == "actify") | .version' <<<"$meta")
+          macros=$(jq -r '.packages[] | select(.name == "actify-macros") | .version' <<<"$meta")
+          req=$(jq -r '.packages[] | select(.name == "actify") | .dependencies[] | select(.name == "actify-macros") | .req' <<<"$meta")
+
+          if [ "${GITHUB_REF_NAME#v}" != "$actify" ]; then
+            echo "::error::tag ${GITHUB_REF_NAME} does not match actify version ${actify}"
+            exit 1
+          fi
+          if [ "${req#^}" != "$macros" ]; then
+            echo "::error::actify requires actify-macros ${req}, workspace has ${macros}"
+            exit 1
+          fi
+
+          echo "macros=${macros}" >> "$GITHUB_OUTPUT"
+
+  ci:
+    uses: ./.github/workflows/ci.yml
+
+  publish:
+    name: Publish
+    needs: [versions, ci]
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      contents: read
+      # Mints a short-lived crates.io token through trusted publishing.
+      id-token: write
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable
+        with:
+          toolchain: stable
+      - uses: rust-lang/crates-io-auth-action@c6f97d42243bad5fab37ca0427f495c86d5b1a18 # v1
+        id: auth
+
+      # actify requires an exact actify-macros version, so the macro crate has to
+      # reach the index first. A release that only changes actify reuses the
+      # macro version that is already published.
+      #
+      # The registry index is not cached in this job: a cached index predates the
+      # macro release below, and actify would fail to resolve it.
+      - name: Publish actify-macros
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
+          MACROS: ${{ needs.versions.outputs.macros }}
+        run: |
+          set -euo pipefail
+          status=$(curl -sS -o /dev/null -w '%{http_code}' \
+            -A "actify release workflow" \
+            "https://crates.io/api/v1/crates/actify-macros/${MACROS}")
+          if [ "$status" = "200" ]; then
+            echo "actify-macros ${MACROS} is already published"
+          else
+            cargo publish -p actify-macros
+          fi
+
+      - name: Publish actify
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
+        run: cargo publish -p actify
