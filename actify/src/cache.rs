@@ -102,6 +102,10 @@ where
     /// Returns the newest value available, draining any pending updates from the channel.
     /// If the channel is closed, returns the last known value without error.
     ///
+    /// This is a read: it does not count as the first call to
+    /// [`recv`](Self::recv), [`try_recv`](Self::try_recv) or their `_newest`
+    /// counterparts, so a later receive still yields the initial value.
+    ///
     /// Note: when the cache is initialized with a default value (e.g. via
     /// [`create_cache_from_default`](crate::Handle::create_cache_from_default)),
     /// the returned value may differ from the actor's actual value until a broadcast occurs.
@@ -122,7 +126,9 @@ where
     /// # }
     /// ```
     pub fn get_newest(&mut self) -> &T {
-        _ = self.try_recv_newest(); // Update if possible
+        // Drains directly rather than through try_recv_newest, which would also
+        // spend the first-request token that belongs to the recv methods.
+        _ = self.drain_to_newest(); // Update if possible
         self.get_current()
     }
 
