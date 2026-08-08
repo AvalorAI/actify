@@ -287,7 +287,7 @@ impl<T: Send + Sync + 'static, V> Handle<T, V> {
         self.run(val, |s, val| {
             if s.inner != val {
                 s.inner = val;
-                s.broadcast(&format!("{}::set", type_name::<T>()));
+                s.broadcast(&format!("{}::set_if_changed", type_name::<T>()));
             }
         })
         .await
