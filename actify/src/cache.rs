@@ -494,7 +494,7 @@ where
     where
         C: Send + Sync + 'static,
         T: Throttled<F>,
-        F: Clone + Send + Sync + 'static,
+        F: Send + Sync + 'static,
     {
         let current = self.inner.clone();
         let receiver = self.rx.resubscribe();

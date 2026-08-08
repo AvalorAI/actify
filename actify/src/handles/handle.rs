@@ -60,7 +60,7 @@ where
     Box::new(move |inner: &T, method: &str| {
         if sender.receiver_count() > 0 {
             if sender.send(inner.to_broadcast()).is_err() {
-                log::trace!("Broadcast failed because there are no active on {method:?}");
+                log::trace!("Broadcast failed because there are no active receivers on {method:?}");
             } else {
                 log::trace!("Broadcasted new value on {method:?}");
             }
@@ -159,7 +159,7 @@ where
     where
         C: Send + Sync + 'static,
         V: Throttled<F>,
-        F: Clone + Send + Sync + 'static,
+        F: Send + Sync + 'static,
     {
         let init = val.to_broadcast();
         let handle = Self::new(val);
@@ -501,7 +501,7 @@ where
     where
         C: Send + Sync + 'static,
         V: Throttled<F>,
-        F: Clone + Send + Sync + 'static,
+        F: Send + Sync + 'static,
     {
         // Subscribe before get, so an update arriving in between is queued rather than lost.
         let receiver = self.subscribe();
