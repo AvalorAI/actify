@@ -2,6 +2,7 @@
 name = "actify"
 version = "0.8.2"
 edition = "2024"
+rust-version = "1.85"
 description = "An intuitive actor model with minimal boilerplate"
 license = "MIT"
 repository = "https://github.com/AvalorAI/actify"

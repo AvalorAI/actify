@@ -163,10 +163,8 @@ fn build_call_prefix(info: &ImplInfo) -> proc_macro2::TokenStream {
 
 /// Quote a return type, omitting the `->` for unit returns.
 fn quote_return_type(ty: &syn::Type) -> proc_macro2::TokenStream {
-    if let syn::Type::Tuple(tuple) = ty {
-        if tuple.elems.is_empty() {
-            return quote! {};
-        }
+    match ty {
+        syn::Type::Tuple(tuple) if tuple.elems.is_empty() => quote! {},
+        _ => quote! { -> #ty },
     }
-    quote! { -> #ty }
 }

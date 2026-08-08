@@ -176,15 +176,16 @@ impl MethodInfo {
 /// Extract the type name from a named type path (e.g. `MyStruct` from `MyStruct<T>`).
 /// Returns the last path segment's ident, so `crate::module::Foo<T>` yields `Foo`.
 fn get_impl_type_ident(impl_type: &Type) -> Result<Ident, proc_macro2::TokenStream> {
-    if let Type::Path(type_path) = impl_type {
-        if let Some(last_segment) = type_path.path.segments.last() {
-            return Ok(last_segment.ident.clone());
-        }
-    }
+    let last_segment = match impl_type {
+        Type::Path(type_path) => type_path.path.segments.last(),
+        _ => None,
+    };
 
-    Err(quote_spanned! {
-        impl_type.span() =>
-        compile_error!("The actify macro requires a named type path (e.g. `impl MyStruct`), not a reference, tuple, or other type expression");
+    last_segment.map(|segment| segment.ident.clone()).ok_or_else(|| {
+        quote_spanned! {
+            impl_type.span() =>
+            compile_error!("The actify macro requires a named type path (e.g. `impl MyStruct`), not a reference, tuple, or other type expression");
+        }
     })
 }
 

@@ -2,6 +2,7 @@
 name = "actify-macros"
 version = "0.5.0"
 edition = "2024"
+rust-version = "1.85"
 description = "Actify's procedural macros"
 license = "MIT"
 repository = "https://github.com/AvalorAI/actify"
