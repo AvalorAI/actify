@@ -1,19 +1,5 @@
-error[E0308]: mismatched types
-  --> tests/compile_fail/by_value_self.rs:9:1
-   |
- 9 | #[actify]
-   | ^^^^^^^^^
-   | |
-   | expected `MyActor`, found `&MyActor`
-   | arguments to this function are incorrect
-   |
-note: method defined here
-  --> tests/compile_fail/by_value_self.rs:11:8
+error: Actor methods cannot take self by value: the actor owns its state for its entire lifetime, so use &self or &mut self
+  --> tests/compile_fail/by_value_self.rs:11:16
    |
 11 |     fn consume(self) -> i32 {
-   |        ^^^^^^^ ----
-   = note: this error originates in the attribute macro `actify` (in Nightly builds, run with -Z macro-backtrace for more info)
-help: consider using clone here
-   |
- 9 | #[actify].clone()
-   |          ++++++++
+   |                ^^^^

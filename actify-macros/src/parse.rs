@@ -170,7 +170,20 @@ impl MethodInfo {
             skip_attr.is_some()
         };
 
-        if let Err(error) = validate_has_receiver(method) {
+        if let Err(error) = validate_signature_modifiers(method) {
+            accumulate(&mut errors, error);
+        }
+
+        if let Err(error) = validate_receiver(method) {
+            accumulate(&mut errors, error);
+        }
+
+        let output_type = match &method.sig.output {
+            ReturnType::Type(_, ty) => ty.clone(),
+            ReturnType::Default => Box::new(syn::parse_quote! { () }),
+        };
+
+        if let Err(error) = validate_return_type(&output_type) {
             accumulate(&mut errors, error);
         }
 
@@ -185,11 +198,6 @@ impl MethodInfo {
         if let Some(errors) = errors {
             return Err(errors);
         }
-
-        let output_type = match &method.sig.output {
-            ReturnType::Type(_, ty) => ty.clone(),
-            ReturnType::Default => Box::new(syn::parse_quote! { () }),
-        };
 
         let attributes = filter_attributes(&method.attrs);
 
@@ -268,29 +276,88 @@ fn filter_attributes(attrs: &[Attribute]) -> Vec<Attribute> {
         .collect()
 }
 
-/// Verify the method has a receiver (`&self` or `&mut self`).
-fn validate_has_receiver(method: &ImplItemFn) -> syn::Result<()> {
-    let has_receiver = method
-        .sig
-        .inputs
-        .iter()
-        .any(|arg| matches!(arg, FnArg::Receiver(_)));
+/// Verify the method has a receiver and that it borrows rather than consumes.
+fn validate_receiver(method: &ImplItemFn) -> syn::Result<()> {
+    let receiver = method.sig.inputs.iter().find_map(|arg| match arg {
+        FnArg::Receiver(receiver) => Some(receiver),
+        FnArg::Typed(_) => None,
+    });
 
-    if !has_receiver {
+    let Some(receiver) = receiver else {
         return Err(Error::new(
             method.span(),
             "Static method cannot be actified: the method requires a receiver to the impl type, using either &self or &mut self",
+        ));
+    };
+
+    // The actor owns its state for as long as it runs, so it can only lend it
+    // to a method. Consuming it would leave the actor without state to serve
+    // the next job.
+    if receiver.reference.is_none() {
+        return Err(Error::new(
+            receiver.span(),
+            "Actor methods cannot take self by value: the actor owns its state for its entire lifetime, so use &self or &mut self",
         ));
     }
 
     Ok(())
 }
 
+/// Verify the method has no signature modifier the generated handle cannot honour.
+fn validate_signature_modifiers(method: &ImplItemFn) -> syn::Result<()> {
+    if let Some(unsafety) = method.sig.unsafety {
+        return Err(Error::new(
+            unsafety.span,
+            "Unsafe methods cannot be actified: the generated handle would call them from safe code, so the safety contract could not be upheld",
+        ));
+    }
+
+    Ok(())
+}
+
+/// Validate that a return type can travel back from the actor task.
+///
+/// Results are boxed as `Box<dyn Any + Send>`, which requires an owned
+/// `'static` type, and the generated code names the type in a `let` binding.
+///
+/// Unlike arguments this rejects a known set rather than accepting one: return
+/// types are more varied, and an allowlist risks refusing something that
+/// compiles fine today.
+fn validate_return_type(ty: &Type) -> syn::Result<()> {
+    match ty {
+        // `&'static T` outlives the actor and boxes fine. Any other borrow is
+        // tied to the actor's state and cannot leave the task with the result.
+        Type::Reference(reference)
+            if !reference
+                .lifetime
+                .as_ref()
+                .is_some_and(|lifetime| lifetime.ident == "static") =>
+        {
+            Err(Error::new_spanned(
+                ty,
+                "Actor methods must return owned types or 'static references: a result borrowed from the actor state cannot outlive the call (e.g. return String instead of &str)",
+            ))
+        }
+
+        Type::ImplTrait(_) => Err(Error::new_spanned(
+            ty,
+            "impl Trait is not supported as an actor method return type; return a concrete owned type instead (e.g. Vec<T> rather than impl Iterator<Item = T>)",
+        )),
+
+        Type::Ptr(_) => Err(Error::new_spanned(
+            ty,
+            "Raw pointer types (*const T, *mut T) are not supported as actor method return types because they are not Send",
+        )),
+
+        _ => Ok(()),
+    }
+}
+
 /// Extract and validate argument names and types from method inputs.
 /// For ident patterns, uses the original name. For non-ident patterns (e.g.
 /// destructuring `(a, b): (i32, i32)`), generates a positional name so the
 /// handle can box/unbox the value; the original method destructures at the call site.
-#[allow(clippy::type_complexity, clippy::single_match)]
+#[allow(clippy::type_complexity)]
 fn transform_args(
     args: &Punctuated<FnArg, Comma>,
 ) -> syn::Result<(Punctuated<Ident, Comma>, Punctuated<Type, Comma>)> {
@@ -316,7 +383,8 @@ fn transform_args(
                 arg_names.push(ident);
                 arg_types.push(*pat_type.ty.clone());
             }
-            _ => {}
+            // Checked by validate_receiver; it contributes no boxed argument.
+            syn::FnArg::Receiver(_) => {}
         }
     }
 

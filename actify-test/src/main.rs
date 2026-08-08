@@ -492,6 +492,14 @@ mod tests {
         assert_eq!(handle.first_item().await, Some(1));
     }
 
+    /// A `&'static` return outlives the actor, so it must keep working even
+    /// though borrows of the actor's own state are rejected
+    #[tokio::test]
+    async fn test_static_reference_return() {
+        let handle = Handle::new(CfgImplActor);
+        assert!(!handle.platform_value().await.is_empty());
+    }
+
     #[tokio::test]
     async fn test_impl_level_const_generic() {
         let handle = Handle::new(ConstActor { data: [0_u8; 4] });

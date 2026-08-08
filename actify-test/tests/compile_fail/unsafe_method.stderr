@@ -1,8 +1,5 @@
-error[E0133]: call to unsafe function `MyActor::danger` is unsafe and requires unsafe block
- --> tests/compile_fail/unsafe_method.rs:9:1
-  |
-9 | #[actify]
-  | ^^^^^^^^^ call to unsafe function
-  |
-  = note: consult the function's documentation for information on how to avoid undefined behavior
-  = note: this error originates in the attribute macro `actify` (in Nightly builds, run with -Z macro-backtrace for more info)
+error: Unsafe methods cannot be actified: the generated handle would call them from safe code, so the safety contract could not be upheld
+  --> tests/compile_fail/unsafe_method.rs:11:5
+   |
+11 |     unsafe fn danger(&self) -> i32 {
+   |     ^^^^^^
