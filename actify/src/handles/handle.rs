@@ -794,6 +794,21 @@ mod tests {
         }
     }
 
+    /// A `&self` method cannot change the state, so there is nothing for
+    /// subscribers to observe. The `&mut self` call afterwards proves the
+    /// subscription is live and the first assertion did not pass by accident.
+    #[tokio::test]
+    async fn test_ref_self_method_does_not_broadcast() {
+        let handle: Handle<NonCloneActor, i32> = Handle::new(NonCloneActor { value: 42 });
+        let mut rx = handle.subscribe();
+
+        assert_eq!(handle.get_value().await, 42);
+        assert!(rx.try_recv().is_err());
+
+        handle.set_value(100).await;
+        assert_eq!(rx.recv().await.unwrap(), 100);
+    }
+
     #[tokio::test]
     async fn test_with_does_not_broadcast() {
         let handle = Handle::new(vec![1, 2, 3]);
