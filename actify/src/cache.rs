@@ -102,6 +102,10 @@ where
     /// Returns the newest value available, draining any pending updates from the channel.
     /// If the channel is closed, returns the last known value without error.
     ///
+    /// This delivers the cache's current value, so it counts as the first read.
+    /// A later [`recv`](Self::recv) or [`try_recv`](Self::try_recv) waits for
+    /// the next update instead of handing back a value already seen here.
+    ///
     /// Note: when the cache is initialized with a default value (e.g. via
     /// [`create_cache_from_default`](crate::Handle::create_cache_from_default)),
     /// the returned value may differ from the actor's actual value until a broadcast occurs.
@@ -119,6 +123,20 @@ where
     /// handle.set(2).await;
     /// handle.set(3).await;
     /// assert_eq!(cache.get_newest(), &3); // Synchronizes with latest value
+    /// # }
+    /// ```
+    ///
+    /// Reading here leaves nothing for the first receive to hand back:
+    ///
+    /// ```
+    /// # use actify::Handle;
+    /// # #[tokio::main]
+    /// # async fn main() {
+    /// let handle = Handle::new(1);
+    /// let mut cache = handle.create_cache().await;
+    ///
+    /// assert_eq!(cache.get_newest(), &1);
+    /// assert_eq!(cache.try_recv().unwrap(), None);
     /// # }
     /// ```
     pub fn get_newest(&mut self) -> &T {
@@ -153,8 +171,9 @@ where
 
     /// Receives the newest broadcasted value from the actor, discarding any older messages.
     ///
-    /// On the first call, returns the current cached value immediately, even if the channel is
-    /// closed. On subsequent calls, waits until an update is available.
+    /// On the first read of the cache, returns the current value immediately, even if the channel
+    /// is closed. Afterwards, waits until an update is available. A preceding
+    /// [`get_newest`](Self::get_newest) counts as that first read.
     ///
     /// Note: when the cache is initialized with a default value (e.g. via
     /// [`create_cache_from_default`](crate::Handle::create_cache_from_default)),
@@ -204,8 +223,9 @@ where
 
     /// Receives the next broadcasted value from the actor (FIFO).
     ///
-    /// On the first call, returns the current cached value immediately, even if the channel is
-    /// closed. On subsequent calls, waits until an update is available.
+    /// On the first read of the cache, returns the current value immediately, even if the channel
+    /// is closed. Afterwards, waits until an update is available. A preceding
+    /// [`get_newest`](Self::get_newest) counts as that first read.
     ///
     /// Note: when the cache is initialized with a default value (e.g. via
     /// [`create_cache_from_default`](crate::Handle::create_cache_from_default)),
@@ -246,8 +266,9 @@ where
     /// Tries to receive the newest broadcasted value from the actor, discarding any older
     /// messages. Returns immediately without waiting.
     ///
-    /// On the first call, returns `Some` with the current cached value, even if no updates are
-    /// present. On subsequent calls, returns `None` if no new updates are available.
+    /// On the first read of the cache, returns `Some` with the current value, even if no updates
+    /// are present. Afterwards, returns `None` if no new updates are available. A preceding
+    /// [`get_newest`](Self::get_newest) counts as that first read.
     ///
     /// Note: when the cache is initialized with a default value (e.g. via
     /// [`create_cache_from_default`](crate::Handle::create_cache_from_default)),
@@ -309,9 +330,9 @@ where
     /// Tries to receive the next broadcasted value from the actor (FIFO). Returns immediately
     /// without waiting.
     ///
-    /// On the first call, returns `Some` with the current cached value, even if no updates are
-    /// present or the channel is closed. On subsequent calls, returns `None` if no new updates
-    /// are available.
+    /// On the first read of the cache, returns `Some` with the current value, even if no updates
+    /// are present or the channel is closed. Afterwards, returns `None` if no new updates are
+    /// available. A preceding [`get_newest`](Self::get_newest) counts as that first read.
     ///
     /// Note: when the cache is initialized with a default value (e.g. via
     /// [`create_cache_from_default`](crate::Handle::create_cache_from_default)),
@@ -417,8 +438,9 @@ where
     /// Blocking version of [`recv_newest`](Self::recv_newest). Receives the newest broadcasted
     /// value, discarding any older messages. Must not be called from an async context.
     ///
-    /// On the first call, returns the newest available value immediately, even if the channel is
-    /// closed. On subsequent calls, blocks until an update is available.
+    /// On the first read of the cache, returns the newest available value immediately, even if the
+    /// channel is closed. Afterwards, blocks until an update is available. A preceding
+    /// [`get_newest`](Self::get_newest) counts as that first read.
     ///
     /// Note: when the cache is initialized with a default value (e.g. via
     /// [`create_cache_from_default`](crate::Handle::create_cache_from_default)),
@@ -632,6 +654,40 @@ mod tests {
         handle.set(2).await;
         handle.set(3).await;
         assert_eq!(cache.get_newest(), &3);
+    }
+
+    /// get_newest hands the caller the cache's current value, so a following
+    /// receive must not deliver that same value a second time.
+    #[tokio::test(start_paused = true)]
+    async fn test_get_newest_counts_as_the_first_read() {
+        let handle = Handle::new(1);
+        let mut cache = handle.create_cache().await;
+
+        assert_eq!(cache.get_newest(), &1);
+
+        assert_eq!(cache.try_recv().unwrap(), None);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn test_get_newest_counts_as_the_first_read_for_newest() {
+        let handle = Handle::new(1);
+        let mut cache = handle.create_cache().await;
+
+        assert_eq!(cache.get_newest(), &1);
+
+        assert_eq!(cache.try_recv_newest().unwrap(), None);
+    }
+
+    /// Updates that arrive after the read are still delivered.
+    #[tokio::test(start_paused = true)]
+    async fn test_receive_after_get_newest_yields_later_updates() {
+        let handle = Handle::new(1);
+        let mut cache = handle.create_cache().await;
+
+        assert_eq!(cache.get_newest(), &1);
+
+        handle.set(2).await;
+        assert_eq!(cache.try_recv().unwrap(), Some(&2));
     }
 
     #[tokio::test(start_paused = true)]
