@@ -584,10 +584,10 @@ mod tests {
     async fn test_closed_pends_while_the_actor_serves() {
         let handle = Handle::new(1);
 
-        tokio::select! {
-            exit = handle.closed() => panic!("reported {exit:?} for a running actor"),
-            _ = tokio::time::sleep(std::time::Duration::from_secs(60)) => {}
-        }
+        assert!(
+            never_resolves(handle.closed()).await,
+            "closed() resolved for an actor that is still serving"
+        );
     }
 
     #[tokio::test]
@@ -612,10 +612,23 @@ mod tests {
         let watcher = handle.clone();
         drop(handle); // watcher is now the only handle, so the actor serves on
 
-        tokio::select! {
-            exit = watcher.closed() => panic!("reported {exit:?} while a handle is held"),
-            _ = tokio::time::sleep(std::time::Duration::from_secs(60)) => {}
-        }
+        assert!(
+            never_resolves(watcher.closed()).await,
+            "closed() resolved while a handle to the actor is still held"
+        );
+    }
+
+    /// Returns whether a future is still pending once nothing else can make
+    /// progress.
+    ///
+    /// Tests using this run on a paused clock, where tokio advances time
+    /// itself as soon as every task is idle. The timeout therefore elapses
+    /// immediately and asserts "this cannot resolve on its own", rather than
+    /// waiting out a duration chosen to look convincing.
+    async fn never_resolves<F: std::future::Future>(future: F) -> bool {
+        tokio::time::timeout(std::time::Duration::from_secs(1), future)
+            .await
+            .is_err()
     }
 
     /// A runtime shutdown cancels the actor without unwinding it, so it must
