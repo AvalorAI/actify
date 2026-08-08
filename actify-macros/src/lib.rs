@@ -1,13 +1,51 @@
+//! Procedural macros for the [actify](https://docs.rs/actify) crate.
+//!
+//! Depend on `actify` rather than this crate: everything here is re-exported
+//! from there, and the generated code refers to `actify`'s types.
+#![warn(missing_docs)]
+
 mod codegen;
 mod parse;
 
 use proc_macro::TokenStream;
 
+/// Marks a method inside an `#[actify]` impl block as not broadcasting.
+///
+/// Broadcasting is the default, so this is only meaningful on a block that has
+/// not already opted out with `#[actify(skip_broadcast)]` — applying both is an
+/// error rather than a silent no-op.
+///
+/// ```ignore
+/// #[actify]
+/// impl Counter {
+///     #[actify::skip_broadcast]
+///     fn bump_quietly(&mut self) { self.count += 1 }
+/// }
+/// ```
+///
+/// This expands to nothing: the `#[actify]` macro reads it while processing the
+/// block and strips it from the output.
 #[proc_macro_attribute]
 pub fn skip_broadcast(_args: TokenStream, input: TokenStream) -> TokenStream {
     input
 }
 
+/// Marks a method as broadcasting inside an `#[actify(skip_broadcast)]` block.
+///
+/// The counterpart to [`macro@skip_broadcast`]: it restores the default for one
+/// method of a block that opted out of broadcasting wholesale. On a block that
+/// already broadcasts it is an error rather than a silent no-op.
+///
+/// ```ignore
+/// #[actify(skip_broadcast)]
+/// impl Counter {
+///     #[actify::broadcast]
+///     fn bump_loudly(&mut self) { self.count += 1 }
+/// }
+/// ```
+///
+/// This expands to nothing: the `#[actify]` macro reads it while processing the
+/// block and strips it from the output.
 #[proc_macro_attribute]
 pub fn broadcast(_args: TokenStream, input: TokenStream) -> TokenStream {
     input

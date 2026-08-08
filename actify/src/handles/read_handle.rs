@@ -85,6 +85,12 @@ impl<T: Send + Sync + 'static, V> ReadHandle<T, V> {
     /// assert_eq!(first, "sword");
     /// # }
     /// ```
+    ///
+    /// # Panics
+    ///
+    /// Panics if the actor has stopped, either because one of its methods
+    /// panicked or because its runtime shut down. See [Actor lifetime and
+    /// panics](crate#actor-lifetime-and-panics).
     pub async fn with<R, F>(&self, f: F) -> R
     where
         F: FnOnce(&T) -> R + Send + 'static,
@@ -109,6 +115,12 @@ impl<T: Clone + Send + Sync + 'static, V> ReadHandle<T, V> {
     /// assert_eq!(result, 1);
     /// # }
     /// ```
+    ///
+    /// # Panics
+    ///
+    /// Panics if the actor has stopped, either because one of its methods
+    /// panicked or because its runtime shut down. See [Actor lifetime and
+    /// panics](crate#actor-lifetime-and-panics).
     pub async fn get(&self) -> T {
         self.0.get().await
     }
@@ -137,6 +149,12 @@ where
 {
     /// Creates an initialized [`Cache`] that locally synchronizes with the remote actor.
     /// As it is initialized with the current value, any updates before construction are included.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the actor has stopped, either because one of its methods
+    /// panicked or because its runtime shut down. See [Actor lifetime and
+    /// panics](crate#actor-lifetime-and-panics).
     pub async fn create_cache(&self) -> Cache<V> {
         self.0.create_cache().await
     }

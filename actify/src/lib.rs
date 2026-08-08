@@ -1,4 +1,5 @@
-#![warn(missing_debug_implementations, unreachable_pub)]
+#![warn(missing_docs, missing_debug_implementations, unreachable_pub)]
+#![cfg_attr(docsrs, feature(doc_auto_cfg))]
 #![deny(unused_must_use)]
 //! An intuitive actor model for Rust with minimal boilerplate, no manual messages and typed arguments.
 //!
@@ -205,9 +206,14 @@
 //! updated value to all subscribers after execution. This allows [`Cache`]s and
 //! [`Throttle`]s to stay synchronized with the actor.
 //!
+//! This applies to every method in the block, including those taking `&self`:
+//! broadcasting follows the attributes below, not the receiver. Annotate
+//! read-only methods with `skip_broadcast` if you do not want them waking
+//! subscribers.
+//!
 //! You can control broadcasting with these attributes:
 //!
-//! - `#[actify::skip_broadcast]` — skip broadcasting for a single `&mut self` method
+//! - `#[actify::skip_broadcast]` — skip broadcasting for a single method
 //! - `#[actify(skip_broadcast)]` — skip broadcasting for all methods in the impl block
 //! - `#[actify::broadcast]` — force broadcasting for a method in a `skip_broadcast` block
 //!
@@ -309,10 +315,10 @@
 //! Actify ships with extension traits that add convenience methods to handles
 //! wrapping common standard library types:
 //!
-//! - [`OptionHandle`] — `is_some`, `is_none` for `Handle<Option<T>>`
-//! - [`VecHandle`] — `push`, `is_empty`, `drain` for `Handle<Vec<T>>`
-//! - [`HashMapHandle`] — `get_key`, `insert`, `is_empty` for `Handle<HashMap<K, V>>`
-//! - [`HashSetHandle`] — `insert`, `is_empty` for `Handle<HashSet<K>>`
+//! - [`OptionHandle`] for `Handle<Option<T>>`
+//! - [`VecHandle`] for `Handle<Vec<T>>`
+//! - [`HashMapHandle`] for `Handle<HashMap<K, V>>`
+//! - [`HashSetHandle`] for `Handle<HashSet<K>>`
 //!
 //! # Non-Clone types
 //!
@@ -320,6 +326,58 @@
 //! For non-Clone types, implement [`BroadcastAs<V>`] for a Clone-able summary
 //! type `V` and specify it explicitly: `Handle::<MyType, Summary>::new(val)`.
 //! Your `#[actify]` methods work normally either way.
+//!
+//! # Execution model
+//!
+//! Each actor runs as one Tokio task that handles **one job at a time**, taking
+//! the next only after the current one returns. Calls from different tasks
+//! therefore never interleave, which is what makes `&mut self` methods safe
+//! without a lock — but a slow method blocks every other caller of that actor,
+//! so long waits belong outside the actor.
+//!
+//! This has one sharp consequence. An actor method that calls back into its own
+//! handle **deadlocks**: the actor is busy inside the method, and the reply can
+//! only be produced by the actor. The same applies to a cycle between two
+//! actors that call each other.
+//!
+//! ```no_run
+//! # use actify::{Handle, actify};
+//! # #[derive(Clone, Debug)]
+//! # struct Counter { handle: Option<Handle<i32>> }
+//! #[actify]
+//! impl Counter {
+//!     async fn deadlocks(&self) {
+//!         // The actor is inside this method, so nothing can serve the call
+//!         self.handle.as_ref().unwrap().get().await;
+//!     }
+//! }
+//! ```
+//!
+//! Jobs are queued in a channel of bounded size, so callers wait once enough
+//! calls are outstanding rather than growing memory without limit.
+//!
+//! # Actor lifetime and panics
+//!
+//! An actor runs until every [`Handle`] to it is dropped, at which point its
+//! task ends. A [`ReadHandle`] counts here too: it holds a full handle
+//! internally, so it keeps the actor alive. A [`Cache`] does not — it only
+//! receives broadcasts.
+//!
+//! An actor stops permanently if one of its methods panics; there is no
+//! restart. Every later call on **any** handle to it then panics, reporting
+//! that the actor panicked. The original panic is printed by Rust with its own
+//! message and backtrace, so the failing method and line are already visible.
+//!
+//! Calls also panic once the actor's runtime has shut down, which reports that
+//! the actor is no longer running rather than blaming a panic. This is worth
+//! knowing at teardown, where a handle can outlive the runtime that served it.
+//!
+//! # Feature flags
+//!
+//! - `profiler` — counts broadcasts per method, readable through
+//!   `get_broadcast_counts` and `get_sorted_broadcast_counts`. The counters
+//!   are process-wide and never reset, so treat them as a development aid
+//!   rather than a metric source.
 
 mod actor;
 mod cache;

@@ -512,8 +512,13 @@ fn log_lag<T>(nr: u64) {
 /// Error returned by [`Cache::recv`] and [`Cache::try_recv`].
 #[derive(Error, Debug, PartialEq, Clone)]
 pub enum CacheRecvError {
+    /// The actor has stopped and every update it broadcast has been delivered.
+    /// No further values will arrive.
     #[error("Cache channel closed")]
     Closed,
+    /// The cache fell too far behind and the channel dropped the given number
+    /// of updates to catch up. The cached value is unchanged; the next receive
+    /// resumes from the oldest update still held.
     #[error("Cache channel lagged by {0}")]
     Lagged(u64),
 }
@@ -530,6 +535,11 @@ impl From<RecvError> for CacheRecvError {
 /// Error returned by [`Cache::recv_newest`] and [`Cache::try_recv_newest`].
 #[derive(Error, Debug, PartialEq, Clone)]
 pub enum CacheRecvNewestError {
+    /// The actor has stopped and every update it broadcast has been delivered.
+    /// No further values will arrive.
+    ///
+    /// Lagging has no variant here: these methods skip to the newest value, so
+    /// dropped updates are exactly what they were going to discard anyway.
     #[error("Cache channel closed")]
     Closed,
 }

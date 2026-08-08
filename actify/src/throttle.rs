@@ -63,6 +63,17 @@ where
     T: Clone + Throttled<F> + Send + Sync + 'static,
     F: Send + Sync + 'static,
 {
+    /// Spawns a throttle that forwards an actor's broadcasts to `call` at the
+    /// given [`Frequency`].
+    ///
+    /// `init` is the value to fire with immediately, before any broadcast
+    /// arrives; pass `None` to wait for the first update instead.
+    ///
+    /// The task stops on its own once the actor does, because its receiver
+    /// closes with the actor's broadcast channel. Prefer
+    /// [`Handle::spawn_throttle`](crate::Handle::spawn_throttle) or
+    /// [`Cache::spawn_throttle`](crate::Cache::spawn_throttle), which obtain
+    /// the receiver for you without losing updates during setup.
     pub fn spawn_from_receiver(
         client: C,
         call: fn(&C, F),
@@ -80,6 +91,11 @@ where
         tokio::spawn(async move { throttle.tick().await });
     }
 
+    /// Spawns a throttle that fires `call` with a fixed value on every interval.
+    ///
+    /// Unlike [`spawn_from_receiver`](Self::spawn_from_receiver) this is not
+    /// attached to an actor, so nothing ever closes it: the task fires until
+    /// the runtime shuts down, and there is currently no way to stop it sooner.
     pub fn spawn_interval(client: C, call: fn(&C, F), interval: Duration, val: T) {
         let mut throttle = Throttle {
             frequency: Frequency::Interval(interval),
