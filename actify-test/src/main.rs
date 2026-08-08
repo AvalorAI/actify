@@ -130,6 +130,51 @@ impl ShadowingActor {
     }
 }
 
+/// Generic bounds written inline on the impl block instead of in a where clause
+#[allow(dead_code)]
+#[derive(Clone, Debug)]
+struct InlineBounds<T> {
+    value: T,
+}
+
+#[actify]
+impl<T: Clone + Debug + Send + Sync + 'static> InlineBounds<T> {
+    fn get_value(&self) -> T {
+        self.value.clone()
+    }
+}
+
+/// A self type whose generic argument is not the bare type parameter
+#[allow(dead_code)]
+#[derive(Clone, Debug)]
+struct Wrapper<C> {
+    items: C,
+}
+
+#[actify]
+impl<T> Wrapper<Vec<T>>
+where
+    T: Clone + Debug + Send + Sync + 'static,
+{
+    fn first_item(&self) -> Option<T> {
+        self.items.first().cloned()
+    }
+}
+
+/// A const generic parameter on the impl block
+#[allow(dead_code)]
+#[derive(Clone, Debug)]
+struct ConstActor<const N: usize> {
+    data: [u8; N],
+}
+
+#[actify]
+impl<const N: usize> ConstActor<N> {
+    fn capacity(&self) -> usize {
+        N
+    }
+}
+
 #[derive(Clone, Debug)]
 struct ComplexActorTypes;
 
@@ -427,6 +472,30 @@ mod tests {
         assert_eq!(actor_handle.foo(0, HashMap::new()).await, 1.);
         assert_eq!(actor_handle.bar(5, |i: usize| i + 10).await, 15);
         assert_eq!(actor_handle.baz(0).await, 2.);
+    }
+
+    /// Bounds written inline on the impl block must not leak into the generated
+    /// trait reference or the call expression, where they are not valid syntax
+    #[tokio::test]
+    async fn test_inline_generic_bounds() {
+        let handle = Handle::new(InlineBounds { value: 7_i32 });
+        assert_eq!(handle.get_value().await, 7);
+    }
+
+    /// The call must go through the full self type: `Wrapper<Vec<T>>`, not
+    /// `Wrapper<T>` reconstructed from the impl block's generic parameters
+    #[tokio::test]
+    async fn test_non_identity_generic_argument() {
+        let handle = Handle::new(Wrapper {
+            items: vec![1_u8, 2, 3],
+        });
+        assert_eq!(handle.first_item().await, Some(1));
+    }
+
+    #[tokio::test]
+    async fn test_impl_level_const_generic() {
+        let handle = Handle::new(ConstActor { data: [0_u8; 4] });
+        assert_eq!(handle.capacity().await, 4);
     }
 
     /// Argument names like `s`, `args`, `res` and `result` must not clash with
