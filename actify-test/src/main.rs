@@ -379,7 +379,7 @@ mod tests {
     use actify::{Frequency, Handle, Throttle, VecHandle};
     use std::sync::{Arc, Mutex};
     use std::time::Duration;
-    use tokio::time::sleep;
+    use tokio::time::{Instant, sleep};
 
     #[tokio::test]
     async fn test_custom_trait_name() {
@@ -518,10 +518,11 @@ mod tests {
         assert_eq!(stored, "x-[1, 2]-3-true");
     }
 
+    /// A cache does not keep its actor alive: it only receives broadcasts, so
+    /// the actor still stops once the last handle goes out of scope.
     #[tokio::test]
     async fn test_handle_out_of_scope() {
-        // load_logger();
-
+        let baseline = alive_tasks();
         let handle_1 = Handle::new(1);
 
         let mut cache_3 = {
@@ -531,11 +532,16 @@ mod tests {
             handle_3.create_cache().await // But the cache doesn't
         };
 
-        sleep(Duration::from_secs(1)).await;
+        // Only handle_1's actor survives the scope, even though cache_3 does
+        let remaining = await_alive_tasks(baseline + 1).await;
+        assert_eq!(
+            remaining,
+            baseline + 1,
+            "expected only handle_1's actor to still be running"
+        );
 
-        // The &str actor should have exited --> watch logs
-        // The f32 should have exited, even though the cache is still in scope!
-        assert!(cache_3.try_recv_newest().is_err()) // This means the cache has no broadcast anymore, so it should exit too
+        // Its broadcast channel is closed, so the cache can no longer receive
+        assert!(cache_3.try_recv_newest().is_err());
     }
 
     #[tokio::test]
@@ -626,6 +632,38 @@ mod tests {
             .num_alive_tasks()
     }
 
+    /// Waits until the runtime reports `expected` alive tasks, or gives up.
+    ///
+    /// Tasks stop asynchronously: dropping a handle closes a channel, and the
+    /// task only notices the next time it is scheduled. Sleeping for a fixed
+    /// duration encodes a guess about how long that takes, which is what fails
+    /// on a loaded machine. Polling returns as soon as the count settles and
+    /// spends the whole deadline only when something is actually wrong, so the
+    /// deadline can be generous without slowing the suite down.
+    ///
+    /// Returns the last observed count so the caller can assert on it and
+    /// report the mismatch itself.
+    async fn await_alive_tasks(expected: usize) -> usize {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            let alive = alive_tasks();
+            if alive == expected || Instant::now() >= deadline {
+                return alive;
+            }
+            sleep(Duration::from_millis(5)).await;
+        }
+    }
+
+    /// Gives tasks a chance to react, then reports the count.
+    ///
+    /// For assertions that a task keeps running, where polling for the
+    /// expected value would return immediately and prove nothing. Waiting too
+    /// briefly here can only make the test more lenient, never flaky.
+    async fn settled_alive_tasks() -> usize {
+        sleep(Duration::from_millis(50)).await;
+        alive_tasks()
+    }
+
     /// Helper struct for throttle testing
     #[derive(Debug, Clone)]
     struct TestClient {
@@ -643,6 +681,21 @@ mod tests {
             let mut count = self.count.lock().unwrap();
             *count += 1;
         }
+
+        /// Waits until the callback has fired at least `expected` times.
+        ///
+        /// Polls rather than sleeping for a duration long enough to fit that
+        /// many intervals, which would be a bet on the machine keeping up.
+        async fn await_count(&self, expected: i32) -> i32 {
+            let deadline = Instant::now() + Duration::from_secs(10);
+            loop {
+                let count = *self.count.lock().unwrap();
+                if count >= expected || Instant::now() >= deadline {
+                    return count;
+                }
+                sleep(Duration::from_millis(5)).await;
+            }
+        }
     }
 
     #[tokio::test]
@@ -652,9 +705,8 @@ mod tests {
 
         // Creating a Handle spawns a Listener task
         let handle = Handle::new(42);
-        sleep(Duration::from_millis(10)).await;
 
-        let with_handle = alive_tasks();
+        let with_handle = await_alive_tasks(baseline + 1).await;
         assert!(
             with_handle > baseline,
             "Expected task count to increase after creating Handle. Baseline: {}, After: {}",
@@ -664,9 +716,8 @@ mod tests {
 
         // Drop the handle - this should cause the Listener task to exit
         drop(handle);
-        sleep(Duration::from_millis(100)).await;
 
-        let after_drop = alive_tasks();
+        let after_drop = await_alive_tasks(baseline).await;
         assert_eq!(
             after_drop, baseline,
             "Expected task count to return to baseline after dropping Handle. Baseline: {}, After drop: {}",
@@ -682,9 +733,8 @@ mod tests {
         // Creating a Handle spawns a Listener task
         let handle = Handle::new(42);
         let handle_clone = handle.clone();
-        sleep(Duration::from_millis(10)).await;
 
-        let with_handles = alive_tasks();
+        let with_handles = await_alive_tasks(baseline + 1).await;
         // Only one task should be spawned regardless of clones
         assert_eq!(
             with_handles,
@@ -696,9 +746,8 @@ mod tests {
 
         // Dropping one clone shouldn't affect the task
         drop(handle);
-        sleep(Duration::from_millis(50)).await;
 
-        let after_first_drop = alive_tasks();
+        let after_first_drop = settled_alive_tasks().await;
         assert_eq!(
             after_first_drop,
             baseline + 1,
@@ -709,9 +758,8 @@ mod tests {
 
         // Dropping the last clone should cause the task to exit
         drop(handle_clone);
-        sleep(Duration::from_millis(100)).await;
 
-        let after_all_drop = alive_tasks();
+        let after_all_drop = await_alive_tasks(baseline).await;
         assert_eq!(
             after_all_drop, baseline,
             "Task should exit after all Handle clones are dropped. Baseline: {}, After: {}",
@@ -726,9 +774,8 @@ mod tests {
 
         // Create a Handle (spawns 1 task)
         let handle = Handle::new(1);
-        sleep(Duration::from_millis(10)).await;
 
-        let with_handle = alive_tasks();
+        let with_handle = await_alive_tasks(baseline + 1).await;
         assert_eq!(with_handle, baseline + 1, "Expected one task for Handle");
 
         // Spawn a throttle from the handle's receiver (spawns another task)
@@ -741,9 +788,8 @@ mod tests {
             receiver,
             Some(1),
         );
-        sleep(Duration::from_millis(10)).await;
 
-        let with_throttle = alive_tasks();
+        let with_throttle = await_alive_tasks(baseline + 2).await;
         assert_eq!(
             with_throttle,
             baseline + 2,
@@ -756,9 +802,8 @@ mod tests {
         // - The Handle's Listener task exits because the channel closes
         // - The Throttle task exits because the broadcast receiver closes
         drop(handle);
-        sleep(Duration::from_millis(200)).await;
 
-        let after_drop = alive_tasks();
+        let after_drop = await_alive_tasks(baseline).await;
         assert_eq!(
             after_drop, baseline,
             "Both tasks should exit after Handle is dropped. Baseline: {}, After: {}",
@@ -781,22 +826,19 @@ mod tests {
             Duration::from_millis(50),
             1,
         );
-        sleep(Duration::from_millis(10)).await;
 
-        let with_throttle = alive_tasks();
+        let with_throttle = await_alive_tasks(baseline + 1).await;
         assert_eq!(
             with_throttle,
             baseline + 1,
             "Expected one task for interval Throttle"
         );
 
-        // Verify the throttle is working
-        sleep(Duration::from_millis(200)).await;
-        let count = *client.count.lock().unwrap();
+        // Verify the throttle keeps firing on its interval
+        let count = client.await_count(2).await;
         assert!(
-            count > 1,
-            "Interval throttle should have fired multiple times, count: {}",
-            count
+            count >= 2,
+            "Interval throttle should have fired repeatedly, count: {count}"
         );
 
         // Note: There's no way to stop an interval-based Throttle without a receiver.
@@ -812,9 +854,8 @@ mod tests {
         let handle1 = Handle::new(1);
         let handle2 = Handle::new("test");
         let handle3 = Handle::new(1.5f64);
-        sleep(Duration::from_millis(10)).await;
 
-        let with_handles = alive_tasks();
+        let with_handles = await_alive_tasks(baseline + 3).await;
         assert_eq!(
             with_handles,
             baseline + 3,
@@ -823,16 +864,13 @@ mod tests {
 
         // Drop them one by one and verify cleanup
         drop(handle1);
-        sleep(Duration::from_millis(100)).await;
-        assert_eq!(alive_tasks(), baseline + 2);
+        assert_eq!(await_alive_tasks(baseline + 2).await, baseline + 2);
 
         drop(handle2);
-        sleep(Duration::from_millis(100)).await;
-        assert_eq!(alive_tasks(), baseline + 1);
+        assert_eq!(await_alive_tasks(baseline + 1).await, baseline + 1);
 
         drop(handle3);
-        sleep(Duration::from_millis(100)).await;
-        assert_eq!(alive_tasks(), baseline);
+        assert_eq!(await_alive_tasks(baseline).await, baseline);
     }
 
     #[tokio::test]
@@ -840,16 +878,14 @@ mod tests {
         let baseline = alive_tasks();
 
         let handle = Handle::new(42);
-        sleep(Duration::from_millis(10)).await;
 
-        let with_handle = alive_tasks();
+        let with_handle = await_alive_tasks(baseline + 1).await;
         assert_eq!(with_handle, baseline + 1, "Expected one task for Handle");
 
         // Creating a cache should NOT spawn additional tasks
         let _cache = handle.create_cache().await;
-        sleep(Duration::from_millis(10)).await;
 
-        let with_cache = alive_tasks();
+        let with_cache = settled_alive_tasks().await;
         assert_eq!(
             with_cache,
             baseline + 1,
@@ -859,9 +895,8 @@ mod tests {
         // Creating more caches still shouldn't spawn tasks
         let _cache2 = handle.create_cache().await;
         let _cache3 = handle.create_cache_from_default();
-        sleep(Duration::from_millis(10)).await;
 
-        let with_more_caches = alive_tasks();
+        let with_more_caches = settled_alive_tasks().await;
         assert_eq!(
             with_more_caches,
             baseline + 1,
@@ -875,17 +910,15 @@ mod tests {
 
         let handle = Handle::new(42);
         let cache = handle.create_cache().await;
-        sleep(Duration::from_millis(10)).await;
 
-        let with_handle = alive_tasks();
+        let with_handle = await_alive_tasks(baseline + 1).await;
         assert_eq!(with_handle, baseline + 1, "Expected one task for Handle");
 
         // Spawning a throttle from cache spawns a new task
         let client = TestClient::new();
         cache.spawn_throttle(client.clone(), TestClient::call, Frequency::OnEvent);
-        sleep(Duration::from_millis(10)).await;
 
-        let with_throttle = alive_tasks();
+        let with_throttle = await_alive_tasks(baseline + 2).await;
         assert_eq!(
             with_throttle,
             baseline + 2,
@@ -894,9 +927,8 @@ mod tests {
 
         // Dropping the cache doesn't affect tasks (it doesn't own them)
         drop(cache);
-        sleep(Duration::from_millis(100)).await;
 
-        let after_cache_drop = alive_tasks();
+        let after_cache_drop = settled_alive_tasks().await;
         assert_eq!(
             after_cache_drop,
             baseline + 2,
@@ -905,9 +937,8 @@ mod tests {
 
         // Dropping the handle should cause both tasks to exit
         drop(handle);
-        sleep(Duration::from_millis(200)).await;
 
-        let after_handle_drop = alive_tasks();
+        let after_handle_drop = await_alive_tasks(baseline).await;
         assert_eq!(
             after_handle_drop, baseline,
             "All tasks should exit after Handle is dropped"
