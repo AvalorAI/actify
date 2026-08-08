@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 description = "Actify testing crate"
 repository = "https://github.com/AvalorAI/actify"
-categories = ["testing"]
+publish = false
 
 [dependencies]
 actify = { path = "../actify", features = ["profiler"] }
