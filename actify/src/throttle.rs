@@ -61,7 +61,7 @@ impl<C, T, F> Throttle<C, T, F>
 where
     C: Send + Sync + 'static,
     T: Clone + Throttled<F> + Send + Sync + 'static,
-    F: Clone + Send + Sync + 'static,
+    F: Send + Sync + 'static,
 {
     pub fn spawn_from_receiver(
         client: C,
@@ -149,8 +149,9 @@ where
             return; // If cache empty, skip call
         };
 
-        // Perform the call
-        (self.call)(&self.client, F::clone(&val));
+        // Perform the call. `val` is owned and unused afterwards, so it is
+        // handed over rather than cloned.
+        (self.call)(&self.client, val);
     }
 
     async fn keep_time(interval: &mut Option<Interval>) {
