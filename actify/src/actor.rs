@@ -1,7 +1,11 @@
-use futures::future::BoxFuture;
 use std::any::{Any, type_name};
 use std::fmt::{self, Debug};
+use std::future::Future;
+use std::pin::Pin;
 use tokio::sync::{mpsc, oneshot};
+
+/// A boxed future, as returned by an actor method.
+pub(crate) type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
 #[cfg(feature = "profiler")]
 use std::collections::HashMap;
@@ -67,8 +71,14 @@ impl<T> Actor<T> {
     }
 }
 
-pub(crate) type ActorMethod<T> =
-    Box<dyn FnMut(&mut Actor<T>, Box<dyn Any + Send>) -> BoxFuture<Box<dyn Any + Send>> + Send>;
+/// A single call on an actor, sent from a handle and run once by [`serve`].
+///
+/// The lifetime is bound with `for<'a>` because the returned future borrows the
+/// actor it was handed, which `futures::BoxFuture` used to elide.
+pub(crate) type ActorMethod<T> = Box<
+    dyn for<'a> FnOnce(&'a mut Actor<T>, Box<dyn Any + Send>) -> BoxFuture<'a, Box<dyn Any + Send>>
+        + Send,
+>;
 
 pub(crate) struct Job<T> {
     pub call: ActorMethod<T>,
@@ -80,8 +90,8 @@ pub(crate) async fn serve<T: Send + Sync + 'static>(
     mut rx: mpsc::Receiver<Job<T>>,
     mut actor: Actor<T>,
 ) {
-    while let Some(mut job) = rx.recv().await {
-        let res = (*job.call)(&mut actor, job.args).await;
+    while let Some(job) = rx.recv().await {
+        let res = (job.call)(&mut actor, job.args).await;
         if job.respond_to.send(res).is_err() {
             log::debug!(
                 "Actor of type {} failed to respond as the receiver is dropped",

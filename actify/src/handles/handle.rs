@@ -223,15 +223,9 @@ impl<T: Send + Sync + 'static, V> Handle<T, V> {
         A: Send + 'static,
         R: Send + 'static,
     {
-        // ActorMethod requires FnMut because Box<dyn FnOnce> can't be called.
-        // We wrap f in Option so we can .take() it out of the FnMut closure.
-        // The unwrap is safe: send_job sends exactly one job, and serve()
-        // calls it exactly once, but the compiler just can't prove that so we need a work-around.
-        let mut f = Some(f);
         let res = self
             .send_job(
                 Box::new(move |s: &mut Actor<T>, boxed_args: Box<dyn Any + Send>| {
-                    let f = f.take().unwrap();
                     Box::pin(async move {
                         let args = *boxed_args.downcast::<A>().expect(DOWNCAST_FAIL);
                         Box::new(f(s, args)) as Box<dyn Any + Send>
