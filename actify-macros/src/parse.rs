@@ -255,7 +255,7 @@ fn is_propagated_attribute(attr: &Attribute) -> bool {
 /// Keep only whitelisted built-in attributes for generated code.
 ///
 /// Proc-macro attributes (e.g. `#[instrument]`) and actify-specific attributes
-/// (e.g. `#[skip_broadcast]`) are stripped — the former because they transform
+/// (e.g. `#[skip_broadcast]`) are stripped. The former transforms
 /// function bodies and are semantically wrong on generated plumbing code, the
 /// latter because they are consumed during parsing.
 fn filter_attributes(attrs: &[Attribute]) -> Vec<Attribute> {

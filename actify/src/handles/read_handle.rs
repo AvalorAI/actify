@@ -62,7 +62,7 @@ impl<T: Send + Sync + 'static, V> ReadHandle<T, V> {
     /// # use actify::{Handle, BroadcastAs};
     /// # #[tokio::main]
     /// # async fn main() {
-    /// // A non-Clone type — get() is not available on ReadHandle
+    /// // A non-Clone type, so get() is not available on ReadHandle
     /// struct Inventory { items: Vec<String> }
     ///
     /// #[derive(Clone, Debug)]

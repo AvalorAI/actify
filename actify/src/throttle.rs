@@ -66,14 +66,13 @@ where
     /// Spawns a throttle that forwards an actor's broadcasts to `call` at the
     /// given [`Frequency`].
     ///
-    /// `init` is the value to fire with immediately, before any broadcast
-    /// arrives; pass `None` to wait for the first update instead.
+    /// `init` fires immediately, before any broadcast arrives. Pass `None` to
+    /// wait for the first update.
     ///
-    /// The task stops on its own once the actor does, because its receiver
-    /// closes with the actor's broadcast channel. Prefer
-    /// [`Handle::spawn_throttle`](crate::Handle::spawn_throttle) or
-    /// [`Cache::spawn_throttle`](crate::Cache::spawn_throttle), which obtain
-    /// the receiver for you without losing updates during setup.
+    /// The task stops when the actor does.
+    /// [`Handle::spawn_throttle`](crate::Handle::spawn_throttle) and
+    /// [`Cache::spawn_throttle`](crate::Cache::spawn_throttle) take the
+    /// receiver without losing updates during setup.
     pub fn spawn_from_receiver(
         client: C,
         call: fn(&C, F),
@@ -93,9 +92,8 @@ where
 
     /// Spawns a throttle that fires `call` with a fixed value on every interval.
     ///
-    /// Unlike [`spawn_from_receiver`](Self::spawn_from_receiver) this is not
-    /// attached to an actor, so nothing ever closes it: the task fires until
-    /// the runtime shuts down, and there is currently no way to stop it sooner.
+    /// Not attached to an actor, so nothing closes it: the task fires until the
+    /// runtime shuts down.
     pub fn spawn_interval(client: C, call: fn(&C, F), interval: Duration, val: T) {
         let mut throttle = Throttle {
             frequency: Frequency::Interval(interval),

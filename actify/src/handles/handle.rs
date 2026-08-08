@@ -43,8 +43,7 @@ const DOWNCAST_FAIL: &str =
 pub trait BroadcastAs<V> {
     /// Produces the value to broadcast to subscribers.
     ///
-    /// Called on the actor's own value after every broadcasting method, so it
-    /// runs on the actor task and should stay cheap.
+    /// Runs on the actor task after every broadcasting method.
     fn to_broadcast(&self) -> V;
 }
 
@@ -119,7 +118,7 @@ where
 {
     /// Creates a new [`Handle`] and spawns the corresponding [`Actor`].
     ///
-    /// For `Clone` types, `V` defaults to `T` — the actor broadcasts clones of
+    /// For `Clone` types, `V` defaults to `T`: the actor broadcasts clones of
     /// itself and you can simply write `Handle::new(val)`.
     ///
     /// For non-Clone types (or to broadcast a lightweight summary), implement

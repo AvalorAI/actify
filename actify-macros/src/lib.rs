@@ -11,10 +11,6 @@ use proc_macro::TokenStream;
 
 /// Marks a method inside an `#[actify]` impl block as not broadcasting.
 ///
-/// Broadcasting is the default, so this is only meaningful on a block that has
-/// not already opted out with `#[actify(skip_broadcast)]` — applying both is an
-/// error rather than a silent no-op.
-///
 /// ```ignore
 /// #[actify]
 /// impl Counter {
@@ -23,18 +19,13 @@ use proc_macro::TokenStream;
 /// }
 /// ```
 ///
-/// This expands to nothing: the `#[actify]` macro reads it while processing the
-/// block and strips it from the output.
+/// Expands to nothing: `#[actify]` reads it and strips it from the output.
 #[proc_macro_attribute]
 pub fn skip_broadcast(_args: TokenStream, input: TokenStream) -> TokenStream {
     input
 }
 
-/// Marks a method as broadcasting inside an `#[actify(skip_broadcast)]` block.
-///
-/// The counterpart to [`macro@skip_broadcast`]: it restores the default for one
-/// method of a block that opted out of broadcasting wholesale. On a block that
-/// already broadcasts it is an error rather than a silent no-op.
+/// Restores broadcasting for one method of an `#[actify(skip_broadcast)]` block.
 ///
 /// ```ignore
 /// #[actify(skip_broadcast)]
@@ -44,8 +35,7 @@ pub fn skip_broadcast(_args: TokenStream, input: TokenStream) -> TokenStream {
 /// }
 /// ```
 ///
-/// This expands to nothing: the `#[actify]` macro reads it while processing the
-/// block and strips it from the output.
+/// Expands to nothing: `#[actify]` reads it and strips it from the output.
 #[proc_macro_attribute]
 pub fn broadcast(_args: TokenStream, input: TokenStream) -> TokenStream {
     input

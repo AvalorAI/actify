@@ -59,10 +59,9 @@ where
     /// Drains all buffered messages from the channel, keeping only the newest value.
     /// Returns `true` if any value was stored.
     ///
-    /// A closed channel is only reported once its queue is exhausted: an actor
-    /// that broadcasts a final update and then stops leaves that update behind,
-    /// and it is usually the one worth having. Closing is permanent, so the
-    /// next call reports it.
+    /// A closed channel is only reported once its queue is exhausted, so a final
+    /// update broadcast before the actor stopped is still returned. Closing is
+    /// permanent, so the next call reports it.
     fn drain_to_newest(&mut self) -> Result<bool, CacheRecvNewestError> {
         let mut received = false;
         loop {
@@ -313,7 +312,7 @@ where
     ///
     /// // Returns the default, not the actor's actual value (5)
     /// assert_eq!(cache.try_recv_newest().unwrap(), Some(&0));
-    /// // No broadcasts arrived, so None — the actor's value (5) is never seen
+    /// // No broadcasts arrived, so None. The actor's value (5) is never seen
     /// assert_eq!(cache.try_recv_newest().unwrap(), None);
     /// # }
     /// ```
@@ -376,7 +375,7 @@ where
     ///
     /// // Returns the default, not the actor's actual value (5)
     /// assert_eq!(cache.try_recv().unwrap(), Some(&0));
-    /// // No broadcasts arrived, so None — the actor's value (5) is never seen
+    /// // No broadcasts arrived, so None. The actor's value (5) is never seen
     /// assert_eq!(cache.try_recv().unwrap(), None);
     /// # }
     /// ```
@@ -513,12 +512,10 @@ fn log_lag<T>(nr: u64) {
 #[derive(Error, Debug, PartialEq, Clone)]
 pub enum CacheRecvError {
     /// The actor has stopped and every update it broadcast has been delivered.
-    /// No further values will arrive.
     #[error("Cache channel closed")]
     Closed,
-    /// The cache fell too far behind and the channel dropped the given number
-    /// of updates to catch up. The cached value is unchanged; the next receive
-    /// resumes from the oldest update still held.
+    /// The cache fell behind and the channel dropped the given number of
+    /// updates. The cached value is unchanged.
     #[error("Cache channel lagged by {0}")]
     Lagged(u64),
 }
@@ -536,10 +533,6 @@ impl From<RecvError> for CacheRecvError {
 #[derive(Error, Debug, PartialEq, Clone)]
 pub enum CacheRecvNewestError {
     /// The actor has stopped and every update it broadcast has been delivered.
-    /// No further values will arrive.
-    ///
-    /// Lagging has no variant here: these methods skip to the newest value, so
-    /// dropped updates are exactly what they were going to discard anyway.
     #[error("Cache channel closed")]
     Closed,
 }

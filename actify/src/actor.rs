@@ -37,7 +37,7 @@ pub(crate) type BroadcastFn<T> = Box<dyn Fn(&T, &str) + Send + Sync>;
 
 /// The internal actor wrapper that runs in a separate task.
 ///
-/// You do not create this directly — it is spawned by [`Handle::new`](super::Handle::new).
+/// You do not create this directly. It is spawned by [`Handle::new`](super::Handle::new).
 /// The `inner` field holds the wrapped value.
 #[doc(hidden)]
 pub struct Actor<T> {

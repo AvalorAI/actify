@@ -193,12 +193,12 @@
 //!
 //! Every [`Handle`] provides a set of built-in methods that work without the macro:
 //!
-//! - [`Handle::get`] — returns a clone of the current actor value (does not broadcast)
-//! - [`Handle::set`] — overwrites the actor value (broadcasts the change)
-//! - [`Handle::set_if_changed`] — only broadcasts when the new value differs (requires `PartialEq`)
-//! - [`Handle::subscribe`] — returns a [`tokio::sync::broadcast::Receiver`] for change notifications
-//! - [`Handle::with`] — runs a read-only closure on `&T` (does not broadcast)
-//! - [`Handle::with_mut`] — runs a mutable closure on `&mut T` (broadcasts the change)
+//! - [`Handle::get`]: returns a clone of the current actor value (does not broadcast)
+//! - [`Handle::set`]: overwrites the actor value (broadcasts the change)
+//! - [`Handle::set_if_changed`]: only broadcasts when the new value differs (requires `PartialEq`)
+//! - [`Handle::subscribe`]: returns a [`tokio::sync::broadcast::Receiver`] for change notifications
+//! - [`Handle::with`]: runs a read-only closure on `&T` (does not broadcast)
+//! - [`Handle::with_mut`]: runs a mutable closure on `&mut T` (broadcasts the change)
 //!
 //! # Broadcasting
 //!
@@ -213,9 +213,9 @@
 //!
 //! You can control broadcasting with these attributes:
 //!
-//! - `#[actify::skip_broadcast]` — skip broadcasting for a single method
-//! - `#[actify(skip_broadcast)]` — skip broadcasting for all methods in the impl block
-//! - `#[actify::broadcast]` — force broadcasting for a method in a `skip_broadcast` block
+//! - `#[actify::skip_broadcast]`: skip broadcasting for a single method
+//! - `#[actify(skip_broadcast)]`: skip broadcasting for all methods in the impl block
+//! - `#[actify::broadcast]`: force broadcasting for a method in a `skip_broadcast` block
 //!
 //! ```
 //! # use actify::{Handle, actify, skip_broadcast, broadcast};
@@ -303,9 +303,9 @@
 //! A [`Throttle`] rate-limits broadcasted updates before forwarding them to a callback.
 //! Configure the rate with [`Frequency`]:
 //!
-//! - [`Frequency::OnEvent`] — fires on every broadcast
-//! - [`Frequency::Interval`] — fires at a fixed interval
-//! - [`Frequency::OnEventWhen`] — fires for an event only after an interval has passed
+//! - [`Frequency::OnEvent`]: fires on every broadcast
+//! - [`Frequency::Interval`]: fires at a fixed interval
+//! - [`Frequency::OnEventWhen`]: fires for an event only after an interval has passed
 //!
 //! Use the [`Throttled`] trait to parse the actor's type into a different output type
 //! for the throttle callback.
@@ -329,16 +329,13 @@
 //!
 //! # Execution model
 //!
-//! Each actor runs as one Tokio task that handles **one job at a time**, taking
-//! the next only after the current one returns. Calls from different tasks
-//! therefore never interleave, which is what makes `&mut self` methods safe
-//! without a lock — but a slow method blocks every other caller of that actor,
-//! so long waits belong outside the actor.
+//! Each actor is one Tokio task that runs one job at a time, taking the next
+//! only after the current one returns. Calls never interleave, so `&mut self`
+//! methods need no lock. A slow method blocks every other caller of that actor.
 //!
-//! This has one sharp consequence. An actor method that calls back into its own
-//! handle **deadlocks**: the actor is busy inside the method, and the reply can
-//! only be produced by the actor. The same applies to a cycle between two
-//! actors that call each other.
+//! An actor method that calls its own handle deadlocks: the reply can only be
+//! produced by the actor, which is busy inside the method. The same applies to
+//! two actors that call each other.
 //!
 //! ```no_run
 //! # use actify::{Handle, actify};
@@ -353,31 +350,27 @@
 //! }
 //! ```
 //!
-//! Jobs are queued in a channel of bounded size, so callers wait once enough
-//! calls are outstanding rather than growing memory without limit.
+//! Jobs queue in a bounded channel, so callers wait once enough calls are
+//! outstanding.
 //!
 //! # Actor lifetime and panics
 //!
-//! An actor runs until every [`Handle`] to it is dropped, at which point its
-//! task ends. A [`ReadHandle`] counts here too: it holds a full handle
-//! internally, so it keeps the actor alive. A [`Cache`] does not — it only
-//! receives broadcasts.
+//! An actor runs until every [`Handle`] to it is dropped. A [`ReadHandle`]
+//! holds a handle internally and keeps the actor alive. A [`Cache`] does not,
+//! since it only receives broadcasts.
 //!
-//! An actor stops permanently if one of its methods panics; there is no
-//! restart. Every later call on **any** handle to it then panics, reporting
-//! that the actor panicked. The original panic is printed by Rust with its own
-//! message and backtrace, so the failing method and line are already visible.
+//! A panicking method stops the actor permanently. There is no restart, and
+//! every later call on any handle to it panics, reporting that the actor
+//! panicked. Rust prints the original panic with its message and backtrace.
 //!
-//! Calls also panic once the actor's runtime has shut down, which reports that
-//! the actor is no longer running rather than blaming a panic. This is worth
-//! knowing at teardown, where a handle can outlive the runtime that served it.
+//! Calls after the actor's runtime has shut down panic too, reporting that the
+//! actor is no longer running.
 //!
 //! # Feature flags
 //!
-//! - `profiler` — counts broadcasts per method, readable through
-//!   `get_broadcast_counts` and `get_sorted_broadcast_counts`. The counters
-//!   are process-wide and never reset, so treat them as a development aid
-//!   rather than a metric source.
+//! - `profiler`: counts broadcasts per method, readable through
+//!   `get_broadcast_counts` and `get_sorted_broadcast_counts`. Counters are
+//!   process-wide and never reset.
 
 mod actor;
 mod cache;
