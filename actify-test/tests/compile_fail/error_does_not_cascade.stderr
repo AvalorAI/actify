@@ -1,0 +1,23 @@
+error: Input arguments of actor model methods must be owned types, not references (e.g. use String instead of &str)
+  --> tests/compile_fail/error_does_not_cascade.rs:12:31
+   |
+12 |     fn broken(&self, bad_ref: &str) {}
+   |                               ^
+
+error[E0599]: no method named `healthy` found for struct `MyActor` in the current scope
+  --> tests/compile_fail/error_does_not_cascade.rs:21:11
+   |
+ 8 | struct MyActor;
+   | -------------- method `healthy` not found for this struct
+...
+21 |     actor.healthy();
+   |           ^^^^^^^ method not found in `MyActor`
+
+error[E0599]: no method named `broken` found for struct `MyActor` in the current scope
+  --> tests/compile_fail/error_does_not_cascade.rs:22:11
+   |
+ 8 | struct MyActor;
+   | -------------- method `broken` not found for this struct
+...
+22 |     actor.broken("x");
+   |           ^^^^^^ method not found in `MyActor`
