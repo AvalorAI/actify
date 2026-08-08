@@ -1,10 +1,10 @@
 use std::any::Any;
 use std::any::type_name;
 use std::fmt::{self, Debug};
-use tokio::sync::{broadcast, mpsc, oneshot};
+use tokio::sync::{broadcast, mpsc, oneshot, watch};
 
 use super::read_handle::ReadHandle;
-use crate::actor::{Actor, ActorMethod, BroadcastFn, Job, serve};
+use crate::actor::{Actor, ActorExit, ActorMethod, BroadcastFn, Job, serve};
 use crate::throttle::Throttle;
 use crate::{Cache, Frequency, Throttled};
 
@@ -83,6 +83,7 @@ where
 pub struct Handle<T, V = T> {
     pub(super) tx: mpsc::Sender<Job<T>>,
     pub(super) broadcast_sender: broadcast::Sender<V>,
+    pub(super) exit_rx: watch::Receiver<ActorExit>,
 }
 
 impl<T, V> Clone for Handle<T, V> {
@@ -90,6 +91,7 @@ impl<T, V> Clone for Handle<T, V> {
         Handle {
             tx: self.tx.clone(),
             broadcast_sender: self.broadcast_sender.clone(),
+            exit_rx: self.exit_rx.clone(),
         }
     }
 }
@@ -137,13 +139,16 @@ where
     pub fn new(val: T) -> Handle<T, V> {
         let (tx, rx) = mpsc::channel(CHANNEL_SIZE);
         let (broadcast_tx, _) = broadcast::channel::<V>(CHANNEL_SIZE);
+        let (exit_tx, exit_rx) = watch::channel(ActorExit::Running);
         tokio::spawn(serve(
             rx,
             Actor::new(make_broadcast_fn(broadcast_tx.clone()), val),
+            exit_tx,
         ));
         Handle {
             tx,
             broadcast_sender: broadcast_tx,
+            exit_rx,
         }
     }
 
@@ -209,11 +214,30 @@ impl<T: Send + Sync + 'static, V> Handle<T, V> {
             args,
             respond_to,
         };
-        self.tx
-            .send(job)
-            .await
-            .expect("A panic occurred in the Actor");
-        get_result.await.expect("A panic occurred in the Actor")
+        if self.tx.send(job).await.is_err() {
+            return self.report_actor_gone().await;
+        }
+        match get_result.await {
+            Ok(res) => res,
+            Err(_) => self.report_actor_gone().await,
+        }
+    }
+
+    /// Panics with the reason the actor stopped serving jobs.
+    ///
+    /// The exit signal may not have been written yet when the channel first
+    /// reports its failure, so this waits for it rather than guessing from
+    /// scheduling order.
+    async fn report_actor_gone(&self) -> Box<dyn Any + Send> {
+        let mut exit_rx = self.exit_rx.clone();
+        if *exit_rx.borrow_and_update() == ActorExit::Running {
+            let _ = exit_rx.changed().await;
+        }
+
+        if *exit_rx.borrow() == ActorExit::Panicked {
+            panic!("A panic occurred in the Actor of type {}", type_name::<T>());
+        }
+        panic!("Actor of type {} is no longer running", type_name::<T>());
     }
 
     /// Sends a closure to the actor, handling all boxing/unboxing internally.
@@ -478,11 +502,99 @@ mod tests {
     use super::*;
     use crate as actify;
 
+    /// A panicking actor method must surface as a panic naming that cause, not
+    /// as the generic message used when the actor merely stopped.
     #[tokio::test]
-    #[should_panic]
-    async fn test_handle_panic() {
+    async fn test_actor_panic_is_reported_as_a_panic() {
         let handle = Handle::new(PanicStruct {});
-        handle.panic().await;
+        let clone = handle.clone();
+
+        let result = tokio::spawn(async move { clone.panic().await }).await;
+
+        let message = panic_message(result.unwrap_err());
+        assert!(
+            message.contains("A panic occurred"),
+            "expected an actor-panic message, got: {message}"
+        );
+    }
+
+    /// The same for a panic inside an async method, which unwinds from a
+    /// different point in the job's lifetime than a sync one.
+    #[tokio::test]
+    async fn test_async_actor_panic_is_reported_as_a_panic() {
+        let handle = Handle::new(PanicStruct {});
+        let clone = handle.clone();
+
+        let result = tokio::spawn(async move { clone.panic_async().await }).await;
+
+        let message = panic_message(result.unwrap_err());
+        assert!(
+            message.contains("A panic occurred"),
+            "expected an actor-panic message, got: {message}"
+        );
+    }
+
+    /// Every clone shares the actor, so all of them report the panic, not just
+    /// the one whose call brought the actor down.
+    #[tokio::test]
+    async fn test_actor_panic_is_reported_to_other_clones() {
+        let handle = Handle::new(PanicStruct {});
+        let victim = handle.clone();
+        let bystander = handle.clone();
+
+        let _ = tokio::spawn(async move { victim.panic().await }).await;
+
+        let result = tokio::spawn(async move { bystander.panic().await }).await;
+        let message = panic_message(result.unwrap_err());
+        assert!(
+            message.contains("A panic occurred") || message.contains("no longer running"),
+            "expected the actor to be reported as gone, got: {message}"
+        );
+    }
+
+    /// A handle outliving its runtime is a different failure from a panicking
+    /// method, and saying "a panic occurred" there sends readers hunting for a
+    /// panic that never happened.
+    #[test]
+    fn test_orphaned_handle_reports_a_stopped_actor() {
+        let actor_rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+
+        let handle = actor_rt.block_on(async {
+            let handle = Handle::new(0i32);
+            handle.set(42).await;
+            assert_eq!(handle.get().await, 42); // The actor served jobs normally
+            handle
+        });
+
+        drop(actor_rt); // Cancels the actor task without unwinding it
+
+        let caller_rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+
+        caller_rt.block_on(async {
+            let orphaned = handle.clone();
+            let result = tokio::spawn(async move { orphaned.set(99).await }).await;
+
+            let message = panic_message(result.unwrap_err());
+            assert!(
+                message.contains("no longer running"),
+                "expected a stopped-actor message, got: {message}"
+            );
+        });
+    }
+
+    fn panic_message(error: tokio::task::JoinError) -> String {
+        let panic = error.into_panic();
+        panic
+            .downcast_ref::<String>()
+            .cloned()
+            .or_else(|| panic.downcast_ref::<&str>().map(|s| s.to_string()))
+            .expect("panic payload was neither String nor &str")
     }
 
     /// The profiler counts broadcasts per method name, so each method must
@@ -520,6 +632,10 @@ mod tests {
     #[actify_macros::actify]
     impl PanicStruct {
         fn panic(&self) {
+            panic!()
+        }
+
+        async fn panic_async(&self) {
             panic!()
         }
     }

@@ -2,7 +2,7 @@ use std::any::{Any, type_name};
 use std::fmt::{self, Debug};
 use std::future::Future;
 use std::pin::Pin;
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{mpsc, oneshot, watch};
 
 /// A boxed future, as returned by an actor method.
 pub(crate) type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
@@ -86,10 +86,38 @@ pub(crate) struct Job<T> {
     pub respond_to: oneshot::Sender<Box<dyn Any + Send>>,
 }
 
+/// Why the actor task is no longer serving jobs.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum ActorExit {
+    Running,
+    Panicked,
+    Stopped,
+}
+
+/// Reports the exit reason when the actor task ends, however it ends.
+///
+/// `std::thread::panicking()` is true while a panic unwinds the task, which is
+/// what separates a panicking actor method from a runtime shutdown or a
+/// cancelled task - both of which drop the task without unwinding.
+struct ExitGuard(watch::Sender<ActorExit>);
+
+impl Drop for ExitGuard {
+    fn drop(&mut self) {
+        let reason = if std::thread::panicking() {
+            ActorExit::Panicked
+        } else {
+            ActorExit::Stopped
+        };
+        let _ = self.0.send(reason);
+    }
+}
+
 pub(crate) async fn serve<T: Send + Sync + 'static>(
     mut rx: mpsc::Receiver<Job<T>>,
     mut actor: Actor<T>,
+    exit_tx: watch::Sender<ActorExit>,
 ) {
+    let _guard = ExitGuard(exit_tx);
     while let Some(job) = rx.recv().await {
         let res = (job.call)(&mut actor, job.args).await;
         if job.respond_to.send(res).is_err() {
