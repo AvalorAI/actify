@@ -267,10 +267,19 @@ fn filter_attributes(attrs: &[Attribute]) -> Vec<Attribute> {
 }
 
 /// Find one of actify's marker attributes (`broadcast`, `skip_broadcast`).
+///
+/// Only the two spellings actify actually exports are recognised: bare
+/// (`#[broadcast]`, via a `use`) and crate-qualified (`#[actify::broadcast]`).
+/// Matching a name anywhere in the path would claim another crate's attribute,
+/// and the author would be told their own attribute is a superfluous actify one.
 fn find_marker_attribute<'a>(attrs: &'a [Attribute], name: &str) -> Option<&'a Attribute> {
-    attrs
-        .iter()
-        .find(|attr| attr.path().segments.iter().any(|seg| seg.ident == name))
+    attrs.iter().find(|attr| {
+        let path = attr.path();
+        path.is_ident(name)
+            || (path.segments.len() == 2
+                && path.segments[0].ident == "actify"
+                && path.segments[1].ident == name)
+    })
 }
 
 /// Verify the method has a receiver and that it borrows rather than consumes.
