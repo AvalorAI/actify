@@ -23,7 +23,5 @@ default = []
 profiler = []
 
 [package.metadata.docs.rs]
-# Build with every feature so `profiler` items appear, tagged with the feature
-# they need.
+# Build with every feature so the profiler items are documented.
 all-features = true
-rustdoc-args = ["--cfg", "docsrs"]
