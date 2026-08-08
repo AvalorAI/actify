@@ -391,6 +391,14 @@
 //!   `get_broadcast_counts` and `get_sorted_broadcast_counts`. Counters are
 //!   process-wide and never reset.
 
+/// The README examples, compiled and run as part of the test suite.
+///
+/// Only present under `cfg(doctest)`, so it costs nothing when building docs.
+#[cfg(doctest)]
+mod readme {
+    #![doc = include_str!("../../README.md")]
+}
+
 mod actor;
 mod cache;
 mod extensions;
