@@ -1,6 +1,6 @@
 //! This workspace is used to test the functionalities of actify as would any user that imports the library
 
-use actify::actify;
+use actify::{Handle, actify};
 use std::{collections::HashMap, fmt::Debug};
 
 fn main() {}
@@ -544,6 +544,31 @@ mod tests {
         assert!(cache_3.try_recv_newest().is_err());
     }
 
+    /// An actor runs one job at a time, so two actors calling each other each
+    /// wait for a reply the other cannot produce yet. The crate docs state
+    /// this; the test keeps that statement true.
+    #[tokio::test(start_paused = true)]
+    async fn test_actors_calling_each_other_never_complete() {
+        let parser = Handle::new(Parser { store: None });
+        let store = Handle::new(Store { parser: None });
+
+        parser
+            .set(Parser {
+                store: Some(store.clone()),
+            })
+            .await;
+        store
+            .set(Store {
+                parser: Some(parser.clone()),
+            })
+            .await;
+
+        assert!(
+            never_resolves(parser.parse()).await,
+            "the cycle returned instead of blocking"
+        );
+    }
+
     #[tokio::test]
     async fn test_drain_vec() {
         let actor_handle = Handle::new(vec![1, 2, 3]);
@@ -626,6 +651,18 @@ mod tests {
     }
 
     /// Helper to get current number of alive tasks in the runtime
+    /// Returns whether a future is still pending once nothing else can make
+    /// progress.
+    ///
+    /// The tests using this run on a paused clock, where tokio advances time
+    /// as soon as every task is idle, so the timeout elapses immediately and
+    /// its length is irrelevant.
+    async fn never_resolves<F: std::future::Future>(future: F) -> bool {
+        tokio::time::timeout(Duration::from_secs(1), future)
+            .await
+            .is_err()
+    }
+
     fn alive_tasks() -> usize {
         tokio::runtime::Handle::current()
             .metrics()
@@ -943,5 +980,36 @@ mod tests {
             after_handle_drop, baseline,
             "All tasks should exit after Handle is dropped"
         );
+    }
+}
+
+/// Two actors holding handles to each other, which is the shape that deadlocks.
+#[allow(dead_code)]
+#[derive(Clone, Debug)]
+struct Parser {
+    store: Option<Handle<Store>>,
+}
+
+#[allow(dead_code)]
+#[derive(Clone, Debug)]
+struct Store {
+    parser: Option<Handle<Parser>>,
+}
+
+#[actify]
+impl Parser {
+    async fn parse(&self) {
+        self.store.as_ref().unwrap().save().await;
+    }
+
+    async fn is_ready(&self) -> bool {
+        true
+    }
+}
+
+#[actify]
+impl Store {
+    async fn save(&self) {
+        self.parser.as_ref().unwrap().is_ready().await;
     }
 }

@@ -41,6 +41,9 @@ const DOWNCAST_FAIL: &str =
 /// }
 /// ```
 pub trait BroadcastAs<V> {
+    /// Produces the value to broadcast to subscribers.
+    ///
+    /// Runs on the actor task after every broadcasting method.
     fn to_broadcast(&self) -> V;
 }
 
@@ -115,7 +118,7 @@ where
 {
     /// Creates a new [`Handle`] and spawns the corresponding [`Actor`].
     ///
-    /// For `Clone` types, `V` defaults to `T` — the actor broadcasts clones of
+    /// For `Clone` types, `V` defaults to `T`: the actor broadcasts clones of
     /// itself and you can simply write `Handle::new(val)`.
     ///
     /// For non-Clone types (or to broadcast a lightweight summary), implement
@@ -288,6 +291,12 @@ impl<T: Send + Sync + 'static, V> Handle<T, V> {
     /// assert_eq!(handle.get().await, Some(1));
     /// # }
     /// ```
+    ///
+    /// # Panics
+    ///
+    /// Panics if the actor has stopped, either because one of its methods
+    /// panicked or because its runtime shut down. See [Actor lifetime and
+    /// panics](crate#actor-lifetime-and-panics).
     pub async fn set(&self, val: T) {
         self.run(val, |s, val| {
             s.inner = val;
@@ -311,6 +320,12 @@ impl<T: Send + Sync + 'static, V> Handle<T, V> {
     /// assert_eq!(rx.recv().await.unwrap(), 2);
     /// # }
     /// ```
+    ///
+    /// # Panics
+    ///
+    /// Panics if the actor has stopped, either because one of its methods
+    /// panicked or because its runtime shut down. See [Actor lifetime and
+    /// panics](crate#actor-lifetime-and-panics).
     pub async fn set_if_changed(&self, val: T)
     where
         T: PartialEq,
@@ -346,6 +361,12 @@ impl<T: Send + Sync + 'static, V> Handle<T, V> {
     /// assert_eq!(first, Some(1));
     /// # }
     /// ```
+    ///
+    /// # Panics
+    ///
+    /// Panics if the actor has stopped, either because one of its methods
+    /// panicked or because its runtime shut down. See [Actor lifetime and
+    /// panics](crate#actor-lifetime-and-panics).
     pub async fn with<R, F>(&self, f: F) -> R
     where
         F: FnOnce(&T) -> R + Send + 'static,
@@ -381,6 +402,12 @@ impl<T: Send + Sync + 'static, V> Handle<T, V> {
     /// assert!(rx.try_recv().is_ok());
     /// # }
     /// ```
+    ///
+    /// # Panics
+    ///
+    /// Panics if the actor has stopped, either because one of its methods
+    /// panicked or because its runtime shut down. See [Actor lifetime and
+    /// panics](crate#actor-lifetime-and-panics).
     pub async fn with_mut<R, F>(&self, f: F) -> R
     where
         F: FnOnce(&mut T) -> R + Send + 'static,
@@ -410,6 +437,12 @@ impl<T: Clone + Send + Sync + 'static, V> Handle<T, V> {
     /// assert_eq!(result, 1);
     /// # }
     /// ```
+    ///
+    /// # Panics
+    ///
+    /// Panics if the actor has stopped, either because one of its methods
+    /// panicked or because its runtime shut down. See [Actor lifetime and
+    /// panics](crate#actor-lifetime-and-panics).
     pub async fn get(&self) -> T {
         self.run((), |s, _| s.inner.clone()).await
     }
@@ -463,6 +496,12 @@ where
     /// As it is initialized with the current value, any updates before or during construction are included.
     ///
     /// See also [`Handle::create_cache_from_default`] for a cache that starts from `V::default()`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the actor has stopped, either because one of its methods
+    /// panicked or because its runtime shut down. See [Actor lifetime and
+    /// panics](crate#actor-lifetime-and-panics).
     pub async fn create_cache(&self) -> Cache<V> {
         // Subscribe before get, so an update arriving in between is queued rather than lost.
         let rx = self.subscribe();
@@ -497,6 +536,12 @@ where
     /// assert_eq!(*values.lock().unwrap(), vec![1, 2]);
     /// # }
     /// ```
+    ///
+    /// # Panics
+    ///
+    /// Panics if the actor has stopped, either because one of its methods
+    /// panicked or because its runtime shut down. See [Actor lifetime and
+    /// panics](crate#actor-lifetime-and-panics).
     pub async fn spawn_throttle<C, F>(&self, client: C, call: fn(&C, F), freq: Frequency)
     where
         C: Send + Sync + 'static,

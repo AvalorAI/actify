@@ -1,13 +1,41 @@
+//! Procedural macros for the [actify](https://docs.rs/actify) crate.
+//!
+//! Depend on `actify` rather than this crate: everything here is re-exported
+//! from there, and the generated code refers to `actify`'s types.
+#![warn(missing_docs)]
+
 mod codegen;
 mod parse;
 
 use proc_macro::TokenStream;
 
+/// Marks a method inside an `#[actify]` impl block as not broadcasting.
+///
+/// ```ignore
+/// #[actify]
+/// impl Counter {
+///     #[actify::skip_broadcast]
+///     fn bump_quietly(&mut self) { self.count += 1 }
+/// }
+/// ```
+///
+/// Expands to nothing: `#[actify]` reads it and strips it from the output.
 #[proc_macro_attribute]
 pub fn skip_broadcast(_args: TokenStream, input: TokenStream) -> TokenStream {
     input
 }
 
+/// Restores broadcasting for one method of an `#[actify(skip_broadcast)]` block.
+///
+/// ```ignore
+/// #[actify(skip_broadcast)]
+/// impl Counter {
+///     #[actify::broadcast]
+///     fn bump_loudly(&mut self) { self.count += 1 }
+/// }
+/// ```
+///
+/// Expands to nothing: `#[actify]` reads it and strips it from the output.
 #[proc_macro_attribute]
 pub fn broadcast(_args: TokenStream, input: TokenStream) -> TokenStream {
     input

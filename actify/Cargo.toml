@@ -21,3 +21,9 @@ tokio = { version = "1.44.1", features = ["test-util"] }
 [features]
 default = []
 profiler = []
+
+[package.metadata.docs.rs]
+# Build with every feature so `profiler` items appear, tagged with the feature
+# they need.
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]

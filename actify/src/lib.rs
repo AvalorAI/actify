@@ -1,4 +1,5 @@
-#![warn(missing_debug_implementations, unreachable_pub)]
+#![warn(missing_docs, missing_debug_implementations, unreachable_pub)]
+#![cfg_attr(docsrs, feature(doc_auto_cfg))]
 #![deny(unused_must_use)]
 //! An intuitive actor model for Rust with minimal boilerplate, no manual messages and typed arguments.
 //!
@@ -192,12 +193,12 @@
 //!
 //! Every [`Handle`] provides a set of built-in methods that work without the macro:
 //!
-//! - [`Handle::get`] — returns a clone of the current actor value (does not broadcast)
-//! - [`Handle::set`] — overwrites the actor value (broadcasts the change)
-//! - [`Handle::set_if_changed`] — only broadcasts when the new value differs (requires `PartialEq`)
-//! - [`Handle::subscribe`] — returns a [`tokio::sync::broadcast::Receiver`] for change notifications
-//! - [`Handle::with`] — runs a read-only closure on `&T` (does not broadcast)
-//! - [`Handle::with_mut`] — runs a mutable closure on `&mut T` (broadcasts the change)
+//! - [`Handle::get`]: returns a clone of the current actor value (does not broadcast)
+//! - [`Handle::set`]: overwrites the actor value (broadcasts the change)
+//! - [`Handle::set_if_changed`]: only broadcasts when the new value differs (requires `PartialEq`)
+//! - [`Handle::subscribe`]: returns a [`tokio::sync::broadcast::Receiver`] for change notifications
+//! - [`Handle::with`]: runs a read-only closure on `&T` (does not broadcast)
+//! - [`Handle::with_mut`]: runs a mutable closure on `&mut T` (broadcasts the change)
 //!
 //! # Broadcasting
 //!
@@ -205,11 +206,16 @@
 //! updated value to all subscribers after execution. This allows [`Cache`]s and
 //! [`Throttle`]s to stay synchronized with the actor.
 //!
+//! This applies to every method in the block, including those taking `&self`:
+//! broadcasting follows the attributes below, not the receiver. Annotate
+//! read-only methods with `skip_broadcast` if you do not want them waking
+//! subscribers.
+//!
 //! You can control broadcasting with these attributes:
 //!
-//! - `#[actify::skip_broadcast]` — skip broadcasting for a single `&mut self` method
-//! - `#[actify(skip_broadcast)]` — skip broadcasting for all methods in the impl block
-//! - `#[actify::broadcast]` — force broadcasting for a method in a `skip_broadcast` block
+//! - `#[actify::skip_broadcast]`: skip broadcasting for a single method
+//! - `#[actify(skip_broadcast)]`: skip broadcasting for all methods in the impl block
+//! - `#[actify::broadcast]`: force broadcasting for a method in a `skip_broadcast` block
 //!
 //! ```
 //! # use actify::{Handle, actify, skip_broadcast, broadcast};
@@ -297,9 +303,9 @@
 //! A [`Throttle`] rate-limits broadcasted updates before forwarding them to a callback.
 //! Configure the rate with [`Frequency`]:
 //!
-//! - [`Frequency::OnEvent`] — fires on every broadcast
-//! - [`Frequency::Interval`] — fires at a fixed interval
-//! - [`Frequency::OnEventWhen`] — fires for an event only after an interval has passed
+//! - [`Frequency::OnEvent`]: fires on every broadcast
+//! - [`Frequency::Interval`]: fires at a fixed interval
+//! - [`Frequency::OnEventWhen`]: fires for an event only after an interval has passed
 //!
 //! Use the [`Throttled`] trait to parse the actor's type into a different output type
 //! for the throttle callback.
@@ -309,10 +315,10 @@
 //! Actify ships with extension traits that add convenience methods to handles
 //! wrapping common standard library types:
 //!
-//! - [`OptionHandle`] — `is_some`, `is_none` for `Handle<Option<T>>`
-//! - [`VecHandle`] — `push`, `is_empty`, `drain` for `Handle<Vec<T>>`
-//! - [`HashMapHandle`] — `get_key`, `insert`, `is_empty` for `Handle<HashMap<K, V>>`
-//! - [`HashSetHandle`] — `insert`, `is_empty` for `Handle<HashSet<K>>`
+//! - [`OptionHandle`] for `Handle<Option<T>>`
+//! - [`VecHandle`] for `Handle<Vec<T>>`
+//! - [`HashMapHandle`] for `Handle<HashMap<K, V>>`
+//! - [`HashSetHandle`] for `Handle<HashSet<K>>`
 //!
 //! # Non-Clone types
 //!
@@ -320,6 +326,70 @@
 //! For non-Clone types, implement [`BroadcastAs<V>`] for a Clone-able summary
 //! type `V` and specify it explicitly: `Handle::<MyType, Summary>::new(val)`.
 //! Your `#[actify]` methods work normally either way.
+//!
+//! # Execution model
+//!
+//! Each actor is one Tokio task. It runs one job at a time and takes the next
+//! only after the current one returns, so calls never interleave and
+//! `&mut self` methods need no lock. A slow method delays every other call to
+//! that actor.
+//!
+//! Jobs queue in a bounded channel, so callers wait when it is full.
+//!
+//! Two actors that call each other never return: each waits for a reply the
+//! other can only produce once it is free. The same holds for a method calling
+//! its own handle.
+//!
+//! ```no_run
+//! # use actify::{Handle, actify};
+//! #[derive(Clone, Debug)]
+//! struct Parser {
+//!     store: Option<Handle<Store>>,
+//! }
+//!
+//! #[derive(Clone, Debug)]
+//! struct Store {
+//!     parser: Option<Handle<Parser>>,
+//! }
+//!
+//! #[actify]
+//! impl Parser {
+//!     async fn parse(&self) {
+//!         self.store.as_ref().unwrap().save().await;
+//!     }
+//!
+//!     async fn is_ready(&self) -> bool {
+//!         true
+//!     }
+//! }
+//!
+//! #[actify]
+//! impl Store {
+//!     async fn save(&self) {
+//!         // Parser is still inside parse, so this call is never served
+//!         self.parser.as_ref().unwrap().is_ready().await;
+//!     }
+//! }
+//! ```
+//!
+//! # Actor lifetime and panics
+//!
+//! An actor runs until every [`Handle`] to it is dropped. A [`ReadHandle`]
+//! holds a handle internally and keeps the actor alive. A [`Cache`] does not,
+//! since it only receives broadcasts.
+//!
+//! A panicking method stops the actor permanently. There is no restart, and
+//! every later call on any handle to it panics, reporting that the actor
+//! panicked. Rust prints the original panic with its message and backtrace.
+//!
+//! Calls after the actor's runtime has shut down panic too, reporting that the
+//! actor is no longer running.
+//!
+//! # Feature flags
+//!
+//! - `profiler`: counts broadcasts per method, readable through
+//!   `get_broadcast_counts` and `get_sorted_broadcast_counts`. Counters are
+//!   process-wide and never reset.
 
 mod actor;
 mod cache;
