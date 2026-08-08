@@ -149,8 +149,7 @@ where
             return; // If cache empty, skip call
         };
 
-        // Perform the call. `val` is owned and unused afterwards, so it is
-        // handed over rather than cloned.
+        // Perform the call
         (self.call)(&self.client, val);
     }
 
