@@ -570,6 +570,32 @@ mod tests {
         assert_eq!(cache.get_newest(), &2);
     }
 
+    /// A clone is a fresh cache initialized with the original's current
+    /// value: its first read delivers that snapshot, and updates queued in
+    /// the original's receiver stay with the original. A new subscription
+    /// starts at the channel tail, so the queued updates cannot follow the
+    /// clone; the snapshot on first read is what the clone can guarantee.
+    #[tokio::test(start_paused = true)]
+    async fn test_clone_is_a_snapshot() {
+        let handle = Handle::new(1);
+        let mut cache = handle.create_cache().await;
+        assert_eq!(cache.recv().await.unwrap(), &1); // Consume first request
+
+        handle.set(2).await; // Queued in the original's receiver
+        let mut clone = cache.clone();
+
+        // The clone delivers its snapshot on first read
+        assert_eq!(clone.try_recv().unwrap(), Some(&1));
+
+        // The queued update belongs to the original
+        assert_eq!(cache.try_recv().unwrap(), Some(&2));
+
+        // The clone sees only broadcasts made after its creation
+        assert_eq!(clone.try_recv().unwrap(), None);
+        handle.set(3).await;
+        assert_eq!(clone.try_recv().unwrap(), Some(&3));
+    }
+
     #[tokio::test(start_paused = true)]
     async fn test_recv_waits_for_update() {
         let handle = Handle::new(2);
