@@ -1,6 +1,6 @@
-use std::fmt::{self, Debug};
 use tokio::sync::broadcast::error::RecvError;
 use tokio::sync::broadcast::{self, Receiver};
+use tokio::task::AbortHandle;
 use tokio::time::{self, Duration, Interval};
 
 /// The Frequency is used to tune the speed of a [`Throttle`].
@@ -92,7 +92,7 @@ impl Timing {
 /// Moves the first tick a full period out.
 ///
 /// `tokio::time::interval` completes its first tick immediately, and
-/// [`Throttle::run`] already sends the initial value before entering the loop,
+/// `ThrottleTask::run` already sends the initial value before entering the loop,
 /// so without this an interval frequency sends twice at startup.
 fn interval_after(duration: Duration) -> Interval {
     let mut interval = time::interval(duration);
@@ -113,7 +113,7 @@ enum Wake {
 }
 
 /// Owns the broadcast receiver and the timing, so the loop in
-/// [`Throttle::run`] is only a call to [`Self::next`] and a callback.
+/// `ThrottleTask::run` is only a call to [`Self::next`] and a callback.
 struct ThrottleState<T> {
     timing: Timing,
     val_rx: Option<broadcast::Receiver<T>>,
@@ -211,12 +211,8 @@ fn store<T>(current: &mut Option<T>, received: Result<T, RecvError>) -> Wake {
     }
 }
 
-/// Rate-limits broadcasted updates from a [`Handle`](crate::Handle) or [`Cache`](crate::Cache)
-/// before forwarding them to a callback.
-///
-/// Configure the rate with [`Frequency`]. The actor type must implement [`Throttled<F>`](Throttled)
-/// to convert the actor value into the callback argument type `F`.
-pub struct Throttle<C, T, F> {
+/// The parameters a spawned throttle task owns for its lifetime.
+struct ThrottleTask<C, T, F> {
     frequency: Frequency,
     client: C,
     call: fn(&C, F),
@@ -224,71 +220,20 @@ pub struct Throttle<C, T, F> {
     current_val: Option<T>,
 }
 
-impl<C, T, F> fmt::Debug for Throttle<C, T, F> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Throttle")
-            .field("frequency", &self.frequency)
-            .field("client", &std::any::type_name::<C>().to_string())
-            .field("call", &std::any::type_name::<fn(&C, F)>().to_string())
-            .field("val_rx", &self.val_rx)
-            .field(
-                "current_val",
-                &std::any::type_name::<Option<T>>().to_string(),
-            )
-            .finish()
-    }
-}
-
-impl<C, T, F> Throttle<C, T, F>
+impl<C, T, F> ThrottleTask<C, T, F>
 where
     C: Send + Sync + 'static,
     T: Clone + Throttled<F> + Send + Sync + 'static,
     F: Send + Sync + 'static,
 {
-    /// Spawns a throttle that forwards an actor's broadcasts to `call` at the
-    /// given [`Frequency`].
-    ///
-    /// `init` fires immediately, before any broadcast arrives. Pass `None` to
-    /// wait for the first update.
-    ///
-    /// The task stops when the actor does.
-    /// [`Handle::spawn_throttle`](crate::Handle::spawn_throttle) and
-    /// [`Cache::spawn_throttle`](crate::Cache::spawn_throttle) take the
-    /// receiver without losing updates during setup.
-    pub fn spawn_from_receiver(
-        client: C,
-        call: fn(&C, F),
-        frequency: Frequency,
-        receiver: Receiver<T>,
-        init: Option<T>,
-    ) {
-        let throttle = Throttle {
-            frequency,
-            client,
-            call,
-            val_rx: Some(receiver),
-            current_val: init,
-        };
-        tokio::spawn(throttle.run());
-    }
-
-    /// Spawns a throttle that fires `call` with a fixed value on every interval.
-    ///
-    /// Not attached to an actor, so nothing closes it: the task fires until the
-    /// runtime shuts down.
-    pub fn spawn_interval(client: C, call: fn(&C, F), interval: Duration, val: T) {
-        let throttle = Throttle {
-            frequency: Frequency::Interval(interval),
-            client,
-            call,
-            val_rx: None,
-            current_val: Some(val),
-        };
-        tokio::spawn(throttle.run());
+    fn spawn(self) -> Throttle {
+        Throttle {
+            task: tokio::spawn(self.run()).abort_handle(),
+        }
     }
 
     async fn run(self) {
-        let Throttle {
+        let ThrottleTask {
             frequency,
             client,
             call,
@@ -310,6 +255,95 @@ where
     }
 }
 
+/// A running throttle, rate-limiting broadcasted updates from a
+/// [`Handle`](crate::Handle) or [`Cache`](crate::Cache) before forwarding them
+/// to a callback.
+///
+/// Configure the rate with [`Frequency`]. The actor type must implement
+/// [`Throttled<F>`](Throttled) to convert the actor value into the callback
+/// argument type `F`.
+///
+/// Dropping this leaves the throttle running. Call [`abort`](Self::abort) to
+/// stop it.
+#[derive(Debug)]
+pub struct Throttle {
+    task: AbortHandle,
+}
+
+impl Throttle {
+    /// Spawns a throttle that forwards an actor's broadcasts to `call` at the
+    /// given [`Frequency`].
+    ///
+    /// `init` sends immediately, before any broadcast arrives. Pass `None` to
+    /// wait for the first update.
+    ///
+    /// The task stops when the actor does.
+    /// [`Handle::spawn_throttle`](crate::Handle::spawn_throttle) and
+    /// [`Cache::spawn_throttle`](crate::Cache::spawn_throttle) take the
+    /// receiver without losing updates during setup.
+    pub fn spawn_from_receiver<C, T, F>(
+        client: C,
+        call: fn(&C, F),
+        frequency: Frequency,
+        receiver: Receiver<T>,
+        init: Option<T>,
+    ) -> Throttle
+    where
+        C: Send + Sync + 'static,
+        T: Clone + Throttled<F> + Send + Sync + 'static,
+        F: Send + Sync + 'static,
+    {
+        ThrottleTask {
+            frequency,
+            client,
+            call,
+            val_rx: Some(receiver),
+            current_val: init,
+        }
+        .spawn()
+    }
+
+    /// Spawns a throttle that sends a fixed value to `call` on every interval.
+    ///
+    /// No actor is attached, so nothing ends the task on its own. It runs until
+    /// [`abort`](Self::abort) or the runtime shuts down.
+    #[must_use = "without this handle the interval task cannot be stopped"]
+    pub fn spawn_interval<C, T, F>(
+        client: C,
+        call: fn(&C, F),
+        interval: Duration,
+        val: T,
+    ) -> Throttle
+    where
+        C: Send + Sync + 'static,
+        T: Clone + Throttled<F> + Send + Sync + 'static,
+        F: Send + Sync + 'static,
+    {
+        ThrottleTask {
+            frequency: Frequency::Interval(interval),
+            client,
+            call,
+            val_rx: None,
+            current_val: Some(val),
+        }
+        .spawn()
+    }
+
+    /// Stops the throttle.
+    ///
+    /// The task stops at its next await point, so a callback already running
+    /// finishes first.
+    pub fn abort(&self) {
+        self.task.abort();
+    }
+
+    /// Whether the task has stopped, either through [`abort`](Self::abort) or
+    /// because the actor it was attached to is gone.
+    pub fn is_finished(&self) -> bool {
+        self.task.is_finished()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::Handle;
@@ -325,6 +359,12 @@ mod tests {
     /// paused in these tests, so the wait costs no real time.
     async fn still_waiting<T>(future: impl Future<Output = T>) -> bool {
         timeout(PERIOD * 10, future).await.is_err()
+    }
+
+    fn alive_tasks() -> usize {
+        tokio::runtime::Handle::current()
+            .metrics()
+            .num_alive_tasks()
     }
 
     mod state {
@@ -441,7 +481,8 @@ mod tests {
         #[tokio::test(start_paused = true)]
         async fn test_interval_sends_it_once_then_resumes_on_the_period() {
             let counter = CounterClient::new();
-            Throttle::spawn_interval(counter.clone(), CounterClient::call, PERIOD, 1);
+            let _throttle =
+                Throttle::spawn_interval(counter.clone(), CounterClient::call, PERIOD, 1);
 
             sleep(PERIOD / 2).await;
             assert_eq!(*counter.count.lock().unwrap(), 1, "startup send duplicated");
@@ -477,6 +518,69 @@ mod tests {
 
             sleep(PERIOD * 3).await;
             assert_eq!(*counter.count.lock().unwrap(), 1);
+        }
+    }
+
+    mod lifecycle {
+        use super::*;
+
+        #[tokio::test(start_paused = true)]
+        async fn test_abort_stops_an_interval_throttle() {
+            let counter = CounterClient::new();
+            let throttle =
+                Throttle::spawn_interval(counter.clone(), CounterClient::call, PERIOD, 1);
+
+            sleep(PERIOD * 3).await;
+            let before_abort = *counter.count.lock().unwrap();
+            assert!(before_abort > 1, "the throttle must be sending before this");
+
+            throttle.abort();
+            sleep(PERIOD * 3).await;
+
+            assert_eq!(before_abort, *counter.count.lock().unwrap());
+        }
+
+        #[tokio::test(start_paused = true)]
+        async fn test_is_finished_reports_the_abort() {
+            let counter = CounterClient::new();
+            let throttle = Throttle::spawn_interval(counter, CounterClient::call, PERIOD, 1);
+            sleep(PERIOD).await;
+            assert!(!throttle.is_finished());
+
+            throttle.abort();
+            sleep(PERIOD).await;
+
+            assert!(throttle.is_finished());
+        }
+
+        #[tokio::test(start_paused = true)]
+        async fn test_is_finished_once_the_actor_is_gone() {
+            let handle = Handle::new(1);
+            let counter = CounterClient::new();
+            let throttle = handle
+                .spawn_throttle(counter, CounterClient::call, Frequency::Interval(PERIOD))
+                .await;
+            assert!(!throttle.is_finished());
+
+            drop(handle);
+            sleep(PERIOD * 3).await;
+
+            assert!(throttle.is_finished());
+        }
+
+        #[tokio::test(start_paused = true)]
+        async fn test_abort_releases_the_task() {
+            let idle = alive_tasks();
+            let counter = CounterClient::new();
+            let throttle = Throttle::spawn_interval(counter, CounterClient::call, PERIOD, 1);
+
+            sleep(PERIOD).await;
+            assert_eq!(alive_tasks(), idle + 1);
+
+            throttle.abort();
+            sleep(PERIOD).await;
+
+            assert_eq!(alive_tasks(), idle);
         }
     }
 
@@ -643,7 +747,7 @@ mod tests {
         let counter = CounterClient::new();
 
         // Spawn throttle
-        Throttle::spawn_interval(
+        let _throttle = Throttle::spawn_interval(
             counter.clone(),
             CounterClient::call,
             Duration::from_millis(timer as u64),
@@ -734,7 +838,7 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn test_throttle_parsing() {
         // Parsing to self should succeed
-        Throttle::spawn_interval(
+        let _ = Throttle::spawn_interval(
             DummyClient {},
             DummyClient::call_a,
             Duration::from_millis(100),
@@ -742,14 +846,14 @@ mod tests {
         );
 
         // Parsing to either B or C should be infered by the compiler
-        Throttle::spawn_interval(
+        let _ = Throttle::spawn_interval(
             DummyClient {},
             DummyClient::call_b,
             Duration::from_millis(100),
             A {},
         );
 
-        Throttle::spawn_interval(
+        let _ = Throttle::spawn_interval(
             DummyClient {},
             DummyClient::call_c,
             Duration::from_millis(100),

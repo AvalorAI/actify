@@ -324,12 +324,19 @@
 //! A [`Throttle`] rate-limits broadcasted updates before forwarding them to a callback.
 //! Configure the rate with [`Frequency`]:
 //!
-//! - [`Frequency::OnEvent`]: fires on every broadcast
-//! - [`Frequency::Interval`]: fires at a fixed interval
-//! - [`Frequency::OnEventWhen`]: fires for an event only after an interval has passed
+//! - [`Frequency::OnEvent`]: sends every value as it arrives
+//! - [`Frequency::Interval`]: sends the current value every interval
+//! - [`Frequency::OnEventWhen`]: sends at most once per interval, and only when a
+//!   value arrived since the last send
 //!
 //! Use the [`Throttled`] trait to parse the actor's type into a different output type
 //! for the throttle callback.
+//!
+//! Spawning a throttle returns a [`Throttle`] handle. Dropping it leaves the
+//! throttle running, so a throttle attached to an actor can be spawned and
+//! forgotten: it stops when the actor does. [`Throttle::spawn_interval`] has no
+//! actor attached and runs until [`Throttle::abort`] or the runtime shuts down,
+//! which is why it is the one spawn that must not have its handle discarded.
 //!
 //! # Extension traits
 //!
