@@ -35,6 +35,12 @@ they record what changed rather than why, and are not exhaustive. 0.8.0 through
 - Extension getters such as `VecHandle::is_empty` and `HashMapHandle::keys` no
   longer broadcast.
 
+### Internal
+
+- The throttle loop's interval, receiver and event bookkeeping moved into a
+  private `ThrottleState`, which made the lagging-receiver path testable. It had
+  never been executed by a test.
+
 ## [0.8.3] - 2026-08-08
 
 Bug fixes, macro diagnostics and documentation. No API changes.

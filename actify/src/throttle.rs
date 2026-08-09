@@ -258,6 +258,112 @@ mod tests {
     use std::sync::{Arc, Mutex};
     use tokio::time::{Duration, Instant, sleep};
 
+    /// Driving `ThrottleState` directly reaches the receiver outcomes that a
+    /// spawned throttle hides: a closed sender and a lagging one.
+    mod state {
+        use super::*;
+
+        #[tokio::test(start_paused = true)]
+        async fn test_on_event_fires_on_message() {
+            let (tx, rx) = broadcast::channel(8);
+            let mut state = ThrottleState::<i32>::new(Frequency::OnEvent, Some(rx), None);
+            state.first_tick().await;
+
+            tx.send(42).unwrap();
+            assert_eq!(state.next().await, Some(true));
+            assert_eq!(state.current::<i32>(), Some(42));
+        }
+
+        #[tokio::test(start_paused = true)]
+        async fn test_interval_fires_without_events() {
+            let (_tx, rx) = broadcast::channel::<i32>(8);
+            let mut state = ThrottleState::new(
+                Frequency::Interval(Duration::from_millis(100)),
+                Some(rx),
+                Some(1),
+            );
+            state.first_tick().await;
+
+            assert_eq!(state.next().await, Some(true));
+            assert_eq!(state.next().await, Some(true));
+        }
+
+        /// Under Interval the event itself does not fire the callback, but the
+        /// value it carried is what the next tick sends.
+        #[tokio::test(start_paused = true)]
+        async fn test_interval_stores_event_without_firing() {
+            let (tx, rx) = broadcast::channel(8);
+            let mut state = ThrottleState::new(
+                Frequency::Interval(Duration::from_millis(100)),
+                Some(rx),
+                Some(1),
+            );
+            state.first_tick().await;
+
+            tx.send(42).unwrap();
+            assert_eq!(state.next().await, Some(false));
+            assert_eq!(state.current::<i32>(), Some(42));
+        }
+
+        #[tokio::test(start_paused = true)]
+        async fn test_on_event_when_fires_after_the_interval() {
+            let (tx, rx) = broadcast::channel(8);
+            let mut state = ThrottleState::new(
+                Frequency::OnEventWhen(Duration::from_millis(100)),
+                Some(rx),
+                None,
+            );
+            state.first_tick().await;
+
+            tx.send(42).unwrap();
+            assert_eq!(state.next().await, Some(false)); // event stored, interval not elapsed
+            assert_eq!(state.next().await, Some(true)); // interval elapsed
+            assert_eq!(state.next().await, Some(false)); // no new event since firing
+        }
+
+        #[tokio::test(start_paused = true)]
+        async fn test_exits_when_sender_is_dropped() {
+            let (tx, rx) = broadcast::channel::<i32>(8);
+            let mut state = ThrottleState::new(Frequency::OnEvent, Some(rx), None);
+            state.first_tick().await;
+
+            drop(tx);
+            assert_eq!(state.next().await, None);
+        }
+
+        /// Overflowing the channel makes the receiver report Lagged. The state
+        /// swallows it and delivers the next value rather than exiting.
+        #[tokio::test(start_paused = true)]
+        async fn test_continues_after_lagging() {
+            let (tx, rx) = broadcast::channel(2);
+            let mut state = ThrottleState::<i32>::new(Frequency::OnEvent, Some(rx), None);
+            state.first_tick().await;
+
+            for i in 0..10 {
+                tx.send(i).unwrap();
+            }
+
+            assert_eq!(state.next().await, Some(true));
+            assert_eq!(state.current::<i32>(), Some(8));
+        }
+
+        #[tokio::test(start_paused = true)]
+        async fn test_current_applies_parse() {
+            let (_tx, rx) = broadcast::channel::<A>(8);
+            let state = ThrottleState::new(Frequency::OnEvent, Some(rx), Some(A {}));
+
+            let _: B = state.current::<B>().expect("A parses into B");
+        }
+
+        #[tokio::test(start_paused = true)]
+        async fn test_current_is_none_without_a_value() {
+            let (_tx, rx) = broadcast::channel::<i32>(8);
+            let state = ThrottleState::<i32>::new(Frequency::OnEvent, Some(rx), None);
+
+            assert_eq!(state.current::<i32>(), None);
+        }
+    }
+
     #[tokio::test(start_paused = true)]
     async fn test_first_shot() {
         let handle = Handle::new(1);
