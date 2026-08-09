@@ -747,6 +747,38 @@ mod tests {
         }
     }
 
+    /// Callers past the channel capacity wait for a slot instead of failing,
+    /// so every job is served. The sleep in each job holds the actor long
+    /// enough for all callers to pile up on the bounded channel.
+    #[tokio::test(start_paused = true)]
+    async fn test_callers_wait_when_the_job_channel_is_full() {
+        let handle = Handle::new(Ledger { seen: Vec::new() });
+
+        let mut calls = tokio::task::JoinSet::new();
+        for i in 0..2 * CHANNEL_SIZE {
+            let handle = handle.clone();
+            calls.spawn(async move { handle.record(i).await });
+        }
+        while calls.join_next().await.is_some() {}
+
+        let mut seen = handle.with(|ledger| ledger.seen.clone()).await;
+        seen.sort();
+        assert_eq!(seen, (0..2 * CHANNEL_SIZE).collect::<Vec<_>>());
+    }
+
+    #[derive(Debug, Clone)]
+    struct Ledger {
+        seen: Vec<usize>,
+    }
+
+    #[actify_macros::actify]
+    impl Ledger {
+        async fn record(&mut self, i: usize) {
+            tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+            self.seen.push(i);
+        }
+    }
+
     /// Payloads distinctive enough that a test can tell whose panic it caught:
     /// the actor's own, or the one the handle raises on the caller's behalf.
     const SYNC_PANIC_PAYLOAD: &str = "sync actor method blew up";
