@@ -1,0 +1,5 @@
+error: #[skip_broadcast] is superfluous: methods taking &self do not broadcast; use #[actify::broadcast] to opt in
+ --> tests/compile_fail/superfluous_skip_broadcast_ref_self.rs:9:5
+  |
+9 |     #[actify::skip_broadcast]
+  |     ^

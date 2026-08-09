@@ -65,7 +65,7 @@ impl syn::parse::Parse for ActifyArgs {
             } else if ident == "broadcast" {
                 return Err(syn::Error::new_spanned(
                     ident,
-                    "methods already broadcast by default; `#[actify(broadcast)]` is unnecessary",
+                    "`#[actify(broadcast)]` is not supported; methods taking &mut self broadcast by default, and a method taking &self opts in with `#[actify::broadcast]`",
                 ));
             } else {
                 return Err(syn::Error::new_spanned(

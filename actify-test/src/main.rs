@@ -1,7 +1,7 @@
 //! This workspace is used to test the functionalities of actify as would any user that imports the library
 
-use actify::{Handle, actify};
-use std::{collections::HashMap, fmt::Debug};
+use actify::{BroadcastAs, Handle, actify};
+use std::{collections::HashMap, fmt::Debug, sync::Mutex};
 
 fn main() {}
 
@@ -316,6 +316,33 @@ impl SkipMultipleBroadcastsActor {
     fn broadcast_method(&mut self, x: i32) -> i32 {
         self.value = x;
         x * 2
+    }
+}
+
+/// Interior mutability lets a `&self` method change what subscribers observe,
+/// which is the case `#[actify::broadcast]` exists for.
+#[derive(Debug)]
+struct InteriorMutabilityActor {
+    value: Mutex<i32>,
+}
+
+impl BroadcastAs<i32> for InteriorMutabilityActor {
+    fn to_broadcast(&self) -> i32 {
+        *self.value.lock().unwrap()
+    }
+}
+
+#[actify]
+impl InteriorMutabilityActor {
+    #[actify::broadcast]
+    fn increment(&self) -> i32 {
+        let mut value = self.value.lock().unwrap();
+        *value += 1;
+        *value
+    }
+
+    fn peek(&self) -> i32 {
+        *self.value.lock().unwrap()
     }
 }
 
@@ -641,6 +668,20 @@ mod tests {
         // broadcast_method has #[broadcast], overriding the block default
         handle.broadcast_method(20).await;
         assert!(rx.try_recv().is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_ref_self_broadcast_opt_in() {
+        let handle: Handle<InteriorMutabilityActor, i32> = Handle::new(InteriorMutabilityActor {
+            value: Mutex::new(0),
+        });
+        let mut rx = handle.subscribe();
+
+        assert_eq!(handle.peek().await, 0);
+        assert!(rx.try_recv().is_err());
+
+        assert_eq!(handle.increment().await, 1);
+        assert_eq!(rx.try_recv().unwrap(), 1);
     }
 
     #[allow(dead_code)]

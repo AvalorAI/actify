@@ -7,6 +7,28 @@ Entries before 0.8.3 were reconstructed from the git history after the fact, so
 they record what changed rather than why, and are not exhaustive. 0.8.0 through
 0.8.2 were released without tags; their dates are those of the version bump.
 
+## [Unreleased]
+
+### Changed
+
+- **Breaking:** methods taking `&self` no longer broadcast. Broadcasting follows
+  the receiver: `&mut self` broadcasts, `&self` does not. Previously every
+  method broadcast regardless of receiver, so read-only calls woke every
+  subscriber, cache and throttle.
+
+  This changes runtime behaviour without breaking compilation. A `&self` method
+  that relied on broadcasting keeps compiling and stops broadcasting. Add
+  `#[actify::broadcast]` to it to restore the old behaviour.
+
+  `#[actify::skip_broadcast]` now applies only to `&mut self` methods, and
+  `#[actify::broadcast]` only to `&self` methods. Applying either where it has
+  no effect is a compile error naming the reason.
+
+### Fixed
+
+- Extension getters such as `VecHandle::is_empty` and `HashMapHandle::keys` no
+  longer broadcast.
+
 ## [0.8.3] - 2026-08-08
 
 Bug fixes, macro diagnostics and documentation. No API changes.

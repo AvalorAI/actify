@@ -201,38 +201,22 @@
 //!
 //! # Broadcasting
 //!
-//! By default, any method on an actified type automatically broadcasts the
-//! updated value to all subscribers after execution. This allows [`Cache`]s and
-//! [`Throttle`]s to stay synchronized with the actor.
-//!
-//! This applies to every method in the block, including those taking `&self`:
-//! broadcasting follows the attributes below, not the receiver. Annotate
-//! read-only methods with `skip_broadcast` if you do not want them waking
-//! subscribers.
-//!
-//! You can control broadcasting with these attributes:
-//!
-//! - `#[actify::skip_broadcast]`: skip broadcasting for a single method
-//! - `#[actify(skip_broadcast)]`: skip broadcasting for all methods in the impl block
-//! - `#[actify::broadcast]`: force broadcasting for a method in a `skip_broadcast` block
+//! A method taking `&mut self` broadcasts the updated value to all subscribers
+//! after it returns. This keeps [`Cache`]s and [`Throttle`]s synchronized with
+//! the actor. A method taking `&self` does not broadcast.
 //!
 //! ```
-//! # use actify::{Handle, actify, skip_broadcast, broadcast};
-//! # use std::fmt::Debug;
+//! # use actify::{Handle, actify};
 //! # #[derive(Clone, Debug)]
 //! # struct Counter { value: i32 }
-//! #[actify(skip_broadcast)]
+//! #[actify]
 //! impl Counter {
-//!     /// Does not broadcast (block default).
 //!     fn increment(&mut self) -> i32 {
 //!         self.value += 1;
 //!         self.value
 //!     }
 //!
-//!     /// Overrides the block default to broadcast.
-//!     #[actify::broadcast]
-//!     fn reset(&mut self) -> i32 {
-//!         self.value = 0;
+//!     fn value(&self) -> i32 {
 //!         self.value
 //!     }
 //! }
@@ -242,11 +226,49 @@
 //!     let handle = Handle::new(Counter { value: 0 });
 //!     let mut rx = handle.subscribe();
 //!
-//!     handle.increment().await; // No broadcast
+//!     handle.value().await;
 //!     assert!(rx.try_recv().is_err());
 //!
-//!     handle.reset().await; // Broadcasts
-//!     assert!(rx.try_recv().is_ok());
+//!     handle.increment().await;
+//!     assert_eq!(rx.try_recv().unwrap().value, 1);
+//! }
+//! ```
+//!
+//! Three attributes override the receiver:
+//!
+//! - `#[actify::broadcast]`: broadcast from a method taking `&self`
+//! - `#[actify::skip_broadcast]`: do not broadcast from a method taking `&mut self`
+//! - `#[actify(skip_broadcast)]`: no method in the impl block broadcasts unless it
+//!   carries `#[actify::broadcast]`
+//!
+//! `#[actify::broadcast]` applies where a `&self` method changes what subscribers
+//! observe, which requires interior mutability:
+//!
+//! ```
+//! # use actify::{Handle, actify, BroadcastAs};
+//! # use std::sync::Mutex;
+//! # #[derive(Debug)]
+//! # struct Counter { value: Mutex<i32> }
+//! # impl BroadcastAs<i32> for Counter {
+//! #     fn to_broadcast(&self) -> i32 { *self.value.lock().unwrap() }
+//! # }
+//! #[actify]
+//! impl Counter {
+//!     #[actify::broadcast]
+//!     fn increment(&self) -> i32 {
+//!         let mut value = self.value.lock().unwrap();
+//!         *value += 1;
+//!         *value
+//!     }
+//! }
+//!
+//! #[tokio::main]
+//! async fn main() {
+//!     let handle: Handle<Counter, i32> = Handle::new(Counter { value: Mutex::new(0) });
+//!     let mut rx = handle.subscribe();
+//!
+//!     assert_eq!(handle.increment().await, 1);
+//!     assert_eq!(rx.try_recv().unwrap(), 1);
 //! }
 //! ```
 //!
@@ -266,7 +288,7 @@
 //!     fn increment(&mut self) { self.value += 1; }
 //! }
 //!
-//! #[actify(name = "CounterGetters", skip_broadcast)]
+//! #[actify(name = "CounterGetters")]
 //! impl Counter {
 //!     fn value(&self) -> i32 { self.value }
 //! }
