@@ -622,11 +622,34 @@ mod tests {
         assert_eq!(*counter.count.lock().unwrap(), 2);
     }
 
+    /// An update already queued in the cache's receiver but not yet consumed
+    /// must reach a throttle spawned from that cache. The cache first
+    /// synchronizes to the newest broadcast value, which becomes the
+    /// throttle's initial fire.
+    #[tokio::test(start_paused = true)]
+    async fn test_pending_update_reaches_cache_throttle() {
+        let handle = Handle::new(1);
+        let mut cache = handle.create_cache().await;
+
+        handle.set(2).await; // Queued in the cache's receiver, not yet consumed
+
+        let counter = CounterClient::new();
+        cache.spawn_throttle(counter.clone(), CounterClient::call, Frequency::OnEvent);
+        sleep(Duration::from_millis(10)).await;
+
+        // The initial fire carries the queued update, not the stale snapshot
+        assert_eq!(*counter.last.lock().unwrap(), Some(2));
+        assert_eq!(*counter.count.lock().unwrap(), 1);
+
+        // Synchronizing counts as receiving: the cache holds the value too
+        assert_eq!(cache.get_current(), &2);
+    }
+
     #[tokio::test(start_paused = true)]
     async fn test_throttle_from_cache() {
         let handle = Handle::new(1);
         let counter = CounterClient::new();
-        let cache = handle.create_cache().await;
+        let mut cache = handle.create_cache().await;
 
         // Spawn throttle that should only activate once on creation
         cache.spawn_throttle(counter.clone(), CounterClient::call, Frequency::OnEvent);
@@ -977,6 +1000,7 @@ mod tests {
         start: Instant,
         elapsed: Arc<Mutex<u128>>,
         count: Arc<Mutex<i32>>,
+        last: Arc<Mutex<Option<i32>>>,
     }
 
     impl CounterClient {
@@ -985,15 +1009,19 @@ mod tests {
                 start: Instant::now(),
                 elapsed: Arc::new(Mutex::new(0)),
                 count: Arc::new(Mutex::new(0)),
+                last: Arc::new(Mutex::new(None)),
             }
         }
 
-        fn call(&self, _event: i32) {
+        fn call(&self, event: i32) {
             let mut time = self.elapsed.lock().unwrap();
             *time = self.start.elapsed().as_millis();
 
             let mut count = self.count.lock().unwrap();
             *count += 1;
+
+            let mut last = self.last.lock().unwrap();
+            *last = Some(event);
         }
     }
 }

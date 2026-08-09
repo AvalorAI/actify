@@ -487,18 +487,29 @@ where
     }
 
     /// Spawns a [`Throttle`] that fires given a specified [`Frequency`], given any broadcasted updates by the actor.
-    /// Does not first update the cache to the newest value, since then the user of the cache might miss the update.
+    ///
+    /// First synchronizes the cache to the newest broadcast value, which
+    /// becomes the throttle's initial fire. Updates already queued in the
+    /// cache would otherwise never reach the throttle: its new subscription
+    /// starts at the channel tail. They are folded into that initial value
+    /// rather than delivered one by one, and they count as received by the
+    /// cache, so a later receive returns only updates broadcast after this
+    /// call.
+    ///
     /// See [`Handle::spawn_throttle`](crate::Handle::spawn_throttle) for an example.
-    pub fn spawn_throttle<C, F, Fun>(&self, client: C, call: Fun, freq: Frequency) -> Throttle
+    pub fn spawn_throttle<C, F, Fun>(&mut self, client: C, call: Fun, freq: Frequency) -> Throttle
     where
         C: Send + Sync + 'static,
         T: Throttled<F>,
         F: Send + Sync + 'static,
         Fun: Fn(&C, F) + Send + 'static,
     {
-        let current = self.inner.clone();
+        // Subscribe before draining, so an update arriving in between reaches
+        // the throttle instead of being lost. It may then be part of the
+        // initial value and still be delivered, which a throttle absorbs.
         let receiver = self.rx.resubscribe();
-        Throttle::spawn_from_receiver(client, call, freq, receiver, Some(current))
+        _ = self.drain_to_newest();
+        Throttle::spawn_from_receiver(client, call, freq, receiver, Some(self.inner.clone()))
     }
 }
 
