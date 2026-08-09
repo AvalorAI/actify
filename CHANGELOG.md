@@ -40,6 +40,8 @@ they record what changed rather than why, and are not exhaustive. 0.8.0 through
 - The throttle loop's interval, receiver and event bookkeeping moved into a
   private `ThrottleState`, which made the lagging-receiver path testable. It had
   never been executed by a test.
+- `test_exit_on_shutdown` asserted `0 == 0`, because the throttle it built had
+  no initial value and so never fired.
 
 ## [0.8.3] - 2026-08-08
 

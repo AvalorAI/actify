@@ -29,18 +29,76 @@ impl<T: Clone> Throttled<T> for T {
     }
 }
 
-/// Owns the broadcast receiver, the interval timer and the `event_processed`
-/// flag used by [`Frequency::OnEventWhen`].
-///
-/// Drive it with [`Self::first_tick`], which consumes the immediate initial
-/// interval tick, then [`Self::next`], which awaits the next timer or event and
-/// reports whether the callback should fire.
+/// The runtime half of a [`Frequency`]: the [`Interval`] where the frequency
+/// has one, and the pending-event flag where it needs one.
+enum Timing {
+    OnEvent,
+    Interval(Interval),
+    OnEventWhen {
+        interval: Interval,
+        event_pending: bool,
+    },
+}
+
+impl Timing {
+    fn new(frequency: Frequency) -> Self {
+        match frequency {
+            Frequency::OnEvent => Timing::OnEvent,
+            Frequency::Interval(duration) => Timing::Interval(interval_after(duration)),
+            Frequency::OnEventWhen(duration) => Timing::OnEventWhen {
+                interval: interval_after(duration),
+                event_pending: false,
+            },
+        }
+    }
+
+    /// Waits for the next tick, or forever when the frequency has no interval.
+    async fn tick(&mut self) {
+        match self {
+            Timing::OnEvent => std::future::pending().await,
+            Timing::Interval(interval) | Timing::OnEventWhen { interval, .. } => {
+                interval.tick().await;
+            }
+        }
+    }
+
+    fn record_event(&mut self) {
+        if let Timing::OnEventWhen { event_pending, .. } = self {
+            *event_pending = true;
+        }
+    }
+
+    /// Whether the callback fires, given whether this wake-up carried an event.
+    fn should_fire(&mut self, received_event: bool) -> bool {
+        match self {
+            Timing::OnEvent => received_event,
+            Timing::Interval(_) => !received_event,
+            Timing::OnEventWhen { event_pending, .. } => {
+                let fire = !received_event && *event_pending;
+                if fire {
+                    *event_pending = false;
+                }
+                fire
+            }
+        }
+    }
+}
+
+/// `tokio::time::interval` fires its first tick immediately, and the throttle
+/// already fires once on startup. Resetting moves the first tick a full period
+/// out so the two do not land together.
+fn interval_after(duration: Duration) -> Interval {
+    let mut interval = time::interval(duration);
+    interval.reset();
+    interval
+}
+
+/// Owns the broadcast receiver and the timing, so the loop in
+/// [`Throttle::run`] is only a call to [`Self::next`] and a callback.
 struct ThrottleState<T> {
-    frequency: Frequency,
+    timing: Timing,
     val_rx: Option<broadcast::Receiver<T>>,
     current_val: Option<T>,
-    interval: Option<Interval>,
-    event_processed: bool,
 }
 
 impl<T: Clone> ThrottleState<T> {
@@ -49,26 +107,10 @@ impl<T: Clone> ThrottleState<T> {
         val_rx: Option<broadcast::Receiver<T>>,
         current_val: Option<T>,
     ) -> Self {
-        let interval = match frequency {
-            Frequency::OnEvent => None,
-            Frequency::Interval(duration) | Frequency::OnEventWhen(duration) => {
-                Some(time::interval(duration))
-            }
-        };
         Self {
-            frequency,
+            timing: Timing::new(frequency),
             val_rx,
             current_val,
-            interval,
-            event_processed: true,
-        }
-    }
-
-    /// Consumes the interval's initial tick, which completes immediately, so the
-    /// loop starts on a real wait.
-    async fn first_tick(&mut self) {
-        if let Some(interval) = &mut self.interval {
-            interval.tick().await;
         }
     }
 
@@ -76,12 +118,11 @@ impl<T: Clone> ThrottleState<T> {
     /// iteration, and `None` once the sender is gone and the loop should exit.
     async fn next(&mut self) -> Option<bool> {
         loop {
-            let received_msg = tokio::select!(
-                _ = keep_time(&mut self.interval) => false,
+            let received_event = tokio::select!(
+                _ = self.timing.tick() => false,
                 res = check_value(&mut self.val_rx) => {
                     match res {
                         Ok(val) => {
-                            self.event_processed = false;
                             self.current_val = Some(val);
                             true
                         }
@@ -103,18 +144,11 @@ impl<T: Clone> ThrottleState<T> {
                 },
             );
 
-            let should_fire = match self.frequency {
-                Frequency::OnEvent => received_msg,
-                Frequency::Interval(_) => !received_msg,
-                Frequency::OnEventWhen(_) => !received_msg && !self.event_processed,
-            };
-
-            // Only OnEventWhen reads this flag, and only it clears the event.
-            if should_fire && matches!(self.frequency, Frequency::OnEventWhen(_)) {
-                self.event_processed = true;
+            if received_event {
+                self.timing.record_event();
             }
 
-            return Some(should_fire);
+            return Some(self.timing.should_fire(received_event));
         }
     }
 
@@ -125,14 +159,6 @@ impl<T: Clone> ThrottleState<T> {
         T: Throttled<F>,
     {
         self.current_val.as_ref().map(|val| val.parse())
-    }
-}
-
-async fn keep_time(interval: &mut Option<Interval>) {
-    if let Some(interval) = interval {
-        interval.tick().await;
-    } else {
-        std::future::pending::<()>().await;
     }
 }
 
@@ -232,7 +258,6 @@ where
         } = self;
 
         let mut state = ThrottleState::new(frequency, val_rx, current_val);
-        state.first_tick().await;
 
         // Always execute the call once in case it was initialized
         if let Some(val) = state.current::<F>() {
@@ -267,7 +292,6 @@ mod tests {
         async fn test_on_event_fires_on_message() {
             let (tx, rx) = broadcast::channel(8);
             let mut state = ThrottleState::<i32>::new(Frequency::OnEvent, Some(rx), None);
-            state.first_tick().await;
 
             tx.send(42).unwrap();
             assert_eq!(state.next().await, Some(true));
@@ -282,7 +306,6 @@ mod tests {
                 Some(rx),
                 Some(1),
             );
-            state.first_tick().await;
 
             assert_eq!(state.next().await, Some(true));
             assert_eq!(state.next().await, Some(true));
@@ -298,7 +321,6 @@ mod tests {
                 Some(rx),
                 Some(1),
             );
-            state.first_tick().await;
 
             tx.send(42).unwrap();
             assert_eq!(state.next().await, Some(false));
@@ -313,7 +335,6 @@ mod tests {
                 Some(rx),
                 None,
             );
-            state.first_tick().await;
 
             tx.send(42).unwrap();
             assert_eq!(state.next().await, Some(false)); // event stored, interval not elapsed
@@ -325,7 +346,6 @@ mod tests {
         async fn test_exits_when_sender_is_dropped() {
             let (tx, rx) = broadcast::channel::<i32>(8);
             let mut state = ThrottleState::new(Frequency::OnEvent, Some(rx), None);
-            state.first_tick().await;
 
             drop(tx);
             assert_eq!(state.next().await, None);
@@ -337,7 +357,6 @@ mod tests {
         async fn test_continues_after_lagging() {
             let (tx, rx) = broadcast::channel(2);
             let mut state = ThrottleState::<i32>::new(Frequency::OnEvent, Some(rx), None);
-            state.first_tick().await;
 
             for i in 0..10 {
                 tx.send(i).unwrap();
@@ -425,22 +444,26 @@ mod tests {
             CounterClient::call,
             Frequency::Interval(Duration::from_millis(100)),
             receiver,
-            None,
+            Some(1),
         );
 
         sleep(Duration::from_millis(500)).await;
 
-        let count_before_drop = *counter.count.lock().unwrap();
+        // An uninitialised throttle never fires, which would leave the
+        // comparison below reading zero against zero.
+        assert!(*counter.count.lock().unwrap() > 0);
 
         // The throttle will stop, as no handles are present anymore
         drop(handle);
 
+        // A closed receiver and a due interval tick can be ready in the same
+        // select, so one further call may still land. Everything after it must
+        // stop.
         sleep(Duration::from_millis(500)).await;
+        let settled = *counter.count.lock().unwrap();
 
-        let count_after_drop = *counter.count.lock().unwrap();
-
-        // No updates have arrived even though the frequency is a constant interval, as the throttle has exited
-        assert_eq!(count_before_drop, count_after_drop);
+        sleep(Duration::from_millis(500)).await;
+        assert_eq!(settled, *counter.count.lock().unwrap());
     }
 
     #[tokio::test(start_paused = true)]
