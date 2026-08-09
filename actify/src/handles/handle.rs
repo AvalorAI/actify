@@ -542,7 +542,12 @@ where
     /// Panics if the actor has stopped, either because one of its methods
     /// panicked or because its runtime shut down. See [Actor lifetime and
     /// panics](crate#actor-lifetime-and-panics).
-    pub async fn spawn_throttle<C, F>(&self, client: C, call: fn(&C, F), freq: Frequency)
+    pub async fn spawn_throttle<C, F>(
+        &self,
+        client: C,
+        call: fn(&C, F),
+        freq: Frequency,
+    ) -> Throttle
     where
         C: Send + Sync + 'static,
         V: Throttled<F>,
@@ -551,7 +556,7 @@ where
         // Subscribe before get, so an update arriving in between is queued rather than lost.
         let receiver = self.subscribe();
         let current = self.get().await;
-        Throttle::spawn_from_receiver(client, call, freq, receiver, Some(current.to_broadcast()));
+        Throttle::spawn_from_receiver(client, call, freq, receiver, Some(current.to_broadcast()))
     }
 }
 

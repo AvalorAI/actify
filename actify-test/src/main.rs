@@ -890,15 +890,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_throttle_spawn_interval_no_cleanup() {
-        // Note: spawn_interval creates a Throttle without a receiver,
-        // so it will run forever (until the runtime shuts down).
-        // This test documents that behavior.
-
+    async fn test_spawn_interval_task_runs_until_aborted() {
         let baseline = alive_tasks();
 
         let client = TestClient::new();
-        Throttle::spawn_interval(
+        let throttle = Throttle::spawn_interval(
             client.clone(),
             TestClient::call,
             Duration::from_millis(50),
@@ -912,16 +908,25 @@ mod tests {
             "Expected one task for interval Throttle"
         );
 
-        // Verify the throttle keeps firing on its interval
+        // No receiver is attached, so nothing ends the task on its own.
         let count = client.await_count(2).await;
         assert!(
             count >= 2,
             "Interval throttle should have fired repeatedly, count: {count}"
         );
+        assert_eq!(
+            settled_alive_tasks().await,
+            baseline + 1,
+            "Interval throttle should still be running"
+        );
 
-        // Note: There's no way to stop an interval-based Throttle without a receiver.
-        // This is expected behavior - the task will run until the runtime exits.
-        // The task count will remain elevated.
+        throttle.abort();
+
+        assert_eq!(
+            await_alive_tasks(baseline).await,
+            baseline,
+            "abort should release the task"
+        );
     }
 
     #[tokio::test]
