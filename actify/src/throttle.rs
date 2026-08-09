@@ -29,8 +29,12 @@ impl<T: Clone> Throttled<T> for T {
     }
 }
 
-/// The runtime half of a [`Frequency`]: the [`Interval`] where the frequency
-/// has one, and the pending-event flag where it needs one.
+/// Holds the running [`Interval`], and for [`Frequency::OnEventWhen`] whether
+/// an event is waiting for the next tick.
+///
+/// [`Frequency`] is public configuration and stays a plain value. An
+/// [`Interval`] carries a schedule that has to survive across iterations, so
+/// the loop keeps this beside it.
 enum Timing {
     OnEvent,
     Interval(Interval),
@@ -62,35 +66,53 @@ impl Timing {
         }
     }
 
-    fn record_event(&mut self) {
-        if let Timing::OnEventWhen { event_pending, .. } = self {
-            *event_pending = true;
+    /// A value arrived. Returns whether to send it now.
+    fn on_value(&mut self) -> bool {
+        match self {
+            Timing::OnEvent => true,
+            Timing::Interval(_) => false,
+            Timing::OnEventWhen { event_pending, .. } => {
+                *event_pending = true;
+                false
+            }
         }
     }
 
-    /// Whether the callback fires, given whether this wake-up carried an event.
-    fn should_fire(&mut self, received_event: bool) -> bool {
+    /// The interval elapsed. Returns whether to send the stored value.
+    ///
+    /// Reaching this is itself the duration check: the tick only completes once
+    /// the period has passed, so `OnEventWhen` needs no comparison beyond
+    /// whether an event came in since the last send.
+    fn on_tick(&mut self) -> bool {
         match self {
-            Timing::OnEvent => received_event,
-            Timing::Interval(_) => !received_event,
-            Timing::OnEventWhen { event_pending, .. } => {
-                let fire = !received_event && *event_pending;
-                if fire {
-                    *event_pending = false;
-                }
-                fire
-            }
+            Timing::OnEvent => false,
+            Timing::Interval(_) => true,
+            Timing::OnEventWhen { event_pending, .. } => std::mem::take(event_pending),
         }
     }
 }
 
-/// `tokio::time::interval` fires its first tick immediately, and the throttle
-/// already fires once on startup. Resetting moves the first tick a full period
-/// out so the two do not land together.
+/// Moves the first tick a full period out.
+///
+/// `tokio::time::interval` completes its first tick immediately, and
+/// [`Throttle::run`] already sends the initial value before entering the loop,
+/// so without this an interval frequency sends twice at startup.
 fn interval_after(duration: Duration) -> Interval {
     let mut interval = time::interval(duration);
     interval.reset();
     interval
+}
+
+/// Why [`ThrottleState::next`] woke up.
+enum Wake {
+    /// The interval elapsed.
+    Tick,
+    /// A value arrived and is now stored.
+    Value,
+    /// Values were dropped. The next receive succeeds.
+    Lagged,
+    /// Every sender is gone.
+    Closed,
 }
 
 /// Owns the broadcast receiver and the timing, so the loop in
@@ -114,42 +136,45 @@ impl<T: Clone> ThrottleState<T> {
         }
     }
 
-    /// Returns `Some(true)` to fire the callback, `Some(false)` to skip this
-    /// iteration, and `None` once the sender is gone and the loop should exit.
+    /// Returns `Some(true)` to send the current value, `Some(false)` to skip
+    /// this iteration, and `None` once the sender is gone and the loop exits.
     async fn next(&mut self) -> Option<bool> {
         loop {
-            let received_event = tokio::select!(
-                _ = self.timing.tick() => false,
-                res = check_value(&mut self.val_rx) => {
-                    match res {
-                        Ok(val) => {
-                            self.current_val = Some(val);
-                            true
-                        }
-                        Err(RecvError::Closed) => {
-                            log::debug!(
-                                "Attached actor of type {} closed - exiting throttle",
-                                std::any::type_name::<T>()
-                            );
-                            return None;
-                        }
-                        Err(RecvError::Lagged(nr)) => {
-                            log::debug!(
-                                "Throttle of type {} lagged {nr} messages",
-                                std::any::type_name::<T>()
-                            );
-                            continue;
-                        }
-                    }
-                },
-            );
-
-            if received_event {
-                self.timing.record_event();
+            match self.wake().await {
+                Wake::Tick => return Some(self.timing.on_tick()),
+                Wake::Value => return Some(self.timing.on_value()),
+                Wake::Lagged => continue,
+                Wake::Closed => return None,
             }
-
-            return Some(self.timing.should_fire(received_event));
         }
+    }
+
+    /// Waits for whichever comes first, the interval or the next value, and
+    /// stores the value if that is what arrived.
+    async fn wake(&mut self) -> Wake {
+        tokio::select!(
+            _ = self.timing.tick() => Wake::Tick,
+            res = check_value(&mut self.val_rx) => match res {
+                Ok(val) => {
+                    self.current_val = Some(val);
+                    Wake::Value
+                }
+                Err(RecvError::Closed) => {
+                    log::debug!(
+                        "Attached actor of type {} closed - exiting throttle",
+                        std::any::type_name::<T>()
+                    );
+                    Wake::Closed
+                }
+                Err(RecvError::Lagged(nr)) => {
+                    log::debug!(
+                        "Throttle of type {} lagged {nr} messages",
+                        std::any::type_name::<T>()
+                    );
+                    Wake::Lagged
+                }
+            },
+        )
     }
 
     /// Parses the stored value into the callback's argument type, or `None` when
@@ -259,7 +284,8 @@ where
 
         let mut state = ThrottleState::new(frequency, val_rx, current_val);
 
-        // Always execute the call once in case it was initialized
+        // Send the initial value before the loop. Frequency::OnEvent has no
+        // interval, so a timer tick cannot cover this for every frequency.
         if let Some(val) = state.current::<F>() {
             call(&client, val);
         }
