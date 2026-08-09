@@ -762,6 +762,73 @@ mod tests {
         assert_eq!(cache.recv_newest().await, Err(CacheRecvNewestError::Closed));
     }
 
+    /// Fills the broadcast channel past its capacity, so the cache's receiver
+    /// is guaranteed to have missed updates. The channel may round its
+    /// capacity up internally, so twice the configured size is sent.
+    /// Returns the last value sent, which the channel always retains.
+    async fn overflow(handle: &Handle<i32>) -> i32 {
+        let last = (2 * crate::handles::CHANNEL_SIZE) as i32;
+        for i in 1..=last {
+            handle.set(i).await;
+        }
+        last
+    }
+
+    /// The FIFO receives report lag as an error, and the error leaves the
+    /// cached value untouched, as the [`CacheRecvError::Lagged`] docs state.
+    #[tokio::test(start_paused = true)]
+    async fn test_try_recv_reports_lag_and_keeps_the_value() {
+        let handle = Handle::new(0);
+        let mut cache = handle.create_cache().await;
+        cache.try_recv().unwrap(); // Consume first request
+
+        overflow(&handle).await;
+
+        let err = cache.try_recv().unwrap_err();
+        assert!(matches!(err, CacheRecvError::Lagged(n) if n > 0));
+        assert_eq!(cache.get_current(), &0);
+
+        // Reporting the lag repositions the receiver, so the cache keeps working
+        assert!(matches!(cache.try_recv(), Ok(Some(_))));
+    }
+
+    /// The awaiting FIFO variant reports the same error.
+    #[tokio::test(start_paused = true)]
+    async fn test_recv_reports_lag() {
+        let handle = Handle::new(0);
+        let mut cache = handle.create_cache().await;
+        cache.recv().await.unwrap(); // Consume first request
+
+        overflow(&handle).await;
+
+        let err = cache.recv().await.unwrap_err();
+        assert!(matches!(err, CacheRecvError::Lagged(n) if n > 0));
+    }
+
+    /// The newest variants exist for consumers too slow to keep up, so lag is
+    /// not an error there: they skip what was dropped and deliver the newest.
+    #[tokio::test(start_paused = true)]
+    async fn test_try_recv_newest_recovers_from_lag() {
+        let handle = Handle::new(0);
+        let mut cache = handle.create_cache().await;
+        cache.try_recv_newest().unwrap(); // Consume first request
+
+        let last = overflow(&handle).await;
+
+        assert_eq!(cache.try_recv_newest().unwrap(), Some(&last));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn test_recv_newest_recovers_from_lag() {
+        let handle = Handle::new(0);
+        let mut cache = handle.create_cache().await;
+        cache.recv_newest().await.unwrap(); // Consume first request
+
+        let last = overflow(&handle).await;
+
+        assert_eq!(cache.recv_newest().await.unwrap(), &last);
+    }
+
     #[tokio::test(start_paused = true)]
     async fn test_blocking_recv() {
         let handle = Handle::new(1);
