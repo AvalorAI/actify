@@ -16,13 +16,29 @@ use crate::{Frequency, Throttle, Throttled};
 ///
 /// # Cloning
 ///
-/// A clone is a fresh cache initialized with the original's current value:
-/// its first read delivers that snapshot, and it receives every broadcast
-/// made after its creation. Updates already queued in the original's
-/// receiver but not yet read stay with the original; they exist nowhere the
-/// clone can reach, since a new subscription starts at the channel tail. To
-/// start from the actor's actual current value instead of the original's
-/// last known one, use [`Handle::create_cache`](crate::Handle::create_cache).
+/// A clone behaves like a new cache created from the original's last known
+/// value: the first read returns that value, and broadcasts after the clone
+/// are received. Updates queued in the original but not yet read stay with
+/// the original. To include them in the clone's starting value, read them
+/// first with [`get_newest`](Self::get_newest):
+///
+/// ```
+/// # use actify::Handle;
+/// # #[tokio::main]
+/// # async fn main() {
+/// let handle = Handle::new(1);
+/// let mut cache = handle.create_cache().await;
+///
+/// handle.set(2).await; // Queued, not yet read by the cache
+///
+/// let stale = cache.clone(); // Starts from 1, the update stays behind
+/// cache.get_newest(); // Reads the queued update first
+/// let synced = cache.clone(); // Starts from 2
+///
+/// assert_eq!(stale.get_current(), &1);
+/// assert_eq!(synced.get_current(), &2);
+/// # }
+/// ```
 #[derive(Debug)]
 pub struct Cache<T> {
     inner: T,
