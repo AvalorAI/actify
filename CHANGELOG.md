@@ -14,6 +14,9 @@ they record what changed rather than why, and are not exhaustive. 0.8.0 through
 - `OptionHandle::take` and `OptionHandle::replace`, mirroring
   `std::option::Option::take` and `std::option::Option::replace` in both
   signature and behaviour.
+- `Cache::clone_newest`, which reads the updates queued in a cache before
+  cloning it, so both caches start from the newest broadcast value. A plain
+  clone leaves those updates with the original.
 - `Throttle::abort` and `Throttle::is_finished`. A throttle spawned by
   `Throttle::spawn_interval` has no actor attached, so before this nothing could
   stop it short of shutting down the runtime.

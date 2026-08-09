@@ -19,8 +19,7 @@ use crate::{Frequency, Throttle, Throttled};
 /// A clone behaves like a new cache created from the original's last known
 /// value: the first read returns that value, and broadcasts after the clone
 /// are received. Updates queued in the original but not yet read stay with
-/// the original. To include them in the clone's starting value, read them
-/// first with [`get_newest`](Self::get_newest):
+/// the original. Use [`clone_newest`](Self::clone_newest) to include them:
 ///
 /// ```
 /// # use actify::Handle;
@@ -32,8 +31,7 @@ use crate::{Frequency, Throttle, Throttled};
 /// handle.set(2).await; // Queued, not yet read by the cache
 ///
 /// let stale = cache.clone(); // Starts from 1, the update stays behind
-/// cache.get_newest(); // Reads the queued update first
-/// let synced = cache.clone(); // Starts from 2
+/// let synced = cache.clone_newest(); // Starts from 2
 ///
 /// assert_eq!(stale.get_current(), &1);
 /// assert_eq!(synced.get_current(), &2);
@@ -103,6 +101,45 @@ where
                 Err(TryRecvError::Closed) => return Err(CacheRecvNewestError::Closed),
                 Err(TryRecvError::Lagged(nr)) => log_lag::<T>(nr),
             }
+        }
+    }
+
+    /// Returns a clone starting from the newest broadcast value.
+    ///
+    /// Reads the updates queued in this cache first, so both caches start from
+    /// the same value. That read counts as receiving them: a later receive on
+    /// this cache returns only updates broadcast after this call. A plain
+    /// [`clone`](Clone::clone) leaves them with this cache instead.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use actify::Handle;
+    /// # #[tokio::main]
+    /// # async fn main() {
+    /// let handle = Handle::new(1);
+    /// let mut cache = handle.create_cache().await;
+    /// handle.set(2).await;
+    ///
+    /// let mut synced = cache.clone_newest();
+    /// assert_eq!(synced.get_current(), &2);
+    ///
+    /// // The queued update was read here too, so only later ones remain
+    /// assert_eq!(cache.get_current(), &2);
+    /// assert_eq!(cache.try_recv().unwrap(), Some(&2)); // Its first read
+    /// assert_eq!(cache.try_recv().unwrap(), None);
+    /// # }
+    /// ```
+    pub fn clone_newest(&mut self) -> Self {
+        // Subscribe before draining, so an update arriving in between reaches
+        // the clone instead of being lost. It may then be part of the initial
+        // value and still be delivered, which a first read absorbs.
+        let rx = self.rx.resubscribe();
+        _ = self.drain_to_newest();
+        Cache {
+            inner: self.inner.clone(),
+            rx,
+            first_request: true,
         }
     }
 
@@ -622,6 +659,29 @@ mod tests {
         assert_eq!(clone.try_recv().unwrap(), None);
         handle.set(3).await;
         assert_eq!(clone.try_recv().unwrap(), Some(&3));
+    }
+
+    /// clone_newest reads the queued updates before cloning, so the clone
+    /// starts from them rather than from the value the original last saw.
+    #[tokio::test(start_paused = true)]
+    async fn test_clone_newest_includes_queued_updates() {
+        let handle = Handle::new(1);
+        let mut cache = handle.create_cache().await;
+        assert_eq!(cache.recv().await.unwrap(), &1); // Consume first request
+
+        handle.set(2).await; // Queued in the original's receiver
+        let mut clone = cache.clone_newest();
+
+        assert_eq!(clone.try_recv().unwrap(), Some(&2));
+
+        // Reading counts for the original too, so the update is not served again
+        assert_eq!(cache.get_current(), &2);
+        assert_eq!(cache.try_recv().unwrap(), None);
+
+        // Both caches receive what the actor broadcasts from here on
+        handle.set(3).await;
+        assert_eq!(clone.try_recv().unwrap(), Some(&3));
+        assert_eq!(cache.try_recv().unwrap(), Some(&3));
     }
 
     #[tokio::test(start_paused = true)]
