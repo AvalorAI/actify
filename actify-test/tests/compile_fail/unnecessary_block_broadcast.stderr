@@ -1,4 +1,4 @@
-error: methods already broadcast by default; `#[actify(broadcast)]` is unnecessary
+error: `#[actify(broadcast)]` is not supported; methods taking &mut self broadcast by default, and a method taking &self opts in with `#[actify::broadcast]`
  --> tests/compile_fail/unnecessary_block_broadcast.rs:7:10
   |
 7 | #[actify(broadcast)]

@@ -32,6 +32,7 @@ fn compile_fail_tests() {
 
     // Superfluous broadcast attributes
     t.compile_fail("tests/compile_fail/superfluous_skip_broadcast.rs");
+    t.compile_fail("tests/compile_fail/superfluous_skip_broadcast_ref_self.rs");
     t.compile_fail("tests/compile_fail/superfluous_broadcast.rs");
     t.compile_fail("tests/compile_fail/unnecessary_block_broadcast.rs");
 

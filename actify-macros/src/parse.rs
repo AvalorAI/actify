@@ -99,8 +99,8 @@ pub struct MethodInfo {
     pub is_mutable: bool,
     /// Whether the method is async.
     pub is_async: bool,
-    /// Whether `#[actify::skip_broadcast]` is present.
-    pub skip_broadcast: bool,
+    /// Whether the generated method broadcasts after calling the actor method.
+    pub broadcasts: bool,
     /// Argument identifiers. For destructuring patterns a positional name is generated.
     pub arg_names: Punctuated<Ident, Comma>,
     /// Argument types.
@@ -134,7 +134,10 @@ impl MethodInfo {
 
         let mut errors = None;
 
-        if skip_all_broadcasts {
+        // A `&self` method cannot change the state, so it only broadcasts when
+        // asked to. Interior mutability and a custom `to_broadcast` are the
+        // cases where that is meaningful.
+        let broadcasts = if skip_all_broadcasts {
             if let Some(attr) = skip_attr {
                 accumulate(
                     &mut errors,
@@ -144,20 +147,29 @@ impl MethodInfo {
                     ),
                 );
             }
-        } else if let Some(attr) = broadcast_attr {
-            accumulate(
-                &mut errors,
-                Error::new(
-                    attr.span(),
-                    "#[broadcast] is superfluous: methods already broadcast by default; use #[actify(skip_broadcast)] on the impl block to change the default",
-                ),
-            );
-        }
-
-        let skip_broadcast = if skip_all_broadcasts {
-            broadcast_attr.is_none()
+            broadcast_attr.is_some()
+        } else if is_mutable {
+            if let Some(attr) = broadcast_attr {
+                accumulate(
+                    &mut errors,
+                    Error::new(
+                        attr.span(),
+                        "#[broadcast] is superfluous: methods taking &mut self broadcast by default",
+                    ),
+                );
+            }
+            skip_attr.is_none()
         } else {
-            skip_attr.is_some()
+            if let Some(attr) = skip_attr {
+                accumulate(
+                    &mut errors,
+                    Error::new(
+                        attr.span(),
+                        "#[skip_broadcast] is superfluous: methods taking &self do not broadcast; use #[actify::broadcast] to opt in",
+                    ),
+                );
+            }
+            broadcast_attr.is_some()
         };
 
         if let Err(error) = validate_signature_modifiers(method) {
@@ -195,7 +207,7 @@ impl MethodInfo {
             ident,
             is_mutable,
             is_async,
-            skip_broadcast,
+            broadcasts,
             arg_names,
             arg_types,
             output_type,

@@ -30,7 +30,7 @@ By generating the boilerplate code for you, a few key benefits are provided:
 - Typed arguments and return values on the methods from your actor, exposed through each handle.
 - No need to manually define message structs or enums!
 - Built-in methods like `get()`, `set()`, `set_if_changed()`, and `subscribe()` even without using the macro.
-- Automatic broadcasting of state changes to subscribers, with `#[actify::skip_broadcast]` and `#[actify::broadcast]` controls.
+- Automatic broadcasting to subscribers from methods taking `&mut self`, with `#[actify::broadcast]` and `#[actify::skip_broadcast]` overrides.
 - Local synchronization through `Cache`, with `recv`, `recv_newest`, and non-blocking variants.
 - Rate-limited updates through `Throttle` with configurable `Frequency`.
 - Generic type parameters supported in both actor types and method arguments.

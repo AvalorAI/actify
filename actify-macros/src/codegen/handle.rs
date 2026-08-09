@@ -109,10 +109,10 @@ fn method_body(
         None
     };
 
-    let broadcast = if method.skip_broadcast {
-        None
-    } else {
+    let broadcast = if method.broadcasts {
         Some(quote! { __actify_s.broadcast(#ident_string); })
+    } else {
+        None
     };
 
     // The __actify_ prefix prevents collisions with user argument names, which

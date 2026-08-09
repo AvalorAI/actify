@@ -74,3 +74,24 @@ where
         self.drain(range).collect()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::Handle;
+
+    /// Reading the length leaves the vector untouched. The `push` afterwards
+    /// proves the subscription is live and the first assertion did not pass by
+    /// accident.
+    #[tokio::test]
+    async fn test_getter_does_not_broadcast() {
+        let handle = Handle::new(vec![1, 2, 3]);
+        let mut rx = handle.subscribe();
+
+        assert!(!handle.is_empty().await);
+        assert!(rx.try_recv().is_err());
+
+        handle.push(4).await;
+        assert_eq!(rx.recv().await.unwrap(), vec![1, 2, 3, 4]);
+    }
+}
