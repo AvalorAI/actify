@@ -158,11 +158,12 @@ where
     /// Creates a new [`Handle`] and initializes a corresponding [`Throttle`].
     /// The throttle fires given a specified [`Frequency`].
     /// See [`Handle::spawn_throttle`] for an example.
-    pub fn new_throttled<C, F>(val: T, client: C, call: fn(&C, F), freq: Frequency) -> Handle<T, V>
+    pub fn new_throttled<C, F, Fun>(val: T, client: C, call: Fun, freq: Frequency) -> Handle<T, V>
     where
         C: Send + Sync + 'static,
         V: Throttled<F>,
         F: Send + Sync + 'static,
+        Fun: Fn(&C, F) + Send + 'static,
     {
         let init = val.to_broadcast();
         let handle = Self::new(val);
@@ -514,6 +515,9 @@ where
     /// The broadcast type must implement [`Throttled<F>`](crate::Throttled) to
     /// convert the value into the callback argument.
     ///
+    /// `call` is any `Fn(&C, F)`, so it can be a method such as `Logger::log`
+    /// below, or a closure holding captured state.
+    ///
     /// # Examples
     ///
     /// ```
@@ -542,16 +546,12 @@ where
     /// Panics if the actor has stopped, either because one of its methods
     /// panicked or because its runtime shut down. See [Actor lifetime and
     /// panics](crate#actor-lifetime-and-panics).
-    pub async fn spawn_throttle<C, F>(
-        &self,
-        client: C,
-        call: fn(&C, F),
-        freq: Frequency,
-    ) -> Throttle
+    pub async fn spawn_throttle<C, F, Fun>(&self, client: C, call: Fun, freq: Frequency) -> Throttle
     where
         C: Send + Sync + 'static,
         V: Throttled<F>,
         F: Send + Sync + 'static,
+        Fun: Fn(&C, F) + Send + 'static,
     {
         // Subscribe before get, so an update arriving in between is queued rather than lost.
         let receiver = self.subscribe();

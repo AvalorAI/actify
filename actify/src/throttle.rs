@@ -212,27 +212,25 @@ fn store<T>(current: &mut Option<T>, received: Result<T, RecvError>) -> Wake {
 }
 
 /// The parameters a spawned throttle task owns for its lifetime.
-struct ThrottleTask<C, T, F> {
+///
+/// `F` is fixed by `Fun` rather than stored, so it is a parameter of
+/// [`Self::spawn`] instead of the struct.
+struct ThrottleTask<C, T, Fun> {
     frequency: Frequency,
     client: C,
-    call: fn(&C, F),
+    call: Fun,
     val_rx: Option<broadcast::Receiver<T>>,
     current_val: Option<T>,
 }
 
-impl<C, T, F> ThrottleTask<C, T, F>
-where
-    C: Send + Sync + 'static,
-    T: Clone + Throttled<F> + Send + Sync + 'static,
-    F: Send + Sync + 'static,
-{
-    fn spawn(self) -> Throttle {
-        Throttle {
-            task: tokio::spawn(self.run()).abort_handle(),
-        }
-    }
-
-    async fn run(self) {
+impl<C, T, Fun> ThrottleTask<C, T, Fun> {
+    fn spawn<F>(self) -> Throttle
+    where
+        C: Send + Sync + 'static,
+        T: Clone + Throttled<F> + Send + Sync + 'static,
+        F: Send + Sync + 'static,
+        Fun: Fn(&C, F) + Send + 'static,
+    {
         let ThrottleTask {
             frequency,
             client,
@@ -241,16 +239,22 @@ where
             current_val,
         } = self;
 
-        let mut state = ThrottleState::new(frequency, val_rx, current_val);
+        let task = tokio::spawn(async move {
+            let mut state = ThrottleState::new(frequency, val_rx, current_val);
 
-        // Send the initial value before the loop. Frequency::OnEvent has no
-        // interval, so a timer tick cannot cover this for every frequency.
-        if let Some(value) = state.current::<F>() {
-            call(&client, value);
-        }
+            // Send the initial value before the loop. Frequency::OnEvent has no
+            // interval, so a timer tick cannot cover this for every frequency.
+            if let Some(value) = state.current::<F>() {
+                call(&client, value);
+            }
 
-        while let Some(value) = state.next::<F>().await {
-            call(&client, value);
+            while let Some(value) = state.next::<F>().await {
+                call(&client, value);
+            }
+        });
+
+        Throttle {
+            task: task.abort_handle(),
         }
     }
 }
@@ -281,9 +285,9 @@ impl Throttle {
     /// [`Handle::spawn_throttle`](crate::Handle::spawn_throttle) and
     /// [`Cache::spawn_throttle`](crate::Cache::spawn_throttle) take the
     /// receiver without losing updates during setup.
-    pub fn spawn_from_receiver<C, T, F>(
+    pub fn spawn_from_receiver<C, T, F, Fun>(
         client: C,
-        call: fn(&C, F),
+        call: Fun,
         frequency: Frequency,
         receiver: Receiver<T>,
         init: Option<T>,
@@ -292,6 +296,7 @@ impl Throttle {
         C: Send + Sync + 'static,
         T: Clone + Throttled<F> + Send + Sync + 'static,
         F: Send + Sync + 'static,
+        Fun: Fn(&C, F) + Send + 'static,
     {
         ThrottleTask {
             frequency,
@@ -308,9 +313,9 @@ impl Throttle {
     /// No actor is attached, so nothing ends the task on its own. It runs until
     /// [`abort`](Self::abort) or the runtime shuts down.
     #[must_use = "without this handle the interval task cannot be stopped"]
-    pub fn spawn_interval<C, T, F>(
+    pub fn spawn_interval<C, T, F, Fun>(
         client: C,
-        call: fn(&C, F),
+        call: Fun,
         interval: Duration,
         val: T,
     ) -> Throttle
@@ -318,6 +323,7 @@ impl Throttle {
         C: Send + Sync + 'static,
         T: Clone + Throttled<F> + Send + Sync + 'static,
         F: Send + Sync + 'static,
+        Fun: Fn(&C, F) + Send + 'static,
     {
         ThrottleTask {
             frequency: Frequency::Interval(interval),
@@ -871,6 +877,26 @@ mod tests {
             after_flood + 1,
             "the throttle stopped after lagging"
         );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn test_a_capturing_closure_is_accepted() {
+        let handle = Handle::new(1);
+        let seen = Arc::new(Mutex::new(Vec::new()));
+
+        let captured = Arc::clone(&seen);
+        let _throttle = handle
+            .spawn_throttle(
+                (),
+                move |_: &(), value: i32| captured.lock().unwrap().push(value),
+                Frequency::OnEvent,
+            )
+            .await;
+
+        handle.set(2).await;
+        sleep(PERIOD).await;
+
+        assert_eq!(*seen.lock().unwrap(), vec![1, 2]);
     }
 
     #[tokio::test(start_paused = true)]
