@@ -711,6 +711,37 @@ mod tests {
         );
     }
 
+    /// A caller that stops waiting must not stop the actor. Wrapping a call
+    /// in a timeout or a select drops the future, which drops the response
+    /// channel while the job is still queued or running.
+    #[tokio::test(start_paused = true)]
+    async fn test_abandoned_call_does_not_stop_the_actor() {
+        let handle = Handle::new(SlowActor {});
+
+        let slow = handle.clone();
+        let abandoned =
+            tokio::time::timeout(std::time::Duration::from_millis(10), slow.linger()).await;
+        assert!(abandoned.is_err(), "the call should have timed out");
+
+        // The actor finishes the abandoned job with nobody listening, and
+        // still serves the next caller
+        assert_eq!(handle.quick().await, 7);
+    }
+
+    #[derive(Debug, Clone)]
+    struct SlowActor {}
+
+    #[actify_macros::actify]
+    impl SlowActor {
+        async fn linger(&self) {
+            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+        }
+
+        fn quick(&self) -> i32 {
+            7
+        }
+    }
+
     /// Payloads distinctive enough that a test can tell whose panic it caught:
     /// the actor's own, or the one the handle raises on the caller's behalf.
     const SYNC_PANIC_PAYLOAD: &str = "sync actor method blew up";
