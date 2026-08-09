@@ -10,7 +10,8 @@ pub enum Frequency {
     OnEvent,
     /// Fires every interval, regardless of incoming events.
     Interval(Duration),
-    /// Fires for an event only after the interval has passed. Designed for high-throughput types.
+    /// Sends at most once per interval, and only when a new value arrived since
+    /// the last send. Designed for high-throughput types.
     OnEventWhen(Duration),
 }
 
@@ -29,12 +30,8 @@ impl<T: Clone> Throttled<T> for T {
     }
 }
 
-/// Holds the running [`Interval`], and for [`Frequency::OnEventWhen`] whether
-/// an event is waiting for the next tick.
-///
-/// [`Frequency`] is public configuration and stays a plain value. An
-/// [`Interval`] carries a schedule that has to survive across iterations, so
-/// the loop keeps this beside it.
+/// The interval a [`Frequency`] runs on, and for [`Frequency::OnEventWhen`]
+/// whether a value arrived since the last send.
 enum Timing {
     OnEvent,
     Interval(Interval),
@@ -136,44 +133,37 @@ impl<T: Clone> ThrottleState<T> {
         }
     }
 
-    /// Returns `Some(true)` to send the current value, `Some(false)` to skip
-    /// this iteration, and `None` once the sender is gone and the loop exits.
-    async fn next(&mut self) -> Option<bool> {
+    /// Waits until there is a value to send, and returns it. Returns `None`
+    /// once every sender is gone, which ends the throttle.
+    async fn next<F>(&mut self) -> Option<F>
+    where
+        T: Throttled<F>,
+    {
         loop {
-            match self.wake().await {
-                Wake::Tick => return Some(self.timing.on_tick()),
-                Wake::Value => return Some(self.timing.on_value()),
-                Wake::Lagged => continue,
+            let ready = match self.wake().await {
+                Wake::Tick => self.timing.on_tick(),
+                Wake::Value => self.timing.on_value(),
+                Wake::Lagged => false,
                 Wake::Closed => return None,
+            };
+
+            if !ready {
+                continue;
+            }
+
+            // An interval keeps ticking before the first value arrives, and
+            // there is nothing to send until it does.
+            if let Some(value) = self.current::<F>() {
+                return Some(value);
             }
         }
     }
 
-    /// Waits for whichever comes first, the interval or the next value, and
-    /// stores the value if that is what arrived.
+    /// Waits for whichever comes first, the interval or the next value.
     async fn wake(&mut self) -> Wake {
         tokio::select!(
             _ = self.timing.tick() => Wake::Tick,
-            res = check_value(&mut self.val_rx) => match res {
-                Ok(val) => {
-                    self.current_val = Some(val);
-                    Wake::Value
-                }
-                Err(RecvError::Closed) => {
-                    log::debug!(
-                        "Attached actor of type {} closed - exiting throttle",
-                        std::any::type_name::<T>()
-                    );
-                    Wake::Closed
-                }
-                Err(RecvError::Lagged(nr)) => {
-                    log::debug!(
-                        "Throttle of type {} lagged {nr} messages",
-                        std::any::type_name::<T>()
-                    );
-                    Wake::Lagged
-                }
-            },
+            received = recv_value(&mut self.val_rx) => store(&mut self.current_val, received),
         )
     }
 
@@ -187,13 +177,37 @@ impl<T: Clone> ThrottleState<T> {
     }
 }
 
-async fn check_value<T: Clone>(
-    val_rx: &mut Option<broadcast::Receiver<T>>,
-) -> Result<T, RecvError> {
+/// Waits for the next broadcast value, or forever when the throttle has no
+/// receiver, as [`Throttle::spawn_interval`] does.
+async fn recv_value<T: Clone>(val_rx: &mut Option<broadcast::Receiver<T>>) -> Result<T, RecvError> {
     if let Some(rx) = val_rx {
         rx.recv().await
     } else {
         std::future::pending::<Result<T, RecvError>>().await
+    }
+}
+
+/// Records a received value, or reports why none arrived.
+fn store<T>(current: &mut Option<T>, received: Result<T, RecvError>) -> Wake {
+    match received {
+        Ok(value) => {
+            *current = Some(value);
+            Wake::Value
+        }
+        Err(RecvError::Closed) => {
+            log::debug!(
+                "Attached actor of type {} closed - exiting throttle",
+                std::any::type_name::<T>()
+            );
+            Wake::Closed
+        }
+        Err(RecvError::Lagged(nr)) => {
+            log::debug!(
+                "Throttle of type {} lagged {nr} messages",
+                std::any::type_name::<T>()
+            );
+            Wake::Lagged
+        }
     }
 }
 
@@ -286,17 +300,12 @@ where
 
         // Send the initial value before the loop. Frequency::OnEvent has no
         // interval, so a timer tick cannot cover this for every frequency.
-        if let Some(val) = state.current::<F>() {
-            call(&client, val);
+        if let Some(value) = state.current::<F>() {
+            call(&client, value);
         }
 
-        while let Some(should_fire) = state.next().await {
-            if !should_fire {
-                continue;
-            }
-            if let Some(val) = state.current::<F>() {
-                call(&client, val);
-            }
+        while let Some(value) = state.next::<F>().await {
+            call(&client, value);
         }
     }
 }
@@ -306,8 +315,17 @@ mod tests {
     use crate::Handle;
 
     use super::*;
+    use std::future::Future;
     use std::sync::{Arc, Mutex};
-    use tokio::time::{Duration, Instant, sleep};
+    use tokio::time::{Duration, Instant, sleep, timeout};
+
+    const PERIOD: Duration = Duration::from_millis(100);
+
+    /// Whether the future is still waiting after several periods. The clock is
+    /// paused in these tests, so the wait costs no real time.
+    async fn still_waiting<T>(future: impl Future<Output = T>) -> bool {
+        timeout(PERIOD * 10, future).await.is_err()
+    }
 
     /// Driving `ThrottleState` directly reaches the receiver outcomes that a
     /// spawned throttle hides: a closed sender and a lagging one.
@@ -315,57 +333,63 @@ mod tests {
         use super::*;
 
         #[tokio::test(start_paused = true)]
-        async fn test_on_event_fires_on_message() {
+        async fn test_on_event_sends_the_value_immediately() {
             let (tx, rx) = broadcast::channel(8);
             let mut state = ThrottleState::<i32>::new(Frequency::OnEvent, Some(rx), None);
 
             tx.send(42).unwrap();
-            assert_eq!(state.next().await, Some(true));
-            assert_eq!(state.current::<i32>(), Some(42));
+            let start = Instant::now();
+
+            assert_eq!(state.next::<i32>().await, Some(42));
+            assert_eq!(start.elapsed(), Duration::ZERO);
         }
 
         #[tokio::test(start_paused = true)]
-        async fn test_interval_fires_without_events() {
+        async fn test_interval_repeats_the_value_without_events() {
             let (_tx, rx) = broadcast::channel::<i32>(8);
-            let mut state = ThrottleState::new(
-                Frequency::Interval(Duration::from_millis(100)),
-                Some(rx),
-                Some(1),
-            );
+            let mut state = ThrottleState::new(Frequency::Interval(PERIOD), Some(rx), Some(1));
 
-            assert_eq!(state.next().await, Some(true));
-            assert_eq!(state.next().await, Some(true));
+            assert_eq!(state.next::<i32>().await, Some(1));
+            assert_eq!(state.next::<i32>().await, Some(1));
         }
 
-        /// Under Interval the event itself does not fire the callback, but the
-        /// value it carried is what the next tick sends.
+        /// The ticks still happen, but there is nothing to send until a value
+        /// arrives, so nothing reaches the callback.
         #[tokio::test(start_paused = true)]
-        async fn test_interval_stores_event_without_firing() {
+        async fn test_interval_sends_nothing_before_the_first_value() {
+            let (_tx, rx) = broadcast::channel::<i32>(8);
+            let mut state = ThrottleState::new(Frequency::Interval(PERIOD), Some(rx), None);
+
+            assert!(still_waiting(state.next::<i32>()).await);
+        }
+
+        /// An event does not send under Interval. The value it carried waits
+        /// for the next tick, one full period away.
+        #[tokio::test(start_paused = true)]
+        async fn test_interval_holds_an_event_until_the_tick() {
             let (tx, rx) = broadcast::channel(8);
-            let mut state = ThrottleState::new(
-                Frequency::Interval(Duration::from_millis(100)),
-                Some(rx),
-                Some(1),
-            );
+            let mut state = ThrottleState::new(Frequency::Interval(PERIOD), Some(rx), None);
 
             tx.send(42).unwrap();
-            assert_eq!(state.next().await, Some(false));
-            assert_eq!(state.current::<i32>(), Some(42));
+            let start = Instant::now();
+
+            assert_eq!(state.next::<i32>().await, Some(42));
+            assert_eq!(start.elapsed(), PERIOD);
         }
 
         #[tokio::test(start_paused = true)]
-        async fn test_on_event_when_fires_after_the_interval() {
+        async fn test_on_event_when_sends_on_the_tick_after_an_event() {
             let (tx, rx) = broadcast::channel(8);
-            let mut state = ThrottleState::new(
-                Frequency::OnEventWhen(Duration::from_millis(100)),
-                Some(rx),
-                None,
-            );
+            let mut state = ThrottleState::new(Frequency::OnEventWhen(PERIOD), Some(rx), None);
 
             tx.send(42).unwrap();
-            assert_eq!(state.next().await, Some(false)); // event stored, interval not elapsed
-            assert_eq!(state.next().await, Some(true)); // interval elapsed
-            assert_eq!(state.next().await, Some(false)); // no new event since firing
+            let start = Instant::now();
+
+            assert_eq!(state.next::<i32>().await, Some(42));
+            assert_eq!(start.elapsed(), PERIOD);
+
+            // Nothing new arrived, so the following ticks send nothing.
+            assert!(still_waiting(state.next::<i32>()).await);
         }
 
         #[tokio::test(start_paused = true)]
@@ -374,22 +398,30 @@ mod tests {
             let mut state = ThrottleState::new(Frequency::OnEvent, Some(rx), None);
 
             drop(tx);
-            assert_eq!(state.next().await, None);
+            assert_eq!(state.next::<i32>().await, None);
         }
 
-        /// Overflowing the channel makes the receiver report Lagged. The state
-        /// swallows it and delivers the next value rather than exiting.
+        /// A broadcast channel keeps only its last `capacity` values. Sending
+        /// more than that without receiving drops the rest and the next receive
+        /// reports [`RecvError::Lagged`] instead of a value.
+        ///
+        /// The state swallows that and receives again, which yields the oldest
+        /// value the channel still holds. Here 10 values are sent into a
+        /// channel holding 2, so 8 and 9 survive and 8 comes out first.
         #[tokio::test(start_paused = true)]
         async fn test_continues_after_lagging() {
-            let (tx, rx) = broadcast::channel(2);
+            const CAPACITY: usize = 2;
+            const SENT: i32 = 10;
+
+            let (tx, rx) = broadcast::channel(CAPACITY);
             let mut state = ThrottleState::<i32>::new(Frequency::OnEvent, Some(rx), None);
 
-            for i in 0..10 {
-                tx.send(i).unwrap();
+            for value in 0..SENT {
+                tx.send(value).unwrap();
             }
 
-            assert_eq!(state.next().await, Some(true));
-            assert_eq!(state.current::<i32>(), Some(8));
+            let oldest_kept = SENT - CAPACITY as i32;
+            assert_eq!(state.next::<i32>().await, Some(oldest_kept));
         }
 
         #[tokio::test(start_paused = true)]
@@ -406,6 +438,54 @@ mod tests {
             let state = ThrottleState::<i32>::new(Frequency::OnEvent, Some(rx), None);
 
             assert_eq!(state.current::<i32>(), None);
+        }
+    }
+
+    /// The startup send and the interval's first tick both want to happen at
+    /// t=0. A refactor that drops the reset in `interval_after` sends the
+    /// initial value twice, which these pin down per frequency.
+    mod initial_value {
+        use super::*;
+
+        #[tokio::test(start_paused = true)]
+        async fn test_interval_sends_it_once_then_resumes_on_the_period() {
+            let counter = CounterClient::new();
+            Throttle::spawn_interval(counter.clone(), CounterClient::call, PERIOD, 1);
+
+            sleep(PERIOD / 2).await;
+            assert_eq!(*counter.count.lock().unwrap(), 1, "startup send duplicated");
+
+            sleep(PERIOD).await;
+            assert_eq!(*counter.count.lock().unwrap(), 2, "first tick missing");
+        }
+
+        #[tokio::test(start_paused = true)]
+        async fn test_on_event_when_sends_it_once_and_stays_quiet() {
+            let handle = Handle::new(1);
+            let counter = CounterClient::new();
+            handle
+                .spawn_throttle(
+                    counter.clone(),
+                    CounterClient::call,
+                    Frequency::OnEventWhen(PERIOD),
+                )
+                .await;
+
+            // Several ticks pass with no value arriving after the startup send.
+            sleep(PERIOD * 3).await;
+            assert_eq!(*counter.count.lock().unwrap(), 1);
+        }
+
+        #[tokio::test(start_paused = true)]
+        async fn test_on_event_sends_it_once_and_stays_quiet() {
+            let handle = Handle::new(1);
+            let counter = CounterClient::new();
+            handle
+                .spawn_throttle(counter.clone(), CounterClient::call, Frequency::OnEvent)
+                .await;
+
+            sleep(PERIOD * 3).await;
+            assert_eq!(*counter.count.lock().unwrap(), 1);
         }
     }
 
