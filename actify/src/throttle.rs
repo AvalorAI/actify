@@ -649,7 +649,7 @@ mod tests {
     async fn test_throttle_from_cache() {
         let handle = Handle::new(1);
         let counter = CounterClient::new();
-        let cache = handle.create_cache().await;
+        let mut cache = handle.create_cache().await;
 
         // Spawn throttle that should only activate once on creation
         cache.spawn_throttle(counter.clone(), CounterClient::call, Frequency::OnEvent);
