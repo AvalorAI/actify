@@ -630,8 +630,35 @@ mod tests {
     mod async_calls {
         use super::*;
 
+        use tokio::sync::mpsc;
+
         type Log = Arc<Mutex<Vec<&'static str>>>;
-        type Values = Arc<Mutex<Vec<i32>>>;
+
+        /// Forwards values downstream, which is a real await: the send waits
+        /// once the consumer is behind by more than the channel holds.
+        #[derive(Clone)]
+        struct Writer {
+            sink: mpsc::Sender<i32>,
+        }
+
+        impl Writer {
+            async fn write(self, value: i32) {
+                let _ = self.sink.send(value).await;
+            }
+        }
+
+        fn writer() -> (Writer, mpsc::Receiver<i32>) {
+            let (sink, received) = mpsc::channel(8);
+            (Writer { sink }, received)
+        }
+
+        /// Waits for one forwarded value, failing rather than hanging when the
+        /// throttle never sends it.
+        async fn next_written(received: &mut mpsc::Receiver<i32>) -> Option<i32> {
+            timeout(PERIOD * 10, received.recv())
+                .await
+                .expect("the throttle sent nothing")
+        }
 
         #[tokio::test(start_paused = true)]
         async fn test_a_call_finishes_before_the_next_one_starts() {
@@ -670,7 +697,7 @@ mod tests {
         #[tokio::test(start_paused = true)]
         async fn test_an_update_during_construction_is_not_lost() {
             let handle = Handle::new(1);
-            let seen: Values = Arc::new(Mutex::new(Vec::new()));
+            let (writer, mut received) = writer();
 
             let update_handle = handle.clone();
             // On the current-thread test runtime this task first runs when
@@ -679,67 +706,42 @@ mod tests {
             let update = tokio::spawn(async move { update_handle.set(2).await });
 
             let _throttle = handle
-                .spawn_async_throttle(
-                    Arc::clone(&seen),
-                    |seen: Values, value: i32| async move {
-                        seen.lock().unwrap().push(value);
-                    },
-                    Frequency::OnEvent,
-                )
+                .spawn_async_throttle(writer, Writer::write, Frequency::OnEvent)
                 .await;
 
             update.await.unwrap();
-            sleep(PERIOD).await;
 
-            assert_eq!(*seen.lock().unwrap(), vec![1, 2]);
-        }
-
-        #[derive(Clone)]
-        struct Database {
-            rows: Values,
-        }
-
-        impl Database {
-            async fn insert(self, value: i32) {
-                self.rows.lock().unwrap().push(value);
-            }
+            assert_eq!(next_written(&mut received).await, Some(1));
+            assert_eq!(next_written(&mut received).await, Some(2));
         }
 
         #[tokio::test(start_paused = true)]
         async fn test_an_async_method_can_be_the_callback() {
             let handle = Handle::new(1);
-            let database = Database {
-                rows: Arc::new(Mutex::new(Vec::new())),
-            };
+            let (writer, mut received) = writer();
 
             let _throttle = handle
-                .spawn_async_throttle(database.clone(), Database::insert, Frequency::OnEvent)
+                .spawn_async_throttle(writer, Writer::write, Frequency::OnEvent)
                 .await;
 
             handle.set(2).await;
-            sleep(PERIOD).await;
 
-            assert_eq!(*database.rows.lock().unwrap(), vec![1, 2]);
+            assert_eq!(next_written(&mut received).await, Some(1));
+            assert_eq!(next_written(&mut received).await, Some(2));
         }
 
         #[tokio::test(start_paused = true)]
         async fn test_a_cache_can_spawn_one() {
             let handle = Handle::new(1);
             let cache = handle.create_cache().await;
-            let seen: Values = Arc::new(Mutex::new(Vec::new()));
+            let (writer, mut received) = writer();
 
-            let _throttle = cache.spawn_async_throttle(
-                Arc::clone(&seen),
-                |seen: Values, value: i32| async move {
-                    seen.lock().unwrap().push(value);
-                },
-                Frequency::OnEvent,
-            );
+            let _throttle = cache.spawn_async_throttle(writer, Writer::write, Frequency::OnEvent);
 
             handle.set(2).await;
-            sleep(PERIOD).await;
 
-            assert_eq!(*seen.lock().unwrap(), vec![1, 2]);
+            assert_eq!(next_written(&mut received).await, Some(1));
+            assert_eq!(next_written(&mut received).await, Some(2));
         }
     }
 

@@ -567,43 +567,45 @@ where
     ///
     /// # Examples
     ///
-    /// An async method on the client is passed directly:
+    /// An async method on the client is passed directly. Here each update is
+    /// forwarded to a channel, which waits when the consumer falls behind:
     ///
     /// ```
     /// # use actify::{Handle, Frequency};
-    /// # use std::sync::{Arc, Mutex};
+    /// # use tokio::sync::mpsc;
     /// # #[tokio::main]
     /// # async fn main() {
     /// #[derive(Clone)]
-    /// struct Database {
-    ///     rows: Arc<Mutex<Vec<i32>>>,
+    /// struct Forwarder {
+    ///     sink: mpsc::Sender<i32>,
     /// }
     ///
-    /// impl Database {
-    ///     async fn insert(self, value: i32) {
-    ///         self.rows.lock().unwrap().push(value);
+    /// impl Forwarder {
+    ///     async fn forward(self, value: i32) {
+    ///         let _ = self.sink.send(value).await;
     ///     }
     /// }
     ///
+    /// let (sink, mut received) = mpsc::channel(8);
     /// let handle = Handle::new(1);
-    /// let database = Database { rows: Arc::new(Mutex::new(Vec::new())) };
     ///
     /// let throttle = handle
-    ///     .spawn_async_throttle(database.clone(), Database::insert, Frequency::OnEvent)
+    ///     .spawn_async_throttle(Forwarder { sink }, Forwarder::forward, Frequency::OnEvent)
     ///     .await;
     ///
     /// handle.set(2).await;
-    /// tokio::time::sleep(std::time::Duration::from_millis(50)).await;
     ///
-    /// assert_eq!(*database.rows.lock().unwrap(), vec![1, 2]);
+    /// assert_eq!(received.recv().await, Some(1));
+    /// assert_eq!(received.recv().await, Some(2));
     /// throttle.abort();
     /// # }
     /// ```
     ///
     /// The method takes `self`, so the client is cloned once per call and should
-    /// keep its state behind an [`Arc`](std::sync::Arc), as `Database` does. A
-    /// method taking `&self` does not match `Fn(C, F)`; wrap it in a closure
-    /// such as `|db: Arc<Database>, value| async move { db.insert(value).await }`.
+    /// keep anything expensive behind an [`Arc`](std::sync::Arc). A `mpsc::Sender`
+    /// is already a cheap clone. A method taking `&self` does not match
+    /// `Fn(C, F)`; wrap it in a closure such as
+    /// `|client: Arc<Db>, value| async move { client.insert(value).await }`.
     ///
     /// # Panics
     ///
