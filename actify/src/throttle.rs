@@ -439,6 +439,44 @@ mod tests {
         assert_eq!(time, 0);
     }
 
+    /// A lagging receiver reports the dropped messages once and then serves
+    /// the retained ones, so the throttle must treat lag as a hiccup rather
+    /// than a reason to stop.
+    #[tokio::test(start_paused = true)]
+    async fn test_throttle_survives_lag() {
+        let (tx, rx) = broadcast::channel(1);
+        let counter = CounterClient::new();
+
+        Throttle::spawn_from_receiver(
+            counter.clone(),
+            CounterClient::call,
+            Frequency::OnEvent,
+            rx,
+            None,
+        );
+
+        // The sends are synchronous, so the receiver holds only the newest
+        // message and reports the rest as lag
+        for i in 1..=5 {
+            tx.send(i).unwrap();
+        }
+        sleep(Duration::from_millis(10)).await;
+
+        let after_flood = *counter.count.lock().unwrap();
+        assert!(after_flood >= 1, "the retained message was not delivered");
+
+        // The throttle is still running and picks up the next event
+        tx.send(6).unwrap();
+        sleep(Duration::from_millis(10)).await;
+
+        let after_next = *counter.count.lock().unwrap();
+        assert_eq!(
+            after_next,
+            after_flood + 1,
+            "the throttle stopped after lagging"
+        );
+    }
+
     #[tokio::test(start_paused = true)]
     async fn test_throttle_parsing() {
         // Parsing to self should succeed
