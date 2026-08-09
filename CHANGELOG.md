@@ -9,6 +9,12 @@ they record what changed rather than why, and are not exhaustive. 0.8.0 through
 
 ## [Unreleased]
 
+### Added
+
+- `OptionHandle::take` and `OptionHandle::replace`, mirroring
+  `std::option::Option::take` and `std::option::Option::replace` in both
+  signature and behaviour.
+
 ### Changed
 
 - **Breaking:** methods taking `&self` no longer broadcast. Broadcasting follows
