@@ -564,30 +564,46 @@ where
     /// looked for.
     ///
     /// `call` receives the client by value, so it can be held across the await.
-    /// Pass an [`Arc`](std::sync::Arc) where cloning it is expensive.
     ///
     /// # Examples
+    ///
+    /// An async method on the client is passed directly:
     ///
     /// ```
     /// # use actify::{Handle, Frequency};
     /// # use std::sync::{Arc, Mutex};
     /// # #[tokio::main]
     /// # async fn main() {
+    /// #[derive(Clone)]
+    /// struct Database {
+    ///     rows: Arc<Mutex<Vec<i32>>>,
+    /// }
+    ///
+    /// impl Database {
+    ///     async fn insert(self, value: i32) {
+    ///         self.rows.lock().unwrap().push(value);
+    ///     }
+    /// }
+    ///
     /// let handle = Handle::new(1);
-    /// let values = Arc::new(Mutex::new(Vec::new()));
+    /// let database = Database { rows: Arc::new(Mutex::new(Vec::new())) };
     ///
     /// let throttle = handle
-    ///     .spawn_async_throttle(values.clone(), |sink: Arc<Mutex<Vec<i32>>>, val: i32| async move {
-    ///         sink.lock().unwrap().push(val);
-    ///     }, Frequency::OnEvent)
+    ///     .spawn_async_throttle(database.clone(), Database::insert, Frequency::OnEvent)
     ///     .await;
     ///
     /// handle.set(2).await;
     /// tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-    /// assert_eq!(*values.lock().unwrap(), vec![1, 2]);
+    ///
+    /// assert_eq!(*database.rows.lock().unwrap(), vec![1, 2]);
     /// throttle.abort();
     /// # }
     /// ```
+    ///
+    /// The method takes `self`, so the client is cloned once per call and should
+    /// keep its state behind an [`Arc`](std::sync::Arc), as `Database` does. A
+    /// method taking `&self` does not match `Fn(C, F)`; wrap it in a closure
+    /// such as `|db: Arc<Database>, value| async move { db.insert(value).await }`.
     ///
     /// # Panics
     ///

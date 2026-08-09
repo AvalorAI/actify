@@ -694,6 +694,34 @@ mod tests {
             assert_eq!(*seen.lock().unwrap(), vec![1, 2]);
         }
 
+        #[derive(Clone)]
+        struct Database {
+            rows: Values,
+        }
+
+        impl Database {
+            async fn insert(self, value: i32) {
+                self.rows.lock().unwrap().push(value);
+            }
+        }
+
+        #[tokio::test(start_paused = true)]
+        async fn test_an_async_method_can_be_the_callback() {
+            let handle = Handle::new(1);
+            let database = Database {
+                rows: Arc::new(Mutex::new(Vec::new())),
+            };
+
+            let _throttle = handle
+                .spawn_async_throttle(database.clone(), Database::insert, Frequency::OnEvent)
+                .await;
+
+            handle.set(2).await;
+            sleep(PERIOD).await;
+
+            assert_eq!(*database.rows.lock().unwrap(), vec![1, 2]);
+        }
+
         #[tokio::test(start_paused = true)]
         async fn test_a_cache_can_spawn_one() {
             let handle = Handle::new(1);
