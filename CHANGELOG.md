@@ -38,6 +38,13 @@ they record what changed rather than why, and are not exhaustive. 0.8.0 through
 - Extension getters such as `VecHandle::is_empty` and `HashMapHandle::keys` no
   longer broadcast.
 
+- **Breaking:** throttle callbacks take any `Fn(&C, F) + Send + 'static` instead
+  of a `fn(&C, F)` pointer, so a closure holding captured state is accepted.
+  Method references and non-capturing closures still coerce, so existing call
+  sites are unchanged. Affects `Throttle::spawn_from_receiver`,
+  `Throttle::spawn_interval`, `Handle::spawn_throttle`, `Handle::new_throttled`
+  and `Cache::spawn_throttle`. Code naming the old type explicitly, such as a
+  struct field of type `fn(&C, F)`, needs the new parameter.
 - **Breaking:** `Throttle` is now a handle to a running throttle rather than a
   generic configuration struct, so `Throttle<C, T, F>` becomes `Throttle`. Its
   spawn functions keep their names and arguments and gained the generics, so
