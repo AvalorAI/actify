@@ -327,8 +327,6 @@ mod tests {
         timeout(PERIOD * 10, future).await.is_err()
     }
 
-    /// Driving `ThrottleState` directly reaches the receiver outcomes that a
-    /// spawned throttle hides: a closed sender and a lagging one.
     mod state {
         use super::*;
 
@@ -353,8 +351,6 @@ mod tests {
             assert_eq!(state.next::<i32>().await, Some(1));
         }
 
-        /// The ticks still happen, but there is nothing to send until a value
-        /// arrives, so nothing reaches the callback.
         #[tokio::test(start_paused = true)]
         async fn test_interval_sends_nothing_before_the_first_value() {
             let (_tx, rx) = broadcast::channel::<i32>(8);
@@ -363,8 +359,6 @@ mod tests {
             assert!(still_waiting(state.next::<i32>()).await);
         }
 
-        /// An event does not send under Interval. The value it carried waits
-        /// for the next tick, one full period away.
         #[tokio::test(start_paused = true)]
         async fn test_interval_holds_an_event_until_the_tick() {
             let (tx, rx) = broadcast::channel(8);
@@ -441,9 +435,6 @@ mod tests {
         }
     }
 
-    /// The startup send and the interval's first tick both want to happen at
-    /// t=0. A refactor that drops the reset in `interval_after` sends the
-    /// initial value twice, which these pin down per frequency.
     mod initial_value {
         use super::*;
 
