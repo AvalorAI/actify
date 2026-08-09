@@ -762,12 +762,16 @@ mod tests {
         assert_eq!(cache.recv_newest().await, Err(CacheRecvNewestError::Closed));
     }
 
-    /// Fills the broadcast channel far enough past its capacity of 100 that
-    /// the cache's receiver is guaranteed to have missed updates.
-    async fn overflow(handle: &Handle<i32>) {
-        for i in 1..=150 {
+    /// Fills the broadcast channel past its capacity, so the cache's receiver
+    /// is guaranteed to have missed updates. The channel may round its
+    /// capacity up internally, so twice the configured size is sent.
+    /// Returns the last value sent, which the channel always retains.
+    async fn overflow(handle: &Handle<i32>) -> i32 {
+        let last = (2 * crate::handles::CHANNEL_SIZE) as i32;
+        for i in 1..=last {
             handle.set(i).await;
         }
+        last
     }
 
     /// The FIFO receives report lag as an error, and the error leaves the
@@ -809,9 +813,9 @@ mod tests {
         let mut cache = handle.create_cache().await;
         cache.try_recv_newest().unwrap(); // Consume first request
 
-        overflow(&handle).await;
+        let last = overflow(&handle).await;
 
-        assert_eq!(cache.try_recv_newest().unwrap(), Some(&150));
+        assert_eq!(cache.try_recv_newest().unwrap(), Some(&last));
     }
 
     #[tokio::test(start_paused = true)]
@@ -820,9 +824,9 @@ mod tests {
         let mut cache = handle.create_cache().await;
         cache.recv_newest().await.unwrap(); // Consume first request
 
-        overflow(&handle).await;
+        let last = overflow(&handle).await;
 
-        assert_eq!(cache.recv_newest().await.unwrap(), &150);
+        assert_eq!(cache.recv_newest().await.unwrap(), &last);
     }
 
     #[tokio::test(start_paused = true)]

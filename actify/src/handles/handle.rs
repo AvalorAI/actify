@@ -8,7 +8,7 @@ use crate::actor::{Actor, ActorExit, ActorMethod, BroadcastFn, ExitState, Job, s
 use crate::throttle::Throttle;
 use crate::{Cache, Frequency, Throttled};
 
-const CHANNEL_SIZE: usize = 100;
+pub(crate) const CHANNEL_SIZE: usize = 100;
 const DOWNCAST_FAIL: &str =
     "Actify Macro error: failed to downcast arguments to their concrete type";
 
