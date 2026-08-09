@@ -35,6 +35,22 @@ they record what changed rather than why, and are not exhaustive. 0.8.0 through
 - Extension getters such as `VecHandle::is_empty` and `HashMapHandle::keys` no
   longer broadcast.
 
+### Documentation
+
+- `Frequency::OnEventWhen` said it "fires for an event only after the interval
+  has passed", which reads as a per-event delay. It sends at most once per
+  interval, and only when a value arrived since the last send. The interval runs
+  from startup and is not restarted by a send, so the wait after a value is
+  anything from nothing to a full interval.
+
+### Internal
+
+- The throttle loop's interval, receiver and event bookkeeping moved into a
+  private `ThrottleState`, which made the lagging-receiver path testable. It had
+  never been executed by a test.
+- `test_exit_on_shutdown` asserted `0 == 0`, because the throttle it built had
+  no initial value and so never fired.
+
 ## [0.8.3] - 2026-08-08
 
 Bug fixes, macro diagnostics and documentation. No API changes.
