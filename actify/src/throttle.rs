@@ -6,12 +6,12 @@ use tokio::time::{self, Duration, Interval};
 /// The Frequency is used to tune the speed of a [`Throttle`].
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Frequency {
-    /// Fires any time an event arrives. Designed for infrequent but important events.
+    /// Sends every value as it arrives.
     OnEvent,
-    /// Fires every interval, regardless of incoming events.
+    /// Sends the current value every interval, whether or not a new one arrived.
     Interval(Duration),
     /// Sends at most once per interval, and only when a new value arrived since
-    /// the last send. Designed for high-throughput types.
+    /// the last send.
     OnEventWhen(Duration),
 }
 
