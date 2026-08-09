@@ -1,4 +1,5 @@
 use std::fmt::Debug;
+use std::future::Future;
 use thiserror::Error;
 use tokio::sync::broadcast::{
     self, Receiver,
@@ -499,6 +500,30 @@ where
         let current = self.inner.clone();
         let receiver = self.rx.resubscribe();
         Throttle::spawn_from_receiver(client, call, freq, receiver, Some(current))
+    }
+
+    /// Spawns a [`Throttle`] whose callback is awaited before the next value is
+    /// looked for.
+    ///
+    /// `call` receives the client by value, so it can be held across the await.
+    /// See [`Handle::spawn_async_throttle`](crate::Handle::spawn_async_throttle)
+    /// for an example.
+    pub fn spawn_async_throttle<C, F, Fun, Fut>(
+        &self,
+        client: C,
+        call: Fun,
+        freq: Frequency,
+    ) -> Throttle
+    where
+        C: Clone + Send + 'static,
+        T: Throttled<F>,
+        F: Send + Sync + 'static,
+        Fun: Fn(C, F) -> Fut + Send + 'static,
+        Fut: Future<Output = ()> + Send + 'static,
+    {
+        let current = self.inner.clone();
+        let receiver = self.rx.resubscribe();
+        Throttle::spawn_async_from_receiver(client, call, freq, receiver, Some(current))
     }
 }
 

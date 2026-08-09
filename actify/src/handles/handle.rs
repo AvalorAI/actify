@@ -1,6 +1,7 @@
 use std::any::Any;
 use std::any::type_name;
 use std::fmt::{self, Debug};
+use std::future::Future;
 use tokio::sync::{broadcast, mpsc, oneshot, watch};
 
 use super::read_handle::ReadHandle;
@@ -557,6 +558,65 @@ where
         let receiver = self.subscribe();
         let current = self.get().await;
         Throttle::spawn_from_receiver(client, call, freq, receiver, Some(current.to_broadcast()))
+    }
+
+    /// Spawns a [`Throttle`] whose callback is awaited before the next value is
+    /// looked for.
+    ///
+    /// `call` receives the client by value, so it can be held across the await.
+    /// Pass an [`Arc`](std::sync::Arc) where cloning it is expensive.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use actify::{Handle, Frequency};
+    /// # use std::sync::{Arc, Mutex};
+    /// # #[tokio::main]
+    /// # async fn main() {
+    /// let handle = Handle::new(1);
+    /// let values = Arc::new(Mutex::new(Vec::new()));
+    ///
+    /// let throttle = handle
+    ///     .spawn_async_throttle(values.clone(), |sink: Arc<Mutex<Vec<i32>>>, val: i32| async move {
+    ///         sink.lock().unwrap().push(val);
+    ///     }, Frequency::OnEvent)
+    ///     .await;
+    ///
+    /// handle.set(2).await;
+    /// tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    /// assert_eq!(*values.lock().unwrap(), vec![1, 2]);
+    /// throttle.abort();
+    /// # }
+    /// ```
+    ///
+    /// # Panics
+    ///
+    /// Panics if the actor has stopped, either because one of its methods
+    /// panicked or because its runtime shut down. See [Actor lifetime and
+    /// panics](crate#actor-lifetime-and-panics).
+    pub async fn spawn_async_throttle<C, F, Fun, Fut>(
+        &self,
+        client: C,
+        call: Fun,
+        freq: Frequency,
+    ) -> Throttle
+    where
+        C: Clone + Send + 'static,
+        V: Throttled<F>,
+        F: Send + Sync + 'static,
+        Fun: Fn(C, F) -> Fut + Send + 'static,
+        Fut: Future<Output = ()> + Send + 'static,
+    {
+        // Subscribe before get, so an update arriving in between is queued rather than lost.
+        let receiver = self.subscribe();
+        let current = self.get().await;
+        Throttle::spawn_async_from_receiver(
+            client,
+            call,
+            freq,
+            receiver,
+            Some(current.to_broadcast()),
+        )
     }
 }
 

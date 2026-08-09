@@ -332,6 +332,12 @@
 //! Use the [`Throttled`] trait to parse the actor's type into a different output type
 //! for the throttle callback.
 //!
+//! [`Handle::spawn_async_throttle`] and [`Cache::spawn_async_throttle`] take an
+//! async callback. Each call is awaited before the throttle looks for the next
+//! value, so a callback slower than the [`Frequency`] delays the following send
+//! rather than running alongside it. The callback receives the client by value,
+//! since a future borrowing it could not outlive the iteration that produced it.
+//!
 //! Spawning a throttle returns a [`Throttle`] handle. Dropping it leaves the
 //! throttle running, so a throttle attached to an actor can be spawned and
 //! forgotten: it stops when the actor does. [`Throttle::spawn_interval`] has no

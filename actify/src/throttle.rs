@@ -1,3 +1,4 @@
+use std::future::Future;
 use tokio::sync::broadcast::error::RecvError;
 use tokio::sync::broadcast::{self, Receiver};
 use tokio::task::AbortHandle;
@@ -92,7 +93,7 @@ impl Timing {
 /// Moves the first tick a full period out.
 ///
 /// `tokio::time::interval` completes its first tick immediately, and
-/// `ThrottleTask::run` already sends the initial value before entering the loop,
+/// `ThrottleTask::spawn` already sends the initial value before entering the loop,
 /// so without this an interval frequency sends twice at startup.
 fn interval_after(duration: Duration) -> Interval {
     let mut interval = time::interval(duration);
@@ -113,7 +114,7 @@ enum Wake {
 }
 
 /// Owns the broadcast receiver and the timing, so the loop in
-/// `ThrottleTask::run` is only a call to [`Self::next`] and a callback.
+/// `ThrottleTask::spawn` is only a call to [`Self::next`] and a callback.
 struct ThrottleState<T> {
     timing: Timing,
     val_rx: Option<broadcast::Receiver<T>>,
@@ -257,6 +258,47 @@ impl<C, T, Fun> ThrottleTask<C, T, Fun> {
             task: task.abort_handle(),
         }
     }
+
+    /// The same loop awaiting each call, so the throttle only moves on once the
+    /// callback has finished.
+    ///
+    /// The callback takes `C` by value, since a future borrowing the client
+    /// could not outlive the loop iteration that produced it. Pass an
+    /// [`Arc`](std::sync::Arc) where the client is expensive to clone.
+    fn spawn_async<F, Fut>(self) -> Throttle
+    where
+        C: Clone + Send + 'static,
+        T: Clone + Throttled<F> + Send + Sync + 'static,
+        F: Send + Sync + 'static,
+        Fun: Fn(C, F) -> Fut + Send + 'static,
+        Fut: Future<Output = ()> + Send + 'static,
+    {
+        let ThrottleTask {
+            frequency,
+            client,
+            call,
+            val_rx,
+            current_val,
+        } = self;
+
+        let task = tokio::spawn(async move {
+            let mut state = ThrottleState::new(frequency, val_rx, current_val);
+
+            // Send the initial value before the loop. Frequency::OnEvent has no
+            // interval, so a timer tick cannot cover this for every frequency.
+            if let Some(value) = state.current::<F>() {
+                call(client.clone(), value).await;
+            }
+
+            while let Some(value) = state.next::<F>().await {
+                call(client.clone(), value).await;
+            }
+        });
+
+        Throttle {
+            task: task.abort_handle(),
+        }
+    }
 }
 
 /// A running throttle, rate-limiting broadcasted updates from a
@@ -333,6 +375,64 @@ impl Throttle {
             current_val: Some(val),
         }
         .spawn()
+    }
+
+    /// The async counterpart of
+    /// [`spawn_from_receiver`](Self::spawn_from_receiver).
+    ///
+    /// Each call is awaited before the throttle looks for the next value, so a
+    /// callback slower than the [`Frequency`] delays the following send rather
+    /// than running alongside it.
+    ///
+    /// `call` receives the client by value. Pass an [`Arc`](std::sync::Arc)
+    /// where cloning it is expensive.
+    pub fn spawn_async_from_receiver<C, T, F, Fun, Fut>(
+        client: C,
+        call: Fun,
+        frequency: Frequency,
+        receiver: Receiver<T>,
+        init: Option<T>,
+    ) -> Throttle
+    where
+        C: Clone + Send + 'static,
+        T: Clone + Throttled<F> + Send + Sync + 'static,
+        F: Send + Sync + 'static,
+        Fun: Fn(C, F) -> Fut + Send + 'static,
+        Fut: Future<Output = ()> + Send + 'static,
+    {
+        ThrottleTask {
+            frequency,
+            client,
+            call,
+            val_rx: Some(receiver),
+            current_val: init,
+        }
+        .spawn_async()
+    }
+
+    /// The async counterpart of [`spawn_interval`](Self::spawn_interval).
+    #[must_use = "without this handle the interval task cannot be stopped"]
+    pub fn spawn_async_interval<C, T, F, Fun, Fut>(
+        client: C,
+        call: Fun,
+        interval: Duration,
+        val: T,
+    ) -> Throttle
+    where
+        C: Clone + Send + 'static,
+        T: Clone + Throttled<F> + Send + Sync + 'static,
+        F: Send + Sync + 'static,
+        Fun: Fn(C, F) -> Fut + Send + 'static,
+        Fut: Future<Output = ()> + Send + 'static,
+    {
+        ThrottleTask {
+            frequency: Frequency::Interval(interval),
+            client,
+            call,
+            val_rx: None,
+            current_val: Some(val),
+        }
+        .spawn_async()
     }
 
     /// Stops the throttle.
@@ -524,6 +624,94 @@ mod tests {
 
             sleep(PERIOD * 3).await;
             assert_eq!(*counter.count.lock().unwrap(), 1);
+        }
+    }
+
+    mod async_calls {
+        use super::*;
+
+        type Log = Arc<Mutex<Vec<&'static str>>>;
+        type Values = Arc<Mutex<Vec<i32>>>;
+
+        #[tokio::test(start_paused = true)]
+        async fn test_a_call_finishes_before_the_next_one_starts() {
+            let handle = Handle::new(0);
+            let log: Log = Arc::new(Mutex::new(Vec::new()));
+
+            let throttle = handle
+                .spawn_async_throttle(
+                    Arc::clone(&log),
+                    |log: Log, _: i32| async move {
+                        log.lock().unwrap().push("start");
+                        sleep(PERIOD).await;
+                        log.lock().unwrap().push("end");
+                    },
+                    Frequency::OnEvent,
+                )
+                .await;
+
+            // Both updates queue up while the first call is still sleeping, so
+            // the loop has two values waiting when it next looks.
+            handle.set(1).await;
+            handle.set(2).await;
+
+            sleep(PERIOD * 6).await;
+            throttle.abort();
+
+            // Two starts in a row would mean a call was left running while the
+            // loop moved on to the next value.
+            assert_eq!(
+                *log.lock().unwrap(),
+                vec!["start", "end", "start", "end", "start", "end"],
+                "calls overlapped"
+            );
+        }
+
+        #[tokio::test(start_paused = true)]
+        async fn test_an_update_during_construction_is_not_lost() {
+            let handle = Handle::new(1);
+            let seen: Values = Arc::new(Mutex::new(Vec::new()));
+
+            let update_handle = handle.clone();
+            // On the current-thread test runtime this task first runs when
+            // spawn_async_throttle awaits the actor, so the update is broadcast
+            // exactly between its subscribe and its get.
+            let update = tokio::spawn(async move { update_handle.set(2).await });
+
+            let _throttle = handle
+                .spawn_async_throttle(
+                    Arc::clone(&seen),
+                    |seen: Values, value: i32| async move {
+                        seen.lock().unwrap().push(value);
+                    },
+                    Frequency::OnEvent,
+                )
+                .await;
+
+            update.await.unwrap();
+            sleep(PERIOD).await;
+
+            assert_eq!(*seen.lock().unwrap(), vec![1, 2]);
+        }
+
+        #[tokio::test(start_paused = true)]
+        async fn test_a_cache_can_spawn_one() {
+            let handle = Handle::new(1);
+            let cache = handle.create_cache().await;
+            let seen: Values = Arc::new(Mutex::new(Vec::new()));
+
+            let _throttle = cache.spawn_async_throttle(
+                Arc::clone(&seen),
+                |seen: Values, value: i32| async move {
+                    seen.lock().unwrap().push(value);
+                },
+                Frequency::OnEvent,
+            );
+
+            handle.set(2).await;
+            sleep(PERIOD).await;
+
+            assert_eq!(*seen.lock().unwrap(), vec![1, 2]);
         }
     }
 

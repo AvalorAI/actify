@@ -14,6 +14,13 @@ they record what changed rather than why, and are not exhaustive. 0.8.0 through
 - `OptionHandle::take` and `OptionHandle::replace`, mirroring
   `std::option::Option::take` and `std::option::Option::replace` in both
   signature and behaviour.
+- Async throttle callbacks: `Handle::spawn_async_throttle`,
+  `Cache::spawn_async_throttle`, `Throttle::spawn_async_from_receiver` and
+  `Throttle::spawn_async_interval`. Each call is awaited before the throttle
+  looks for the next value, so a slow callback delays the following send rather
+  than running alongside it. The callback takes the client by value, because a
+  future borrowing it could not outlive the iteration that produced it; pass an
+  `Arc` where cloning is expensive.
 - `Throttle::abort` and `Throttle::is_finished`. A throttle spawned by
   `Throttle::spawn_interval` has no actor attached, so before this nothing could
   stop it short of shutting down the runtime.
