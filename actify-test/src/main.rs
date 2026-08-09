@@ -956,6 +956,40 @@ mod tests {
         assert_eq!(await_alive_tasks(baseline).await, baseline);
     }
 
+    /// A ReadHandle holds a full handle internally, so it keeps the actor
+    /// alive after the last Handle is dropped. The crate docs state this;
+    /// the test keeps that statement true.
+    #[tokio::test]
+    async fn test_read_handle_keeps_actor_alive() {
+        let baseline = alive_tasks();
+
+        let handle = Handle::new(1);
+        let read_handle = handle.get_read_handle();
+
+        let with_handle = await_alive_tasks(baseline + 1).await;
+        assert_eq!(with_handle, baseline + 1, "Expected one task for Handle");
+
+        drop(handle);
+
+        let after_handle_drop = settled_alive_tasks().await;
+        assert_eq!(
+            after_handle_drop,
+            baseline + 1,
+            "The actor should stay alive while a ReadHandle exists"
+        );
+
+        // The actor still serves reads through the remaining ReadHandle
+        assert_eq!(read_handle.get().await, 1);
+
+        drop(read_handle);
+
+        let after_read_drop = await_alive_tasks(baseline).await;
+        assert_eq!(
+            after_read_drop, baseline,
+            "The actor should stop once the last ReadHandle is dropped"
+        );
+    }
+
     #[tokio::test]
     async fn test_cache_does_not_spawn_tasks() {
         let baseline = alive_tasks();
