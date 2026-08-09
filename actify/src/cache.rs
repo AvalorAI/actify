@@ -13,6 +13,16 @@ use crate::{Frequency, Throttle, Throttled};
 /// current actor value), [`Handle::create_cache_from`](crate::Handle::create_cache_from) (custom
 /// initial value), or [`Handle::create_cache_from_default`](crate::Handle::create_cache_from_default)
 /// (starts from `T::default()`).
+///
+/// # Cloning
+///
+/// A clone is a fresh cache initialized with the original's current value:
+/// its first read delivers that snapshot, and it receives every broadcast
+/// made after its creation. Updates already queued in the original's
+/// receiver but not yet read stay with the original; they exist nowhere the
+/// clone can reach, since a new subscription starts at the channel tail. To
+/// start from the actor's actual current value instead of the original's
+/// last known one, use [`Handle::create_cache`](crate::Handle::create_cache).
 #[derive(Debug)]
 pub struct Cache<T> {
     inner: T,
@@ -25,10 +35,12 @@ where
     T: Clone + Send + Sync + 'static,
 {
     fn clone(&self) -> Self {
+        // The clone cannot inherit the original's queue position, so it gets
+        // the same contract as a fresh cache: snapshot first, updates after.
         Cache {
             inner: self.inner.clone(),
             rx: self.rx.resubscribe(),
-            first_request: self.first_request,
+            first_request: true,
         }
     }
 }

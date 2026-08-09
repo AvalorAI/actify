@@ -28,6 +28,13 @@ they record what changed rather than why, and are not exhaustive. 0.8.0 through
   receiving those updates: a later receive on the cache returns only updates
   broadcast after this call.
 
+- **Breaking:** cloning a `Cache` now yields a fresh cache: the clone delivers
+  the original's current value on its first read and receives broadcasts made
+  after its creation. Previously a clone copied the original's first-read
+  state, so a clone taken after that read delivered nothing until the next
+  broadcast. Updates already queued in the original's receiver stay with the
+  original in both the old and the new behaviour.
+
 - **Breaking:** methods taking `&self` no longer broadcast. Broadcasting follows
   the receiver: `&mut self` broadcasts, `&self` does not. Previously every
   method broadcast regardless of receiver, so read-only calls woke every
