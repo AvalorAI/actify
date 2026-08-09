@@ -29,6 +29,123 @@ impl<T: Clone> Throttled<T> for T {
     }
 }
 
+/// Owns the broadcast receiver, the interval timer and the `event_processed`
+/// flag used by [`Frequency::OnEventWhen`].
+///
+/// Drive it with [`Self::first_tick`], which consumes the immediate initial
+/// interval tick, then [`Self::next`], which awaits the next timer or event and
+/// reports whether the callback should fire.
+struct ThrottleState<T> {
+    frequency: Frequency,
+    val_rx: Option<broadcast::Receiver<T>>,
+    current_val: Option<T>,
+    interval: Option<Interval>,
+    event_processed: bool,
+}
+
+impl<T: Clone> ThrottleState<T> {
+    fn new(
+        frequency: Frequency,
+        val_rx: Option<broadcast::Receiver<T>>,
+        current_val: Option<T>,
+    ) -> Self {
+        let interval = match frequency {
+            Frequency::OnEvent => None,
+            Frequency::Interval(duration) | Frequency::OnEventWhen(duration) => {
+                Some(time::interval(duration))
+            }
+        };
+        Self {
+            frequency,
+            val_rx,
+            current_val,
+            interval,
+            event_processed: true,
+        }
+    }
+
+    /// Consumes the interval's initial tick, which completes immediately, so the
+    /// loop starts on a real wait.
+    async fn first_tick(&mut self) {
+        if let Some(interval) = &mut self.interval {
+            interval.tick().await;
+        }
+    }
+
+    /// Returns `Some(true)` to fire the callback, `Some(false)` to skip this
+    /// iteration, and `None` once the sender is gone and the loop should exit.
+    async fn next(&mut self) -> Option<bool> {
+        loop {
+            let received_msg = tokio::select!(
+                _ = keep_time(&mut self.interval) => false,
+                res = check_value(&mut self.val_rx) => {
+                    match res {
+                        Ok(val) => {
+                            self.event_processed = false;
+                            self.current_val = Some(val);
+                            true
+                        }
+                        Err(RecvError::Closed) => {
+                            log::debug!(
+                                "Attached actor of type {} closed - exiting throttle",
+                                std::any::type_name::<T>()
+                            );
+                            return None;
+                        }
+                        Err(RecvError::Lagged(nr)) => {
+                            log::debug!(
+                                "Throttle of type {} lagged {nr} messages",
+                                std::any::type_name::<T>()
+                            );
+                            continue;
+                        }
+                    }
+                },
+            );
+
+            let should_fire = match self.frequency {
+                Frequency::OnEvent => received_msg,
+                Frequency::Interval(_) => !received_msg,
+                Frequency::OnEventWhen(_) => !received_msg && !self.event_processed,
+            };
+
+            // Only OnEventWhen reads this flag, and only it clears the event.
+            if should_fire && matches!(self.frequency, Frequency::OnEventWhen(_)) {
+                self.event_processed = true;
+            }
+
+            return Some(should_fire);
+        }
+    }
+
+    /// Parses the stored value into the callback's argument type, or `None` when
+    /// no value has arrived yet.
+    fn current<F>(&self) -> Option<F>
+    where
+        T: Throttled<F>,
+    {
+        self.current_val.as_ref().map(|val| val.parse())
+    }
+}
+
+async fn keep_time(interval: &mut Option<Interval>) {
+    if let Some(interval) = interval {
+        interval.tick().await;
+    } else {
+        std::future::pending::<()>().await;
+    }
+}
+
+async fn check_value<T: Clone>(
+    val_rx: &mut Option<broadcast::Receiver<T>>,
+) -> Result<T, RecvError> {
+    if let Some(rx) = val_rx {
+        rx.recv().await
+    } else {
+        std::future::pending::<Result<T, RecvError>>().await
+    }
+}
+
 /// Rate-limits broadcasted updates from a [`Handle`](crate::Handle) or [`Cache`](crate::Cache)
 /// before forwarding them to a callback.
 ///
@@ -80,14 +197,14 @@ where
         receiver: Receiver<T>,
         init: Option<T>,
     ) {
-        let mut throttle = Throttle {
+        let throttle = Throttle {
             frequency,
             client,
             call,
             val_rx: Some(receiver),
             current_val: init,
         };
-        tokio::spawn(async move { throttle.tick().await });
+        tokio::spawn(throttle.run());
     }
 
     /// Spawns a throttle that fires `call` with a fixed value on every interval.
@@ -95,91 +212,40 @@ where
     /// Not attached to an actor, so nothing closes it: the task fires until the
     /// runtime shuts down.
     pub fn spawn_interval(client: C, call: fn(&C, F), interval: Duration, val: T) {
-        let mut throttle = Throttle {
+        let throttle = Throttle {
             frequency: Frequency::Interval(interval),
             client,
             call,
             val_rx: None,
             current_val: Some(val),
         };
-        tokio::spawn(async move { throttle.tick().await });
+        tokio::spawn(throttle.run());
     }
 
-    async fn tick(&mut self) {
-        let mut interval = match self.frequency {
-            Frequency::OnEvent => None,
-            Frequency::Interval(duration) => Some(time::interval(duration)),
-            Frequency::OnEventWhen(duration) => Some(time::interval(duration)),
-        };
+    async fn run(self) {
+        let Throttle {
+            frequency,
+            client,
+            call,
+            val_rx,
+            current_val,
+        } = self;
 
-        if let Some(iv) = &mut interval {
-            iv.tick().await; // First tick completes immediately, so ignore by calling prior
+        let mut state = ThrottleState::new(frequency, val_rx, current_val);
+        state.first_tick().await;
+
+        // Always execute the call once in case it was initialized
+        if let Some(val) = state.current::<F>() {
+            call(&client, val);
         }
 
-        self.execute_call(); // Always execute the call once in case it was initialized
-
-        let mut event_processed = true;
-        loop {
-            // Wait or update cache
-            let received_msg = tokio::select!(
-                _ = Throttle::<C, T, F>::keep_time(&mut interval) => false,
-                res = Throttle::<C, T, F>::check_value(&mut self.val_rx) => {
-                    match res {
-                        Ok(val) => {
-                            event_processed = false;
-                            self.current_val = Some(val);
-                            true
-                        }
-                        Err(RecvError::Closed) => {
-                            log::debug!("Attached actor of type {} closed - exiting throttle", std::any::type_name::<T>());
-                            break
-                        }
-                        Err(RecvError::Lagged(nr)) => {
-                            log::debug!("Throttle of type {} lagged {nr} messages", std::any::type_name::<T>());
-                            continue
-                        }
-                    }
-
-                },
-            );
-
-            match self.frequency {
-                Frequency::OnEvent if received_msg => self.execute_call(),
-                Frequency::Interval(_) if !received_msg => self.execute_call(),
-                Frequency::OnEventWhen(_) if !received_msg && !event_processed => {
-                    event_processed = true;
-                    self.execute_call()
-                }
-                _ => continue,
+        while let Some(should_fire) = state.next().await {
+            if !should_fire {
+                continue;
             }
-        }
-    }
-
-    fn execute_call(&self) {
-        // Either parse the value to a different type F, or to itself when T = F
-        let val = if let Some(inner) = &self.current_val {
-            inner.parse()
-        } else {
-            return; // If cache empty, skip call
-        };
-
-        // Perform the call
-        (self.call)(&self.client, val);
-    }
-
-    async fn keep_time(interval: &mut Option<Interval>) {
-        if let Some(interval) = interval {
-            interval.tick().await;
-        } else {
-            std::future::pending::<()>().await;
-        }
-    }
-
-    async fn check_value(val_rx: &mut Option<broadcast::Receiver<T>>) -> Result<T, RecvError> {
-        if let Some(rx) = val_rx {
-            rx.recv().await
-        } else {
-            std::future::pending::<Result<T, RecvError>>().await
+            if let Some(val) = state.current::<F>() {
+                call(&client, val);
+            }
         }
     }
 }
