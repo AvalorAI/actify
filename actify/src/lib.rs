@@ -338,6 +338,10 @@
 //! rather than running alongside it. The callback receives the client by value,
 //! since a future borrowing it could not outlive the iteration that produced it.
 //!
+//! Nothing is received while a call is awaited, so updates arriving faster than
+//! the calls complete eventually overflow the channel and the oldest are
+//! dropped. Under [`Frequency::OnEvent`] those values are skipped.
+//!
 //! Spawning a throttle returns a [`Throttle`] handle. Dropping it leaves the
 //! throttle running, so a throttle attached to an actor can be spawned and
 //! forgotten: it stops when the actor does. [`Throttle::spawn_interval`] has no
