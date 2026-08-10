@@ -263,8 +263,8 @@ impl<C, T, Fun> ThrottleTask<C, T, Fun> {
     /// callback has finished.
     ///
     /// The callback takes `C` by value, since a future borrowing the client
-    /// could not outlive the loop iteration that produced it. Pass an
-    /// [`Arc`](std::sync::Arc) where the client is expensive to clone.
+    /// could not outlive the loop iteration that produced it. The client is
+    /// cloned once per call.
     fn spawn_async<F, Fut>(self) -> Throttle
     where
         C: Clone + Send + 'static,
@@ -384,8 +384,7 @@ impl Throttle {
     /// callback slower than the [`Frequency`] delays the following send rather
     /// than running alongside it.
     ///
-    /// `call` receives the client by value. Pass an [`Arc`](std::sync::Arc)
-    /// where cloning it is expensive.
+    /// `call` receives the client by value, cloned once per call.
     pub fn spawn_async_from_receiver<C, T, F, Fun, Fut>(
         client: C,
         call: Fun,

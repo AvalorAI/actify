@@ -601,10 +601,8 @@ where
     /// # }
     /// ```
     ///
-    /// The method takes `self`, so the client is cloned once per call and should
-    /// keep anything expensive behind an [`Arc`](std::sync::Arc). A `mpsc::Sender`
-    /// is already a cheap clone. A method taking `&self` does not match
-    /// `Fn(C, F)`; wrap it in a closure such as
+    /// The method takes `self`, so the client is cloned once per call. A method
+    /// taking `&self` does not match `Fn(C, F)`; wrap it in a closure such as
     /// `|client: Arc<Db>, value| async move { client.insert(value).await }`.
     ///
     /// # Panics
