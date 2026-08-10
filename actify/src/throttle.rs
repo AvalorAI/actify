@@ -311,6 +311,53 @@ impl<C, T, Fun> ThrottleTask<C, T, Fun> {
 ///
 /// Dropping this leaves the throttle running. Call [`abort`](Self::abort) to
 /// stop it.
+///
+/// # Slow calls
+///
+/// One call runs at a time, and nothing is received while it runs, whether it
+/// blocks or is awaited. Updates broadcast in the meantime queue in the
+/// channel, and the throttle works through them once the call returns:
+///
+/// ```
+/// # use actify::{Frequency, Handle};
+/// # use std::time::Duration;
+/// # use tokio::sync::mpsc;
+/// # #[tokio::main]
+/// # async fn main() {
+/// let (sink, mut received) = mpsc::channel(8);
+/// let handle = Handle::new(0);
+///
+/// let throttle = handle
+///     .spawn_async_throttle(
+///         sink,
+///         |sink: mpsc::Sender<i32>, value: i32| async move {
+///             tokio::time::sleep(Duration::from_millis(20)).await;
+///             let _ = sink.send(value).await;
+///         },
+///         Frequency::OnEvent,
+///     )
+///     .await;
+///
+/// // All three arrive while the first call is still sleeping
+/// handle.set(1).await;
+/// handle.set(2).await;
+/// handle.set(3).await;
+///
+/// // Each is sent in turn, one call after another, none of them lost
+/// assert_eq!(received.recv().await, Some(0));
+/// assert_eq!(received.recv().await, Some(1));
+/// assert_eq!(received.recv().await, Some(2));
+/// assert_eq!(received.recv().await, Some(3));
+/// throttle.abort();
+/// # }
+/// ```
+///
+/// The queue is the broadcast channel, so it holds a bounded number of updates.
+/// Once more arrive than it holds, the oldest are dropped and the throttle
+/// resumes from the oldest value still there. Under [`Frequency::OnEvent`] those
+/// values are skipped, since it otherwise sends every one.
+/// [`Frequency::Interval`] and [`Frequency::OnEventWhen`] send only the newest
+/// value, so dropping older ones changes nothing they would have sent.
 #[derive(Debug)]
 pub struct Throttle {
     task: AbortHandle,

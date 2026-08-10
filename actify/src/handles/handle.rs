@@ -564,12 +564,7 @@ where
     /// looked for.
     ///
     /// `call` receives the client by value, so it can be held across the await.
-    ///
-    /// The throttle is not receiving while a call is awaited. Updates broadcast
-    /// in the meantime queue in the channel, and once more than its capacity
-    /// arrive the oldest are dropped; the throttle resumes from the oldest value
-    /// still held. Under [`Frequency::OnEvent`] that means values are skipped
-    /// when calls take longer than the gap between updates.
+    /// See [Slow calls](Throttle#slow-calls) for what happens while one runs.
     ///
     /// # Examples
     ///
