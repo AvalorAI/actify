@@ -1026,7 +1026,7 @@ mod tests {
         let baseline = alive_tasks();
 
         let handle = Handle::new(42);
-        let cache = handle.create_cache().await;
+        let mut cache = handle.create_cache().await;
 
         let with_handle = await_alive_tasks(baseline + 1).await;
         assert_eq!(with_handle, baseline + 1, "Expected one task for Handle");

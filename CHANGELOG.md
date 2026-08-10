@@ -14,6 +14,9 @@ they record what changed rather than why, and are not exhaustive. 0.8.0 through
 - `OptionHandle::take` and `OptionHandle::replace`, mirroring
   `std::option::Option::take` and `std::option::Option::replace` in both
   signature and behaviour.
+- `Cache::clone_newest`, which reads the updates queued in a cache before
+  cloning it, so both caches start from the newest broadcast value. A plain
+  clone leaves those updates with the original.
 - Async throttle callbacks: `Handle::spawn_async_throttle`,
   `Cache::spawn_async_throttle`, `Throttle::spawn_async_from_receiver` and
   `Throttle::spawn_async_interval`. Each call is awaited before the throttle
@@ -26,6 +29,21 @@ they record what changed rather than why, and are not exhaustive. 0.8.0 through
   stop it short of shutting down the runtime.
 
 ### Changed
+
+- **Breaking:** `Cache::spawn_throttle` takes `&mut self` and first
+  synchronizes the cache to the newest broadcast value, which becomes the
+  throttle's initial fire. Previously the throttle got a fresh subscription
+  starting at the channel tail and fired with the stale snapshot, so updates
+  already queued in the cache never reached it. The synchronization counts as
+  receiving those updates: a later receive on the cache returns only updates
+  broadcast after this call.
+
+- **Breaking:** cloning a `Cache` now yields a fresh cache: the clone delivers
+  the original's current value on its first read and receives broadcasts made
+  after its creation. Previously a clone copied the original's first-read
+  state, so a clone taken after that read delivered nothing until the next
+  broadcast. Updates already queued in the original's receiver stay with the
+  original in both the old and the new behaviour.
 
 - **Breaking:** methods taking `&self` no longer broadcast. Broadcasting follows
   the receiver: `&mut self` broadcasts, `&self` does not. Previously every
