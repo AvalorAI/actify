@@ -16,10 +16,16 @@ use crate::{Frequency, Throttle, Throttled};
 ///
 /// # Cloning
 ///
-/// A clone behaves like a new cache created from the original's last known
-/// value: the first read returns that value, and broadcasts after the clone
-/// are received. Updates queued in the original but not yet read stay with
-/// the original. Use [`clone_newest`](Self::clone_newest) to include them:
+/// A cache reads from its own receiver on the actor's broadcast channel. That
+/// receiver's position in the channel cannot be copied, so `clone` opens a new
+/// subscription, which starts at the most recently broadcast value. Values
+/// broadcast earlier and not yet read by the original sit before that position
+/// and never arrive at the clone.
+///
+/// So a clone holds the value the original read last, returns it on the first
+/// read, and from then on receives what the actor broadcasts after the clone
+/// was made. [`clone_newest`](Self::clone_newest) reads the waiting values
+/// into the cache first, so the clone starts at the newest one:
 ///
 /// ```
 /// # use actify::Handle;
@@ -28,10 +34,10 @@ use crate::{Frequency, Throttle, Throttled};
 /// let handle = Handle::new(1);
 /// let mut cache = handle.create_cache().await;
 ///
-/// handle.set(2).await; // Queued, not yet read by the cache
+/// handle.set(2).await; // Broadcast, not yet read by the cache
 ///
-/// let stale = cache.clone(); // Starts from 1, the update stays behind
-/// let synced = cache.clone_newest(); // Starts from 2
+/// let stale = cache.clone(); // Holds 1: the 2 is behind its subscription
+/// let synced = cache.clone_newest(); // Reads the 2 first, so it holds 2
 ///
 /// assert_eq!(stale.get_current(), &1);
 /// assert_eq!(synced.get_current(), &2);
@@ -49,8 +55,9 @@ where
     T: Clone + Send + Sync + 'static,
 {
     fn clone(&self) -> Self {
-        // The clone cannot inherit the original's queue position, so it gets
-        // the same contract as a fresh cache: snapshot first, updates after.
+        // resubscribe starts after the values this cache has not read yet, so
+        // the clone cannot reach them. first_request is set so its first read
+        // returns the value carried over here, as a new cache does.
         Cache {
             inner: self.inner.clone(),
             rx: self.rx.resubscribe(),
@@ -104,12 +111,17 @@ where
         }
     }
 
-    /// Returns a clone starting from the newest broadcast value.
+    /// Reads every value waiting in this cache, keeps the newest, and returns a
+    /// clone holding it. Both caches then hold that value.
     ///
-    /// Reads the updates queued in this cache first, so both caches start from
-    /// the same value. That read counts as receiving them: a later receive on
-    /// this cache returns only updates broadcast after this call. A plain
-    /// [`clone`](Clone::clone) leaves them with this cache instead.
+    /// Reading takes the waiting values out of this cache's receiver, which is
+    /// what `&mut self` is for. They are delivered by this call and not again:
+    /// the next [`recv`](Self::recv) here returns a value the actor broadcasts
+    /// after it, and the values passed over on the way to the newest are
+    /// dropped, as in [`get_newest`](Self::get_newest).
+    ///
+    /// [`clone`](Clone::clone) cannot read them, since it takes `&self`, and
+    /// the subscription it opens starts after them.
     ///
     /// # Examples
     ///
@@ -124,16 +136,16 @@ where
     /// let mut synced = cache.clone_newest();
     /// assert_eq!(synced.get_current(), &2);
     ///
-    /// // The queued update was read here too, so only later ones remain
+    /// // The 2 was read out of this cache as well, so nothing is left waiting
     /// assert_eq!(cache.get_current(), &2);
     /// assert_eq!(cache.try_recv().unwrap(), Some(&2)); // Its first read
     /// assert_eq!(cache.try_recv().unwrap(), None);
     /// # }
     /// ```
     pub fn clone_newest(&mut self) -> Self {
-        // Subscribe before draining, so an update arriving in between reaches
-        // the clone instead of being lost. It may then be part of the initial
-        // value and still be delivered, which a first read absorbs.
+        // Resubscribe first: a value broadcast between these two lines then
+        // lands both in the new subscription and in the drain, rather than
+        // after the one and before the other, which would drop it.
         let rx = self.rx.resubscribe();
         _ = self.drain_to_newest();
         Cache {
