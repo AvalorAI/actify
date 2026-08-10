@@ -455,6 +455,7 @@ mod tests {
 
     use super::*;
     use std::future::Future;
+    use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::{Arc, Mutex};
     use tokio::time::{Duration, Instant, sleep, timeout};
 
@@ -649,30 +650,6 @@ mod tests {
             (Writer { sink }, received)
         }
 
-        /// Takes a period per call and reports when it finished, so calls run
-        /// back to back land a period apart and overlapping ones do not.
-        #[derive(Clone)]
-        struct SlowWriter {
-            finished: mpsc::Sender<Duration>,
-            spawned: Instant,
-        }
-
-        impl SlowWriter {
-            async fn write(self, _value: i32) {
-                sleep(PERIOD).await;
-                let _ = self.finished.send(self.spawned.elapsed()).await;
-            }
-        }
-
-        fn slow_writer() -> (SlowWriter, mpsc::Receiver<Duration>) {
-            let (finished, received) = mpsc::channel(8);
-            let writer = SlowWriter {
-                finished,
-                spawned: Instant::now(),
-            };
-            (writer, received)
-        }
-
         /// Waits for one message, failing rather than hanging when the throttle
         /// never sends it.
         async fn next_sent<T>(received: &mut mpsc::Receiver<T>) -> Option<T> {
@@ -681,24 +658,45 @@ mod tests {
                 .expect("the throttle sent nothing")
         }
 
+        /// `busy` is true for as long as a call is inside the callback, so a
+        /// call that finds it already true started while another was running.
+        #[derive(Clone, Default)]
+        struct Overlap {
+            busy: Arc<AtomicBool>,
+            detected: Arc<AtomicBool>,
+        }
+
         #[tokio::test(start_paused = true)]
         async fn test_a_call_finishes_before_the_next_one_starts() {
             let handle = Handle::new(0);
-            let (writer, mut finished) = slow_writer();
+            let overlap = Overlap::default();
 
             let _throttle = handle
-                .spawn_async_throttle(writer, SlowWriter::write, Frequency::OnEvent)
+                .spawn_async_throttle(
+                    overlap.clone(),
+                    |overlap: Overlap, _: i32| async move {
+                        if overlap.busy.swap(true, Ordering::SeqCst) {
+                            overlap.detected.store(true, Ordering::SeqCst);
+                        }
+                        sleep(PERIOD).await;
+                        overlap.busy.store(false, Ordering::SeqCst);
+                    },
+                    Frequency::OnEvent,
+                )
                 .await;
 
-            // Both updates arrive while the first call is still running, so the
-            // loop has two values waiting the next time it looks.
+            // Two updates on top of the startup send, so the loop has values
+            // waiting while a call is running.
             handle.set(1).await;
             handle.set(2).await;
 
-            // Overlapping calls would finish together rather than a period apart.
-            assert_eq!(next_sent(&mut finished).await, Some(PERIOD));
-            assert_eq!(next_sent(&mut finished).await, Some(PERIOD * 2));
-            assert_eq!(next_sent(&mut finished).await, Some(PERIOD * 3));
+            // Three calls of one period each, so this lands past the last one.
+            sleep(PERIOD * 4).await;
+
+            assert!(
+                !overlap.detected.load(Ordering::SeqCst),
+                "a call started while another was still running"
+            );
         }
 
         #[tokio::test(start_paused = true)]
