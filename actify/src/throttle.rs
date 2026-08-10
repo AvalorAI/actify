@@ -631,8 +631,6 @@ mod tests {
 
         use tokio::sync::mpsc;
 
-        type Log = Arc<Mutex<Vec<&'static str>>>;
-
         /// Forwards values downstream, which is a real await: the send waits
         /// once the consumer is behind by more than the channel holds.
         #[derive(Clone)]
@@ -651,9 +649,33 @@ mod tests {
             (Writer { sink }, received)
         }
 
-        /// Waits for one forwarded value, failing rather than hanging when the
-        /// throttle never sends it.
-        async fn next_written(received: &mut mpsc::Receiver<i32>) -> Option<i32> {
+        /// Takes a period per call and reports when it finished, so calls run
+        /// back to back land a period apart and overlapping ones do not.
+        #[derive(Clone)]
+        struct SlowWriter {
+            finished: mpsc::Sender<Duration>,
+            spawned: Instant,
+        }
+
+        impl SlowWriter {
+            async fn write(self, _value: i32) {
+                sleep(PERIOD).await;
+                let _ = self.finished.send(self.spawned.elapsed()).await;
+            }
+        }
+
+        fn slow_writer() -> (SlowWriter, mpsc::Receiver<Duration>) {
+            let (finished, received) = mpsc::channel(8);
+            let writer = SlowWriter {
+                finished,
+                spawned: Instant::now(),
+            };
+            (writer, received)
+        }
+
+        /// Waits for one message, failing rather than hanging when the throttle
+        /// never sends it.
+        async fn next_sent<T>(received: &mut mpsc::Receiver<T>) -> Option<T> {
             timeout(PERIOD * 10, received.recv())
                 .await
                 .expect("the throttle sent nothing")
@@ -662,35 +684,21 @@ mod tests {
         #[tokio::test(start_paused = true)]
         async fn test_a_call_finishes_before_the_next_one_starts() {
             let handle = Handle::new(0);
-            let log: Log = Arc::new(Mutex::new(Vec::new()));
+            let (writer, mut finished) = slow_writer();
 
-            let throttle = handle
-                .spawn_async_throttle(
-                    Arc::clone(&log),
-                    |log: Log, _: i32| async move {
-                        log.lock().unwrap().push("start");
-                        sleep(PERIOD).await;
-                        log.lock().unwrap().push("end");
-                    },
-                    Frequency::OnEvent,
-                )
+            let _throttle = handle
+                .spawn_async_throttle(writer, SlowWriter::write, Frequency::OnEvent)
                 .await;
 
-            // Both updates queue up while the first call is still sleeping, so
-            // the loop has two values waiting when it next looks.
+            // Both updates arrive while the first call is still running, so the
+            // loop has two values waiting the next time it looks.
             handle.set(1).await;
             handle.set(2).await;
 
-            sleep(PERIOD * 6).await;
-            throttle.abort();
-
-            // Two starts in a row would mean a call was left running while the
-            // loop moved on to the next value.
-            assert_eq!(
-                *log.lock().unwrap(),
-                vec!["start", "end", "start", "end", "start", "end"],
-                "calls overlapped"
-            );
+            // Overlapping calls would finish together rather than a period apart.
+            assert_eq!(next_sent(&mut finished).await, Some(PERIOD));
+            assert_eq!(next_sent(&mut finished).await, Some(PERIOD * 2));
+            assert_eq!(next_sent(&mut finished).await, Some(PERIOD * 3));
         }
 
         #[tokio::test(start_paused = true)]
@@ -710,8 +718,8 @@ mod tests {
 
             update.await.unwrap();
 
-            assert_eq!(next_written(&mut received).await, Some(1));
-            assert_eq!(next_written(&mut received).await, Some(2));
+            assert_eq!(next_sent(&mut received).await, Some(1));
+            assert_eq!(next_sent(&mut received).await, Some(2));
         }
 
         #[tokio::test(start_paused = true)]
@@ -725,8 +733,8 @@ mod tests {
 
             handle.set(2).await;
 
-            assert_eq!(next_written(&mut received).await, Some(1));
-            assert_eq!(next_written(&mut received).await, Some(2));
+            assert_eq!(next_sent(&mut received).await, Some(1));
+            assert_eq!(next_sent(&mut received).await, Some(2));
         }
 
         #[tokio::test(start_paused = true)]
@@ -739,8 +747,8 @@ mod tests {
 
             handle.set(2).await;
 
-            assert_eq!(next_written(&mut received).await, Some(1));
-            assert_eq!(next_written(&mut received).await, Some(2));
+            assert_eq!(next_sent(&mut received).await, Some(1));
+            assert_eq!(next_sent(&mut received).await, Some(2));
         }
     }
 
