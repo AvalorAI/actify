@@ -316,8 +316,8 @@
 //! # ReadHandle
 //!
 //! A [`ReadHandle`] is a read-only view of an actor. It supports [`get`](ReadHandle::get),
-//! [`subscribe`](ReadHandle::subscribe), and cache creation, but cannot mutate the actor.
-//! Obtain one via [`Handle::get_read_handle`].
+//! [`subscribe`](ReadHandle::subscribe), cache creation and throttle spawning, but
+//! cannot mutate the actor. Obtain one via [`Handle::get_read_handle`].
 //!
 //! # Throttle
 //!
@@ -332,8 +332,10 @@
 //! Use the [`Throttled`] trait to parse the actor's type into a different output type
 //! for the throttle callback.
 //!
-//! [`Handle::spawn_async_throttle`] and [`Cache::spawn_async_throttle`] take an
-//! async callback. Each call is awaited before the throttle looks for the next
+//! A throttle is spawned from a [`Handle`], a [`ReadHandle`] or a [`Cache`].
+//!
+//! [`Handle::spawn_async_throttle`], [`ReadHandle::spawn_async_throttle`] and
+//! [`Cache::spawn_async_throttle`] take an async callback. Each call is awaited before the throttle looks for the next
 //! value, so a callback slower than the [`Frequency`] delays the following send
 //! rather than running alongside it.
 //!
