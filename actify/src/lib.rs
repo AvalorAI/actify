@@ -335,8 +335,12 @@
 //! [`Handle::spawn_async_throttle`] and [`Cache::spawn_async_throttle`] take an
 //! async callback. Each call is awaited before the throttle looks for the next
 //! value, so a callback slower than the [`Frequency`] delays the following send
-//! rather than running alongside it. The callback receives the client by value,
-//! since a future borrowing it could not outlive the iteration that produced it.
+//! rather than running alongside it.
+//!
+//! The callback borrows the client and returns a [`BoxFuture`], so it is shaped
+//! `|client, value| Box::pin(..)`. An `async fn` taking `&self` wraps directly:
+//! `|db, value| Box::pin(db.write(value))`. See
+//! [`Handle::spawn_async_throttle`] for the longer forms.
 //!
 //! One call runs at a time either way, and nothing is received while it does.
 //! See [Slow calls](Throttle#slow-calls) for what that means for the updates
@@ -450,7 +454,7 @@ pub use extensions::{
     map::HashMapHandle, option::OptionHandle, set::HashSetHandle, vec::VecHandle,
 };
 pub use handles::{BroadcastAs, Handle, ReadHandle};
-pub use throttle::{Frequency, Throttle, Throttled};
+pub use throttle::{BoxFuture, Frequency, Throttle, Throttled};
 
 #[doc(hidden)]
 pub use actor::Actor;

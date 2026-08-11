@@ -1,4 +1,5 @@
 use std::future::Future;
+use std::pin::Pin;
 use tokio::sync::broadcast::error::RecvError;
 use tokio::sync::broadcast::{self, Receiver};
 use tokio::task::AbortHandle;
@@ -261,17 +262,12 @@ impl<C, T, Fun> ThrottleTask<C, T, Fun> {
 
     /// The same loop awaiting each call, so the throttle only moves on once the
     /// callback has finished.
-    ///
-    /// The callback takes `C` by value, since a future borrowing the client
-    /// could not outlive the loop iteration that produced it. The client is
-    /// cloned once per call.
-    fn spawn_async<F, Fut>(self) -> Throttle
+    fn spawn_async<F>(self) -> Throttle
     where
-        C: Clone + Send + 'static,
+        C: Send + Sync + 'static,
         T: Clone + Throttled<F> + Send + Sync + 'static,
         F: Send + Sync + 'static,
-        Fun: Fn(C, F) -> Fut + Send + 'static,
-        Fut: Future<Output = ()> + Send + 'static,
+        Fun: for<'a> Fn(&'a C, F) -> BoxFuture<'a> + Send + 'static,
     {
         let ThrottleTask {
             frequency,
@@ -287,11 +283,11 @@ impl<C, T, Fun> ThrottleTask<C, T, Fun> {
             // Send the initial value before the loop. Frequency::OnEvent has no
             // interval, so a timer tick cannot cover this for every frequency.
             if let Some(value) = state.current::<F>() {
-                call(client.clone(), value).await;
+                call(&client, value).await;
             }
 
             while let Some(value) = state.next::<F>().await {
-                call(client.clone(), value).await;
+                call(&client, value).await;
             }
         });
 
@@ -300,6 +296,17 @@ impl<C, T, Fun> ThrottleTask<C, T, Fun> {
         }
     }
 }
+
+/// The future an async throttle callback returns.
+///
+/// It is boxed so that it may borrow the client for as long as the call lasts:
+/// the lifetime of that borrow is part of the future's type, which a plain
+/// generic parameter cannot express.
+///
+/// Callbacks produce one with [`Box::pin`]. See
+/// [`Handle::spawn_async_throttle`](crate::Handle::spawn_async_throttle) for
+/// what that looks like.
+pub type BoxFuture<'a> = Pin<Box<dyn Future<Output = ()> + Send + 'a>>;
 
 /// A running throttle, rate-limiting broadcasted updates from a
 /// [`Handle`](crate::Handle) or [`Cache`](crate::Cache) before forwarding them
@@ -330,9 +337,11 @@ impl<C, T, Fun> ThrottleTask<C, T, Fun> {
 /// let throttle = handle
 ///     .spawn_async_throttle(
 ///         sink,
-///         |sink: mpsc::Sender<i32>, value: i32| async move {
-///             tokio::time::sleep(Duration::from_millis(20)).await;
-///             let _ = sink.send(value).await;
+///         |sink: &mpsc::Sender<i32>, value: i32| {
+///             Box::pin(async move {
+///                 tokio::time::sleep(Duration::from_millis(20)).await;
+///                 let _ = sink.send(value).await;
+///             })
 ///         },
 ///         Frequency::OnEvent,
 ///     )
@@ -431,8 +440,9 @@ impl Throttle {
     /// callback slower than the [`Frequency`] delays the following send rather
     /// than running alongside it.
     ///
-    /// `call` receives the client by value, cloned once per call.
-    pub fn spawn_async_from_receiver<C, T, F, Fun, Fut>(
+    /// `call` borrows the client and returns a [`BoxFuture`], built with
+    /// [`Box::pin`].
+    pub fn spawn_async_from_receiver<C, T, F, Fun>(
         client: C,
         call: Fun,
         frequency: Frequency,
@@ -440,11 +450,10 @@ impl Throttle {
         init: Option<T>,
     ) -> Throttle
     where
-        C: Clone + Send + 'static,
+        C: Send + Sync + 'static,
         T: Clone + Throttled<F> + Send + Sync + 'static,
         F: Send + Sync + 'static,
-        Fun: Fn(C, F) -> Fut + Send + 'static,
-        Fut: Future<Output = ()> + Send + 'static,
+        Fun: for<'a> Fn(&'a C, F) -> BoxFuture<'a> + Send + 'static,
     {
         ThrottleTask {
             frequency,
@@ -458,18 +467,17 @@ impl Throttle {
 
     /// The async counterpart of [`spawn_interval`](Self::spawn_interval).
     #[must_use = "without this handle the interval task cannot be stopped"]
-    pub fn spawn_async_interval<C, T, F, Fun, Fut>(
+    pub fn spawn_async_interval<C, T, F, Fun>(
         client: C,
         call: Fun,
         interval: Duration,
         val: T,
     ) -> Throttle
     where
-        C: Clone + Send + 'static,
+        C: Send + Sync + 'static,
         T: Clone + Throttled<F> + Send + Sync + 'static,
         F: Send + Sync + 'static,
-        Fun: Fn(C, F) -> Fut + Send + 'static,
-        Fut: Future<Output = ()> + Send + 'static,
+        Fun: for<'a> Fn(&'a C, F) -> BoxFuture<'a> + Send + 'static,
     {
         ThrottleTask {
             frequency: Frequency::Interval(interval),
@@ -681,15 +689,20 @@ mod tests {
 
         /// Forwards values downstream, which is a real await: the send waits
         /// once the consumer is behind by more than the channel holds.
-        #[derive(Clone)]
+        ///
+        /// Deliberately not Clone, so nothing here can lean on cloning it.
         struct Writer {
             sink: mpsc::Sender<i32>,
         }
 
         impl Writer {
-            async fn write(self, value: i32) {
+            async fn write(&self, value: i32) {
                 let _ = self.sink.send(value).await;
             }
+        }
+
+        fn write(writer: &Writer, value: i32) -> BoxFuture<'_> {
+            Box::pin(writer.write(value))
         }
 
         fn writer() -> (Writer, mpsc::Receiver<i32>) {
@@ -721,12 +734,14 @@ mod tests {
             let _throttle = handle
                 .spawn_async_throttle(
                     overlap.clone(),
-                    |overlap: Overlap, _: i32| async move {
-                        if overlap.busy.swap(true, Ordering::SeqCst) {
-                            overlap.detected.store(true, Ordering::SeqCst);
-                        }
-                        sleep(PERIOD).await;
-                        overlap.busy.store(false, Ordering::SeqCst);
+                    |overlap: &Overlap, _: i32| {
+                        Box::pin(async move {
+                            if overlap.busy.swap(true, Ordering::SeqCst) {
+                                overlap.detected.store(true, Ordering::SeqCst);
+                            }
+                            sleep(PERIOD).await;
+                            overlap.busy.store(false, Ordering::SeqCst);
+                        })
                     },
                     Frequency::OnEvent,
                 )
@@ -758,7 +773,7 @@ mod tests {
             let update = tokio::spawn(async move { update_handle.set(2).await });
 
             let _throttle = handle
-                .spawn_async_throttle(writer, Writer::write, Frequency::OnEvent)
+                .spawn_async_throttle(writer, write, Frequency::OnEvent)
                 .await;
 
             update.await.unwrap();
@@ -768,12 +783,33 @@ mod tests {
         }
 
         #[tokio::test(start_paused = true)]
-        async fn test_an_async_method_can_be_the_callback() {
+        async fn test_a_wrapped_async_method_can_be_the_callback() {
             let handle = Handle::new(1);
             let (writer, mut received) = writer();
 
             let _throttle = handle
-                .spawn_async_throttle(writer, Writer::write, Frequency::OnEvent)
+                .spawn_async_throttle(writer, write, Frequency::OnEvent)
+                .await;
+
+            handle.set(2).await;
+
+            assert_eq!(next_sent(&mut received).await, Some(1));
+            assert_eq!(next_sent(&mut received).await, Some(2));
+        }
+
+        /// The closure needs no type annotations, so the borrow does not have to
+        /// be spelled out at every call site.
+        #[tokio::test(start_paused = true)]
+        async fn test_the_callback_needs_no_type_annotations() {
+            let handle = Handle::new(1);
+            let (writer, mut received) = writer();
+
+            let _throttle = handle
+                .spawn_async_throttle(
+                    writer,
+                    |writer, value| Box::pin(writer.write(value)),
+                    Frequency::OnEvent,
+                )
                 .await;
 
             handle.set(2).await;
@@ -788,7 +824,7 @@ mod tests {
             let mut cache = handle.create_cache().await;
             let (writer, mut received) = writer();
 
-            let _throttle = cache.spawn_async_throttle(writer, Writer::write, Frequency::OnEvent);
+            let _throttle = cache.spawn_async_throttle(writer, write, Frequency::OnEvent);
 
             handle.set(2).await;
 
@@ -806,7 +842,7 @@ mod tests {
 
             handle.set(2).await; // Queued in the cache's receiver, not yet consumed
 
-            let _throttle = cache.spawn_async_throttle(writer, Writer::write, Frequency::OnEvent);
+            let _throttle = cache.spawn_async_throttle(writer, write, Frequency::OnEvent);
 
             // The initial send carries the queued update, not the stale snapshot
             assert_eq!(next_sent(&mut received).await, Some(2));

@@ -1,11 +1,11 @@
 use std::fmt::Debug;
-use std::future::Future;
 use thiserror::Error;
 use tokio::sync::broadcast::{
     self, Receiver,
     error::{RecvError, TryRecvError},
 };
 
+use crate::throttle::BoxFuture;
 use crate::{Frequency, Throttle, Throttled};
 
 /// A simple caching struct that can be used to locally maintain a synchronized state with an actor.
@@ -596,21 +596,21 @@ where
     /// Synchronizes the cache first, exactly as
     /// [`spawn_throttle`](Self::spawn_throttle) does.
     ///
-    /// `call` receives the client by value, cloned once per call. See
+    /// `call` borrows the client and returns a [`BoxFuture`](crate::BoxFuture),
+    /// built with [`Box::pin`]. See
     /// [`Handle::spawn_async_throttle`](crate::Handle::spawn_async_throttle)
-    /// for an example.
-    pub fn spawn_async_throttle<C, F, Fun, Fut>(
+    /// for how to write one.
+    pub fn spawn_async_throttle<C, F, Fun>(
         &mut self,
         client: C,
         call: Fun,
         freq: Frequency,
     ) -> Throttle
     where
-        C: Clone + Send + 'static,
+        C: Send + Sync + 'static,
         T: Throttled<F>,
         F: Send + Sync + 'static,
-        Fun: Fn(C, F) -> Fut + Send + 'static,
-        Fut: Future<Output = ()> + Send + 'static,
+        Fun: for<'a> Fn(&'a C, F) -> BoxFuture<'a> + Send + 'static,
     {
         // Subscribe before draining, so an update arriving in between reaches
         // the throttle instead of being lost. It may then be part of the

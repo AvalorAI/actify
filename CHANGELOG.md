@@ -21,9 +21,13 @@ they record what changed rather than why, and are not exhaustive. 0.8.0 through
   `Cache::spawn_async_throttle`, `Throttle::spawn_async_from_receiver` and
   `Throttle::spawn_async_interval`. Each call is awaited before the throttle
   looks for the next value, so a slow callback delays the following send rather
-  than running alongside it. The callback takes the client by value, cloned once
-  per call, because a future borrowing it could not outlive the iteration that
-  produced it.
+  than running alongside it.
+
+  The callback borrows the client and returns a `BoxFuture`, built with
+  `Box::pin`, so an `async fn` taking `&self` fits and the client is neither
+  cloned nor required to be `Clone`. A future that borrows carries the lifetime
+  of that borrow in its type, which a plain generic return type cannot express,
+  hence the box. `BoxFuture` is exported for naming the bound.
 - `Throttle::abort` and `Throttle::is_finished`. A throttle spawned by
   `Throttle::spawn_interval` has no actor attached, so before this nothing could
   stop it short of shutting down the runtime.

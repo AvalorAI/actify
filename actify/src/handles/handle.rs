@@ -1,12 +1,11 @@
 use std::any::Any;
 use std::any::type_name;
 use std::fmt::{self, Debug};
-use std::future::Future;
 use tokio::sync::{broadcast, mpsc, oneshot, watch};
 
 use super::read_handle::ReadHandle;
 use crate::actor::{Actor, ActorExit, ActorMethod, BroadcastFn, ExitState, Job, serve};
-use crate::throttle::Throttle;
+use crate::throttle::{BoxFuture, Throttle};
 use crate::{Cache, Frequency, Throttled};
 
 pub(crate) const CHANNEL_SIZE: usize = 100;
@@ -563,26 +562,34 @@ where
     /// Spawns a [`Throttle`] whose callback is awaited before the next value is
     /// looked for.
     ///
-    /// `call` receives the client by value, so it can be held across the await.
-    /// See [Slow calls](Throttle#slow-calls) for what happens while one runs.
+    /// `call` borrows the client and returns a [`BoxFuture`], so the client is
+    /// neither cloned nor required to be `Clone`. See [Slow
+    /// calls](Throttle#slow-calls) for what happens while one runs.
     ///
-    /// # Examples
+    /// # Writing the callback
     ///
-    /// An async method on the client is passed directly. Here each update is
-    /// forwarded to a channel, which waits when the consumer falls behind:
+    /// The future may borrow the client, and a future's type carries the
+    /// lifetime of what it borrows. A plain generic return type cannot express
+    /// that, so the future is boxed and every callback ends up shaped like:
+    ///
+    /// ```text
+    /// |client, value| Box::pin(async move { ... })
+    /// ```
+    ///
+    /// An `async fn` on the client wraps directly, without an `async` block of
+    /// its own:
     ///
     /// ```
-    /// # use actify::{Handle, Frequency};
+    /// # use actify::{Frequency, Handle};
     /// # use tokio::sync::mpsc;
     /// # #[tokio::main]
     /// # async fn main() {
-    /// #[derive(Clone)]
     /// struct Forwarder {
     ///     sink: mpsc::Sender<i32>,
     /// }
     ///
     /// impl Forwarder {
-    ///     async fn forward(self, value: i32) {
+    ///     async fn forward(&self, value: i32) {
     ///         let _ = self.sink.send(value).await;
     ///     }
     /// }
@@ -591,7 +598,11 @@ where
     /// let handle = Handle::new(1);
     ///
     /// let throttle = handle
-    ///     .spawn_async_throttle(Forwarder { sink }, Forwarder::forward, Frequency::OnEvent)
+    ///     .spawn_async_throttle(
+    ///         Forwarder { sink },
+    ///         |forwarder, value| Box::pin(forwarder.forward(value)),
+    ///         Frequency::OnEvent,
+    ///     )
     ///     .await;
     ///
     /// handle.set(2).await;
@@ -602,27 +613,72 @@ where
     /// # }
     /// ```
     ///
-    /// The method takes `self`, so the client is cloned once per call. A method
-    /// taking `&self` does not match `Fn(C, F)`; wrap it in a closure such as
-    /// `|client: Arc<Db>, value| async move { client.insert(value).await }`.
+    /// Anything longer goes in an `async move` block, which can await as often
+    /// as it likes and use the client throughout:
+    ///
+    /// ```
+    /// # use actify::{Frequency, Handle};
+    /// # use tokio::sync::mpsc;
+    /// # #[tokio::main]
+    /// # async fn main() {
+    /// struct Journal {
+    ///     writes: mpsc::Sender<String>,
+    /// }
+    ///
+    /// let (writes, mut received) = mpsc::channel(8);
+    /// let handle = Handle::new(1);
+    ///
+    /// let throttle = handle
+    ///     .spawn_async_throttle(
+    ///         Journal { writes },
+    ///         |journal, value: i32| {
+    ///             Box::pin(async move {
+    ///                 let _ = journal.writes.send(format!("begin {value}")).await;
+    ///                 let _ = journal.writes.send(format!("end {value}")).await;
+    ///             })
+    ///         },
+    ///         Frequency::OnEvent,
+    ///     )
+    ///     .await;
+    ///
+    /// assert_eq!(received.recv().await.as_deref(), Some("begin 1"));
+    /// assert_eq!(received.recv().await.as_deref(), Some("end 1"));
+    /// throttle.abort();
+    /// # }
+    /// ```
+    ///
+    /// A method reference on its own does not work, because an `async fn`
+    /// returns its own future type rather than a boxed one:
+    ///
+    /// ```compile_fail
+    /// # use actify::{Frequency, Handle};
+    /// # struct Forwarder;
+    /// # impl Forwarder { async fn forward(&self, _value: i32) {} }
+    /// # #[tokio::main]
+    /// # async fn main() {
+    /// # let handle = Handle::new(1);
+    /// handle
+    ///     .spawn_async_throttle(Forwarder, Forwarder::forward, Frequency::OnEvent)
+    ///     .await;
+    /// # }
+    /// ```
     ///
     /// # Panics
     ///
     /// Panics if the actor has stopped, either because one of its methods
     /// panicked or because its runtime shut down. See [Actor lifetime and
     /// panics](crate#actor-lifetime-and-panics).
-    pub async fn spawn_async_throttle<C, F, Fun, Fut>(
+    pub async fn spawn_async_throttle<C, F, Fun>(
         &self,
         client: C,
         call: Fun,
         freq: Frequency,
     ) -> Throttle
     where
-        C: Clone + Send + 'static,
+        C: Send + Sync + 'static,
         V: Throttled<F>,
         F: Send + Sync + 'static,
-        Fun: Fn(C, F) -> Fut + Send + 'static,
-        Fut: Future<Output = ()> + Send + 'static,
+        Fun: for<'a> Fn(&'a C, F) -> BoxFuture<'a> + Send + 'static,
     {
         // Subscribe before get, so an update arriving in between is queued rather than lost.
         let receiver = self.subscribe();
