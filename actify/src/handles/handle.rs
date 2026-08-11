@@ -237,7 +237,7 @@ impl<T: Send + Sync + 'static, V> Handle<T, V> {
             respond_to,
         };
         if self.tx.send(job).await.is_err() {
-            return self.report_actor_gone().await;
+            self.report_actor_gone().await;
         }
         match get_result.await {
             Ok(res) => res,
@@ -250,7 +250,7 @@ impl<T: Send + Sync + 'static, V> Handle<T, V> {
     /// The exit signal may not have been written yet when the channel first
     /// reports its failure, so this waits for it rather than guessing from
     /// scheduling order.
-    async fn report_actor_gone(&self) -> Box<dyn Any + Send> {
+    async fn report_actor_gone(&self) -> ! {
         if self.wait_for_exit().await == ActorExit::Panicked {
             panic!("A panic occurred in the Actor of type {}", type_name::<T>());
         }
@@ -485,6 +485,77 @@ impl<T, V: Default + Clone + Send + Sync + 'static> Handle<T, V> {
     /// or [`Handle::create_cache_from`] to start from a custom value.
     pub fn create_cache_from_default(&self) -> Cache<V> {
         self.create_cache_from(V::default())
+    }
+}
+
+impl<T, V> Handle<T, V>
+where
+    T: BroadcastAs<V> + Send + Sync + 'static,
+    V: Clone + Send + Sync + 'static,
+{
+    /// Waits until the broadcast value satisfies `predicate` and returns it.
+    ///
+    /// Tests the actor's current value first, so a predicate that already holds
+    /// returns without waiting for an update. After that, every value the actor
+    /// broadcasts is tested in the order it was sent, including values the actor
+    /// has already moved past. The value returned is the one that satisfied the
+    /// predicate, which may no longer be the actor's current value.
+    ///
+    /// The predicate receives the broadcast type `V`, which the actor produces
+    /// without cloning itself, so this works on non-Clone actor types.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use actify::Handle;
+    /// # #[tokio::main]
+    /// # async fn main() {
+    /// let handle = Handle::new(0);
+    ///
+    /// let setter = handle.clone();
+    /// tokio::spawn(async move { setter.set(3).await });
+    ///
+    /// assert_eq!(handle.wait_until(|value| *value == 3).await, 3);
+    /// # }
+    /// ```
+    ///
+    /// # Panics
+    ///
+    /// Panics if the actor has stopped, either because one of its methods
+    /// panicked or because its runtime shut down. See [Actor lifetime and
+    /// panics](crate#actor-lifetime-and-panics).
+    pub async fn wait_until<P>(&self, mut predicate: P) -> V
+    where
+        P: FnMut(&V) -> bool,
+    {
+        // Subscribe before reading, so an update arriving in between is queued
+        // rather than lost.
+        let mut receiver = self.subscribe();
+        let current = self.with(|inner| inner.to_broadcast()).await;
+        if predicate(&current) {
+            return current;
+        }
+
+        loop {
+            // This handle holds a broadcast sender, so the channel it is
+            // waiting on cannot report a stopped actor. The exit signal can.
+            let received = tokio::select! {
+                received = receiver.recv() => received,
+                _ = self.wait_for_exit() => self.report_actor_gone().await,
+            };
+
+            match received {
+                Ok(value) if predicate(&value) => return value,
+                Ok(_) => continue,
+                // Values were dropped, so one of them may have satisfied the
+                // predicate. Nothing can recover them, so the wait goes on.
+                Err(broadcast::error::RecvError::Lagged(nr)) => log::debug!(
+                    "A wait on actor type {} lagged {nr} messages",
+                    type_name::<T>()
+                ),
+                Err(broadcast::error::RecvError::Closed) => self.report_actor_gone().await,
+            }
+        }
     }
 }
 
@@ -819,7 +890,9 @@ mod tests {
 
         /// Fails rather than hanging when the wait never ends.
         async fn finished<T>(wait: impl Future<Output = T>) -> T {
-            timeout(PERIOD * 10, wait).await.expect("the wait never ended")
+            timeout(PERIOD * 10, wait)
+                .await
+                .expect("the wait never ended")
         }
 
         #[tokio::test(start_paused = true)]
@@ -884,7 +957,18 @@ mod tests {
             assert_eq!(finished(handle.wait_until(|value| *value == 2)).await, 2);
         }
 
-        #[tokio::test]
+        #[tokio::test(start_paused = true)]
+        async fn test_a_read_handle_can_wait() {
+            let handle = Handle::new(0);
+            let read_handle = handle.get_read_handle();
+            tokio::spawn(async move { handle.set(5).await });
+
+            assert_eq!(finished(read_handle.wait_until(|v| *v == 5)).await, 5);
+        }
+
+        /// A handle holds a broadcast sender, so a waiting handle keeps its own
+        /// channel open and cannot learn from it that the actor is gone.
+        #[tokio::test(start_paused = true)]
         async fn test_a_dead_actor_ends_the_wait_with_a_panic() {
             let handle = Handle::new(PanicStruct {});
             let waiter = handle.clone();
@@ -892,7 +976,7 @@ mod tests {
 
             let _ = tokio::spawn(async move { handle.panic().await }).await;
 
-            let message = panic_message(wait.await.unwrap_err());
+            let message = panic_message(finished(wait).await.unwrap_err());
             assert!(
                 message.contains("A panic occurred in the Actor"),
                 "expected the actor's panic to be reported, got: {message}"

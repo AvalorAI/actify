@@ -198,6 +198,7 @@
 //! - [`Handle::subscribe`]: returns a [`tokio::sync::broadcast::Receiver`] for change notifications
 //! - [`Handle::with`]: runs a read-only closure on `&T` (does not broadcast)
 //! - [`Handle::with_mut`]: runs a mutable closure on `&mut T` (broadcasts the change)
+//! - [`Handle::wait_until`]: waits until the broadcast value satisfies a predicate
 //!
 //! # Broadcasting
 //!
@@ -311,13 +312,17 @@
 //! current value), [`Handle::create_cache_from`] (custom initial value),
 //! or [`Handle::create_cache_from_default`] (starts from `T::default()`).
 //!
+//! [`Cache::wait_for`] waits until the cached value satisfies a predicate,
+//! reading through the cache so it holds the value that matched.
+//!
 //! See [`CacheRecvError`] and [`CacheRecvNewestError`] for possible error conditions.
 //!
 //! # ReadHandle
 //!
 //! A [`ReadHandle`] is a read-only view of an actor. It supports [`get`](ReadHandle::get),
-//! [`subscribe`](ReadHandle::subscribe), cache creation and throttle spawning, but
-//! cannot mutate the actor. Obtain one via [`Handle::get_read_handle`].
+//! [`subscribe`](ReadHandle::subscribe), [`wait_until`](ReadHandle::wait_until), cache
+//! creation and throttle spawning, but cannot mutate the actor. Obtain one via
+//! [`Handle::get_read_handle`].
 //!
 //! # Throttle
 //!

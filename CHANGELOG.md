@@ -28,6 +28,21 @@ they record what changed rather than why, and are not exhaustive. 0.8.0 through
   cloned nor required to be `Clone`. A future that borrows carries the lifetime
   of that borrow in its type, which a plain generic return type cannot express,
   hence the box. `BoxFuture` is exported for naming the bound.
+- `Handle::wait_until`, `ReadHandle::wait_until` and `Cache::wait_for`, which
+  wait until the broadcast value satisfies a predicate and return the value that
+  satisfied it. The current value is tested first, so a predicate that already
+  holds returns without waiting for an update.
+
+  Every value is tested in the order it was broadcast, including values the actor
+  has already moved past, so a state the actor passed through still ends the
+  wait. The value returned may therefore be older than the actor's current one.
+  A lagging receiver is the one case where a matching value can be missed: it is
+  logged and the wait continues.
+
+  The predicate takes the broadcast type, which the actor produces without
+  cloning itself, so waiting works on non-Clone actor types. `Handle::wait_until`
+  panics if the actor stops while it waits, as the other handle methods do;
+  `Cache::wait_for` returns `CacheRecvNewestError::Closed`.
 - `ReadHandle::spawn_throttle` and `ReadHandle::spawn_async_throttle`, so a
   throttle can be spawned from a read-only view of an actor. Both behave as
   their `Handle` counterparts.

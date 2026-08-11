@@ -564,6 +564,60 @@ where
         }
     }
 
+    /// Waits until the cached value satisfies `predicate` and returns it.
+    ///
+    /// Reads through the cache, so the value that satisfied the predicate is the
+    /// one the cache holds afterwards. Every queued value is tested in the order
+    /// it was sent, including values the actor has already moved past, so the
+    /// value returned may no longer be the actor's current value.
+    ///
+    /// Counts as the cache's first read, which means a predicate satisfied by
+    /// the value the cache already holds returns without waiting.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CacheRecvNewestError::Closed`] once the actor has stopped and
+    /// every update it broadcast has been tested.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use actify::Handle;
+    /// # #[tokio::main]
+    /// # async fn main() {
+    /// let handle = Handle::new(0);
+    /// let mut cache = handle.create_cache().await;
+    ///
+    /// let setter = handle.clone();
+    /// tokio::spawn(async move { setter.set(3).await });
+    ///
+    /// assert_eq!(cache.wait_for(|value| *value == 3).await, Ok(&3));
+    /// assert_eq!(cache.get_current(), &3);
+    /// # }
+    /// ```
+    pub async fn wait_for<P>(&mut self, mut predicate: P) -> Result<&T, CacheRecvNewestError>
+    where
+        P: FnMut(&T) -> bool,
+    {
+        if self.is_first_request() && predicate(self.get_current()) {
+            return Ok(&self.inner);
+        }
+
+        loop {
+            match self.rx.recv().await {
+                Ok(value) => {
+                    if predicate(self.store(value)) {
+                        return Ok(&self.inner);
+                    }
+                }
+                // Values were dropped, so one of them may have satisfied the
+                // predicate. Nothing can recover them, so the wait goes on.
+                Err(RecvError::Lagged(nr)) => log_lag::<T>(nr),
+                Err(RecvError::Closed) => return Err(CacheRecvNewestError::Closed),
+            }
+        }
+    }
+
     /// Spawns a [`Throttle`] that fires given a specified [`Frequency`], given any broadcasted updates by the actor.
     ///
     /// First synchronizes the cache to the newest broadcast value, which
@@ -671,7 +725,9 @@ mod tests {
 
         /// Fails rather than hanging when the wait never ends.
         async fn finished<T>(wait: impl std::future::Future<Output = T>) -> T {
-            timeout(PERIOD * 10, wait).await.expect("the wait never ended")
+            timeout(PERIOD * 10, wait)
+                .await
+                .expect("the wait never ended")
         }
 
         #[tokio::test(start_paused = true)]
