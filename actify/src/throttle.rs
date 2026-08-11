@@ -1009,6 +1009,22 @@ mod tests {
         }
 
         #[tokio::test(start_paused = true)]
+        async fn test_a_read_handle_can_spawn_one() {
+            let handle = Handle::new(1);
+            let read_handle = handle.get_read_handle();
+            let (writer, mut received) = writer();
+
+            let _throttle = read_handle
+                .spawn_async_throttle(writer, write, Frequency::OnEvent)
+                .await;
+
+            handle.set(2).await;
+
+            assert_eq!(next_sent(&mut received).await, Some(1));
+            assert_eq!(next_sent(&mut received).await, Some(2));
+        }
+
+        #[tokio::test(start_paused = true)]
         async fn test_a_cache_can_spawn_one() {
             let handle = Handle::new(1);
             let mut cache = handle.create_cache().await;
@@ -1244,6 +1260,27 @@ mod tests {
 
         // Synchronizing counts as receiving: the cache holds the value too
         assert_eq!(cache.get_current(), &2);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn test_throttle_from_read_handle() {
+        let handle = Handle::new(1);
+        let read_handle = handle.get_read_handle();
+        let counter = CounterClient::new();
+
+        read_handle
+            .spawn_throttle(counter.clone(), CounterClient::call, Frequency::OnEvent)
+            .await;
+        sleep(PERIOD).await;
+
+        assert_eq!(*counter.last.lock().unwrap(), Some(1));
+        assert_eq!(*counter.count.lock().unwrap(), 1);
+
+        handle.set(2).await;
+        sleep(PERIOD).await;
+
+        assert_eq!(*counter.last.lock().unwrap(), Some(2));
+        assert_eq!(*counter.count.lock().unwrap(), 2);
     }
 
     #[tokio::test(start_paused = true)]

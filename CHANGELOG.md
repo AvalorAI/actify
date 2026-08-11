@@ -28,6 +28,9 @@ they record what changed rather than why, and are not exhaustive. 0.8.0 through
   cloned nor required to be `Clone`. A future that borrows carries the lifetime
   of that borrow in its type, which a plain generic return type cannot express,
   hence the box. `BoxFuture` is exported for naming the bound.
+- `ReadHandle::spawn_throttle` and `ReadHandle::spawn_async_throttle`, so a
+  throttle can be spawned from a read-only view of an actor. Both behave as
+  their `Handle` counterparts.
 - `Throttle::abort` and `Throttle::is_finished`. A throttle spawned by
   `Throttle::spawn_interval` has no actor attached, so before this nothing could
   stop it short of shutting down the runtime.
