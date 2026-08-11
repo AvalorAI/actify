@@ -1,9 +1,15 @@
+use std::future::Future;
+use std::pin::Pin;
 use tokio::sync::broadcast::error::{RecvError, TryRecvError};
 use tokio::sync::broadcast::{self, Receiver};
 use tokio::task::AbortHandle;
 use tokio::time::{self, Duration, Interval};
 
 /// The Frequency is used to tune the speed of a [`Throttle`].
+///
+/// Each variant's example below sends through a callback that takes 50ms, on an
+/// actor updated twice while the first send is still running. What reaches the
+/// callback is what distinguishes them.
 ///
 /// For the two interval variants, a send that outlasts its interval does not
 /// build up the ticks it missed. The interval keeps its original schedule and
@@ -12,11 +18,111 @@ use tokio::time::{self, Duration, Interval};
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Frequency {
     /// Sends every value as it arrives.
+    ///
+    /// Calls slower than the updates build a backlog, which drains in order
+    /// once they finish. Nothing is skipped:
+    ///
+    /// ```
+    /// # use actify::{BoxFuture, Frequency, Handle};
+    /// # use std::time::Duration;
+    /// # use tokio::sync::mpsc;
+    /// # fn slow(sender: &mpsc::Sender<i32>, value: i32) -> BoxFuture<'_> {
+    /// #     Box::pin(async move {
+    /// #         tokio::time::sleep(Duration::from_millis(50)).await;
+    /// #         let _ = sender.send(value).await;
+    /// #     })
+    /// # }
+    /// # #[tokio::main]
+    /// # async fn main() {
+    /// let (sender, mut sent) = mpsc::channel(8);
+    /// let handle = Handle::new(0);
+    ///
+    /// let throttle = handle
+    ///     .spawn_async_throttle(sender, slow, Frequency::OnEvent)
+    ///     .await;
+    ///
+    /// handle.set(1).await;
+    /// handle.set(2).await;
+    ///
+    /// assert_eq!(sent.recv().await, Some(0));
+    /// assert_eq!(sent.recv().await, Some(1));
+    /// assert_eq!(sent.recv().await, Some(2));
+    /// # throttle.abort();
+    /// # }
+    /// ```
     OnEvent,
     /// Sends the current value every interval, whether or not a new one arrived.
+    ///
+    /// A backlog collapses: the tick sends the newest value queued and the
+    /// others are never seen. It then keeps sending, whether or not anything
+    /// changed:
+    ///
+    /// ```
+    /// # use actify::{BoxFuture, Frequency, Handle};
+    /// # use std::time::Duration;
+    /// # use tokio::sync::mpsc;
+    /// # fn slow(sender: &mpsc::Sender<i32>, value: i32) -> BoxFuture<'_> {
+    /// #     Box::pin(async move {
+    /// #         tokio::time::sleep(Duration::from_millis(50)).await;
+    /// #         let _ = sender.send(value).await;
+    /// #     })
+    /// # }
+    /// # #[tokio::main]
+    /// # async fn main() {
+    /// let (sender, mut sent) = mpsc::channel(8);
+    /// let handle = Handle::new(0);
+    ///
+    /// let throttle = handle
+    ///     .spawn_async_throttle(sender, slow, Frequency::Interval(Duration::from_millis(10)))
+    ///     .await;
+    ///
+    /// handle.set(1).await;
+    /// handle.set(2).await;
+    ///
+    /// assert_eq!(sent.recv().await, Some(0));
+    /// assert_eq!(sent.recv().await, Some(2)); // 1 is skipped
+    /// assert_eq!(sent.recv().await, Some(2)); // and it carries on
+    /// # throttle.abort();
+    /// # }
+    /// ```
     Interval(Duration),
     /// Sends at most once per interval, and only when a new value arrived since
     /// the last send.
+    ///
+    /// A backlog collapses as it does under [`Interval`](Self::Interval), and
+    /// once nothing new arrives the ticks pass without sending:
+    ///
+    /// ```
+    /// # use actify::{BoxFuture, Frequency, Handle};
+    /// # use std::time::Duration;
+    /// # use tokio::sync::mpsc;
+    /// # fn slow(sender: &mpsc::Sender<i32>, value: i32) -> BoxFuture<'_> {
+    /// #     Box::pin(async move {
+    /// #         tokio::time::sleep(Duration::from_millis(50)).await;
+    /// #         let _ = sender.send(value).await;
+    /// #     })
+    /// # }
+    /// # #[tokio::main]
+    /// # async fn main() {
+    /// let (sender, mut sent) = mpsc::channel(8);
+    /// let handle = Handle::new(0);
+    ///
+    /// let throttle = handle
+    ///     .spawn_async_throttle(sender, slow, Frequency::OnEventWhen(Duration::from_millis(10)))
+    ///     .await;
+    ///
+    /// handle.set(1).await;
+    /// handle.set(2).await;
+    ///
+    /// assert_eq!(sent.recv().await, Some(0));
+    /// assert_eq!(sent.recv().await, Some(2)); // 1 is skipped
+    ///
+    /// // Nothing arrived since, so no further send
+    /// let quiet = tokio::time::timeout(Duration::from_millis(100), sent.recv()).await;
+    /// assert!(quiet.is_err());
+    /// # throttle.abort();
+    /// # }
+    /// ```
     OnEventWhen(Duration),
 }
 
@@ -50,9 +156,9 @@ impl Timing {
     fn new(frequency: Frequency) -> Self {
         match frequency {
             Frequency::OnEvent => Timing::OnEvent,
-            Frequency::Interval(duration) => Timing::Interval(interval_after(duration)),
+            Frequency::Interval(duration) => Timing::Interval(throttle_interval(duration)),
             Frequency::OnEventWhen(duration) => Timing::OnEventWhen {
-                interval: interval_after(duration),
+                interval: throttle_interval(duration),
                 event_pending: false,
             },
         }
@@ -95,18 +201,19 @@ impl Timing {
     }
 }
 
-/// An interval whose first tick is a full period out, and which never releases
-/// more than one tick for a period it spent waiting.
+/// The interval a throttle ticks on, which departs from
+/// `tokio::time::interval`'s defaults twice.
 ///
-/// `tokio::time::interval` completes its first tick immediately, and
-/// `ThrottleTask::run` already sends the initial value before entering the loop,
-/// so without the reset an interval frequency sends twice at startup.
+/// Its first tick completes immediately, and `ThrottleTask::spawn` already sends
+/// the initial value before the loop, so the reset moves the first tick a full
+/// period out and the two do not land together.
 ///
 /// Its default [`MissedTickBehavior::Burst`](time::MissedTickBehavior::Burst)
-/// hands over every tick that came due while the loop was busy, all at once. A
-/// throttle sends at most once per period, so it skips them and stays on the
-/// original schedule instead.
-fn interval_after(duration: Duration) -> Interval {
+/// hands back every tick that came due while the loop was busy, all at once.
+/// Both interval frequencies send at most once per period, so skipping them
+/// keeps the original schedule and a busy loop costs sends rather than bunching
+/// them together.
+fn throttle_interval(duration: Duration) -> Interval {
     let mut interval = time::interval(duration);
     interval.set_missed_tick_behavior(time::MissedTickBehavior::Skip);
     interval.reset();
@@ -126,7 +233,7 @@ enum Wake {
 }
 
 /// Owns the broadcast receiver and the timing, so the loop in
-/// `ThrottleTask::run` is only a call to [`Self::next`] and a callback.
+/// `ThrottleTask::spawn` is only a call to [`Self::next`] and a callback.
 struct ThrottleState<T> {
     timing: Timing,
     val_rx: Option<broadcast::Receiver<T>>,
@@ -306,7 +413,54 @@ impl<C, T, Fun> ThrottleTask<C, T, Fun> {
             task: task.abort_handle(),
         }
     }
+
+    /// The same loop awaiting each call, so the throttle only moves on once the
+    /// callback has finished.
+    fn spawn_async<F>(self) -> Throttle
+    where
+        C: Send + Sync + 'static,
+        T: Clone + Throttled<F> + Send + Sync + 'static,
+        F: Send + Sync + 'static,
+        Fun: for<'a> Fn(&'a C, F) -> BoxFuture<'a> + Send + 'static,
+    {
+        let ThrottleTask {
+            frequency,
+            client,
+            call,
+            val_rx,
+            current_val,
+        } = self;
+
+        let task = tokio::spawn(async move {
+            let mut state = ThrottleState::new(frequency, val_rx, current_val);
+
+            // Send the initial value before the loop. Frequency::OnEvent has no
+            // interval, so a timer tick cannot cover this for every frequency.
+            if let Some(value) = state.current::<F>() {
+                call(&client, value).await;
+            }
+
+            while let Some(value) = state.next::<F>().await {
+                call(&client, value).await;
+            }
+        });
+
+        Throttle {
+            task: task.abort_handle(),
+        }
+    }
 }
+
+/// The future an async throttle callback returns.
+///
+/// It is boxed so that it may borrow the client for as long as the call lasts:
+/// the lifetime of that borrow is part of the future's type, which a plain
+/// generic parameter cannot express.
+///
+/// Callbacks produce one with [`Box::pin`]. See
+/// [`Handle::spawn_async_throttle`](crate::Handle::spawn_async_throttle) for
+/// what that looks like.
+pub type BoxFuture<'a> = Pin<Box<dyn Future<Output = ()> + Send + 'a>>;
 
 /// A running throttle, rate-limiting broadcasted updates from a
 /// [`Handle`](crate::Handle) or [`Cache`](crate::Cache) before forwarding them
@@ -318,6 +472,20 @@ impl<C, T, Fun> ThrottleTask<C, T, Fun> {
 ///
 /// Dropping this leaves the throttle running. Call [`abort`](Self::abort) to
 /// stop it.
+///
+/// # Slow calls
+///
+/// One call runs at a time, and nothing is received while it runs, whether it
+/// blocks or is awaited. Updates broadcast in the meantime queue in the channel,
+/// and what the throttle then does with them depends on the [`Frequency`], which
+/// documents each case with a runnable example.
+///
+/// The queue is the broadcast channel, so it holds a bounded number of updates.
+/// Once more arrive than it holds, the oldest are dropped and the throttle
+/// resumes from the oldest value still there. Under [`Frequency::OnEvent`] those
+/// values are skipped, since it otherwise sends every one.
+/// [`Frequency::Interval`] and [`Frequency::OnEventWhen`] send only the newest
+/// value, so dropping older ones changes nothing they would have sent.
 #[derive(Debug)]
 pub struct Throttle {
     task: AbortHandle,
@@ -384,6 +552,62 @@ impl Throttle {
         .spawn()
     }
 
+    /// The async counterpart of
+    /// [`spawn_from_receiver`](Self::spawn_from_receiver).
+    ///
+    /// Each call is awaited before the throttle looks for the next value, so a
+    /// callback slower than the [`Frequency`] delays the following send rather
+    /// than running alongside it.
+    ///
+    /// `call` borrows the client and returns a [`BoxFuture`], built with
+    /// [`Box::pin`].
+    pub fn spawn_async_from_receiver<C, T, F, Fun>(
+        client: C,
+        call: Fun,
+        frequency: Frequency,
+        receiver: Receiver<T>,
+        init: Option<T>,
+    ) -> Throttle
+    where
+        C: Send + Sync + 'static,
+        T: Clone + Throttled<F> + Send + Sync + 'static,
+        F: Send + Sync + 'static,
+        Fun: for<'a> Fn(&'a C, F) -> BoxFuture<'a> + Send + 'static,
+    {
+        ThrottleTask {
+            frequency,
+            client,
+            call,
+            val_rx: Some(receiver),
+            current_val: init,
+        }
+        .spawn_async()
+    }
+
+    /// The async counterpart of [`spawn_interval`](Self::spawn_interval).
+    #[must_use = "without this handle the interval task cannot be stopped"]
+    pub fn spawn_async_interval<C, T, F, Fun>(
+        client: C,
+        call: Fun,
+        interval: Duration,
+        val: T,
+    ) -> Throttle
+    where
+        C: Send + Sync + 'static,
+        T: Clone + Throttled<F> + Send + Sync + 'static,
+        F: Send + Sync + 'static,
+        Fun: for<'a> Fn(&'a C, F) -> BoxFuture<'a> + Send + 'static,
+    {
+        ThrottleTask {
+            frequency: Frequency::Interval(interval),
+            client,
+            call,
+            val_rx: None,
+            current_val: Some(val),
+        }
+        .spawn_async()
+    }
+
     /// Stops the throttle.
     ///
     /// The task stops at its next await point, so a callback already running
@@ -405,7 +629,9 @@ mod tests {
 
     use super::*;
     use std::future::Future;
+    use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::{Arc, Mutex};
+    use tokio::sync::mpsc;
     use tokio::time::{Duration, Instant, sleep, timeout};
 
     const PERIOD: Duration = Duration::from_millis(100);
@@ -414,6 +640,14 @@ mod tests {
     /// paused in these tests, so the wait costs no real time.
     async fn still_waiting<T>(future: impl Future<Output = T>) -> bool {
         timeout(PERIOD * 10, future).await.is_err()
+    }
+
+    /// Waits for one message, failing rather than hanging when the throttle
+    /// never sends it.
+    async fn next_sent<T>(received: &mut mpsc::Receiver<T>) -> Option<T> {
+        timeout(PERIOD * 10, received.recv())
+            .await
+            .expect("the throttle sent nothing")
     }
 
     fn alive_tasks() -> usize {
@@ -437,58 +671,76 @@ mod tests {
             assert_eq!(start.elapsed(), Duration::ZERO);
         }
 
-        /// Ticks that come due while nobody is polling must not all fire at
-        /// once when polling resumes. One send per period is the whole contract.
+        /// Not polling the state for three periods stands in for a call that
+        /// took that long: while `Throttle::spawn` awaits one, the loop is not
+        /// asking the state for anything either.
+        ///
+        /// Three ticks come due in that time. Handing all three back would send
+        /// three times in the same instant, so only the current one is kept.
         #[tokio::test(start_paused = true)]
-        async fn test_interval_does_not_burst_after_a_delay() {
+        async fn test_ticks_missed_while_busy_do_not_pile_up() {
             let (_tx, rx) = broadcast::channel::<i32>(8);
             let mut state = ThrottleState::new(Frequency::Interval(PERIOD), Some(rx), Some(1));
 
-            // Three periods pass with nobody driving the state
             sleep(PERIOD * 3).await;
 
-            // The overdue tick fires now
+            // A tick is due right now, so this one does not wait
             let start = Instant::now();
             assert_eq!(state.next::<i32>().await, Some(1));
             assert_eq!(start.elapsed(), Duration::ZERO);
 
-            // And the one after it waits a full period rather than catching up
+            // The two ticks that passed unheeded are gone, so the next send is a
+            // full period away rather than immediate
             let start = Instant::now();
             assert_eq!(state.next::<i32>().await, Some(1));
             assert_eq!(start.elapsed(), PERIOD);
         }
 
-        /// An overdue tick can win the select over values already queued, so it
-        /// must take the newest of them rather than whatever it happens to hold.
+        /// Values queued while the state is not being polled stay queued: only
+        /// `next` takes them. The wait here just brings a tick due, so the tick
+        /// finds all three waiting and must send the last of them.
         #[tokio::test(start_paused = true)]
-        async fn test_an_overdue_interval_tick_sends_the_newest_value() {
+        async fn test_a_due_interval_tick_sends_the_newest_queued_value() {
             let (tx, rx) = broadcast::channel(8);
             let mut state = ThrottleState::new(Frequency::Interval(PERIOD), Some(rx), Some(0));
 
-            for value in 1..=3 {
+            for value in [7, 8, 9] {
                 tx.send(value).unwrap();
             }
+            sleep(PERIOD).await;
 
-            // The tick is overdue and three values are waiting
-            sleep(PERIOD * 2).await;
-
-            assert_eq!(state.next::<i32>().await, Some(3));
+            assert_eq!(state.next::<i32>().await, Some(9));
         }
 
         /// The same for OnEventWhen, which must also not lose the event: the
-        /// drained values are what makes it fire.
+        /// drained values are what makes it fire at all.
         #[tokio::test(start_paused = true)]
-        async fn test_an_overdue_on_event_when_tick_sends_the_newest_value() {
+        async fn test_a_due_on_event_when_tick_sends_the_newest_queued_value() {
             let (tx, rx) = broadcast::channel(8);
             let mut state = ThrottleState::new(Frequency::OnEventWhen(PERIOD), Some(rx), None);
 
-            for value in 1..=3 {
+            for value in [7, 8, 9] {
+                tx.send(value).unwrap();
+            }
+            sleep(PERIOD).await;
+
+            assert_eq!(state.next::<i32>().await, Some(9));
+        }
+
+        /// OnEvent must keep sending every value, which is what stops the drain
+        /// above from being applied everywhere.
+        #[tokio::test(start_paused = true)]
+        async fn test_on_event_sends_every_queued_value() {
+            let (tx, rx) = broadcast::channel(8);
+            let mut state = ThrottleState::new(Frequency::OnEvent, Some(rx), None);
+
+            for value in [7, 8, 9] {
                 tx.send(value).unwrap();
             }
 
-            sleep(PERIOD * 2).await;
-
-            assert_eq!(state.next::<i32>().await, Some(3));
+            assert_eq!(state.next::<i32>().await, Some(7));
+            assert_eq!(state.next::<i32>().await, Some(8));
+            assert_eq!(state.next::<i32>().await, Some(9));
         }
 
         #[tokio::test(start_paused = true)]
@@ -627,6 +879,252 @@ mod tests {
 
             sleep(PERIOD * 3).await;
             assert_eq!(*counter.count.lock().unwrap(), 1);
+        }
+    }
+
+    mod async_calls {
+        use super::*;
+
+        /// Forwards values downstream, which is a real await: the send waits
+        /// once the consumer is behind by more than the channel holds.
+        ///
+        /// Deliberately not Clone, so nothing here can lean on cloning it.
+        struct Writer {
+            sink: mpsc::Sender<i32>,
+        }
+
+        impl Writer {
+            async fn write(&self, value: i32) {
+                let _ = self.sink.send(value).await;
+            }
+        }
+
+        fn write(writer: &Writer, value: i32) -> BoxFuture<'_> {
+            Box::pin(writer.write(value))
+        }
+
+        fn writer() -> (Writer, mpsc::Receiver<i32>) {
+            let (sink, received) = mpsc::channel(8);
+            (Writer { sink }, received)
+        }
+
+        /// `busy` is true for as long as a call is inside the callback, so a
+        /// call that finds it already true started while another was running.
+        #[derive(Clone, Default)]
+        struct Overlap {
+            busy: Arc<AtomicBool>,
+            detected: Arc<AtomicBool>,
+        }
+
+        #[tokio::test(start_paused = true)]
+        async fn test_a_call_finishes_before_the_next_one_starts() {
+            let handle = Handle::new(0);
+            let overlap = Overlap::default();
+
+            let _throttle = handle
+                .spawn_async_throttle(
+                    overlap.clone(),
+                    |overlap: &Overlap, _: i32| {
+                        Box::pin(async move {
+                            if overlap.busy.swap(true, Ordering::SeqCst) {
+                                overlap.detected.store(true, Ordering::SeqCst);
+                            }
+                            sleep(PERIOD).await;
+                            overlap.busy.store(false, Ordering::SeqCst);
+                        })
+                    },
+                    Frequency::OnEvent,
+                )
+                .await;
+
+            // Two updates on top of the startup send, so the loop has values
+            // waiting while a call is running.
+            handle.set(1).await;
+            handle.set(2).await;
+
+            // Three calls of one period each, so this lands past the last one.
+            sleep(PERIOD * 4).await;
+
+            assert!(
+                !overlap.detected.load(Ordering::SeqCst),
+                "a call started while another was still running"
+            );
+        }
+
+        #[tokio::test(start_paused = true)]
+        async fn test_an_update_during_construction_is_not_lost() {
+            let handle = Handle::new(1);
+            let (writer, mut received) = writer();
+
+            let update_handle = handle.clone();
+            // On the current-thread test runtime this task first runs when
+            // spawn_async_throttle awaits the actor, so the update is broadcast
+            // exactly between its subscribe and its get.
+            let update = tokio::spawn(async move { update_handle.set(2).await });
+
+            let _throttle = handle
+                .spawn_async_throttle(writer, write, Frequency::OnEvent)
+                .await;
+
+            update.await.unwrap();
+
+            assert_eq!(next_sent(&mut received).await, Some(1));
+            assert_eq!(next_sent(&mut received).await, Some(2));
+        }
+
+        #[tokio::test(start_paused = true)]
+        async fn test_a_wrapped_async_method_can_be_the_callback() {
+            let handle = Handle::new(1);
+            let (writer, mut received) = writer();
+
+            let _throttle = handle
+                .spawn_async_throttle(writer, write, Frequency::OnEvent)
+                .await;
+
+            handle.set(2).await;
+
+            assert_eq!(next_sent(&mut received).await, Some(1));
+            assert_eq!(next_sent(&mut received).await, Some(2));
+        }
+
+        /// The closure needs no type annotations, so the borrow does not have to
+        /// be spelled out at every call site.
+        #[tokio::test(start_paused = true)]
+        async fn test_the_callback_needs_no_type_annotations() {
+            let handle = Handle::new(1);
+            let (writer, mut received) = writer();
+
+            let _throttle = handle
+                .spawn_async_throttle(
+                    writer,
+                    |writer, value| Box::pin(writer.write(value)),
+                    Frequency::OnEvent,
+                )
+                .await;
+
+            handle.set(2).await;
+
+            assert_eq!(next_sent(&mut received).await, Some(1));
+            assert_eq!(next_sent(&mut received).await, Some(2));
+        }
+
+        #[tokio::test(start_paused = true)]
+        async fn test_a_cache_can_spawn_one() {
+            let handle = Handle::new(1);
+            let mut cache = handle.create_cache().await;
+            let (writer, mut received) = writer();
+
+            let _throttle = cache.spawn_async_throttle(writer, write, Frequency::OnEvent);
+
+            handle.set(2).await;
+
+            assert_eq!(next_sent(&mut received).await, Some(1));
+            assert_eq!(next_sent(&mut received).await, Some(2));
+        }
+
+        /// The async spawn synchronizes the cache first, as the sync one does.
+        /// See `test_pending_update_reaches_cache_throttle`.
+        #[tokio::test(start_paused = true)]
+        async fn test_a_cache_update_queued_before_spawning_still_arrives() {
+            let handle = Handle::new(1);
+            let mut cache = handle.create_cache().await;
+            let (writer, mut received) = writer();
+
+            handle.set(2).await; // Queued in the cache's receiver, not yet consumed
+
+            let _throttle = cache.spawn_async_throttle(writer, write, Frequency::OnEvent);
+
+            // The initial send carries the queued update, not the stale snapshot
+            assert_eq!(next_sent(&mut received).await, Some(2));
+            assert_eq!(cache.get_current(), &2);
+        }
+    }
+
+    /// What each [`Frequency`] does when every call takes a full period, so
+    /// updates arrive faster than they can be sent. The unit tests above drive
+    /// `ThrottleState` directly; these go through a spawned throttle.
+    mod slow_calls {
+        use super::*;
+
+        /// Takes a period per call, then reports when it finished and with what.
+        struct Slow {
+            sent: mpsc::Sender<(Duration, i32)>,
+            started: Instant,
+        }
+
+        impl Slow {
+            async fn send(&self, value: i32) {
+                sleep(PERIOD).await;
+                let _ = self.sent.send((self.started.elapsed(), value)).await;
+            }
+        }
+
+        /// Spawns a throttle on an actor holding 0, then queues 1 through 5
+        /// while its first call is still running.
+        async fn with_backlog(freq: Frequency) -> (Handle<i32>, Throttle, Receiver) {
+            let (sent, received) = mpsc::channel(16);
+            let handle = Handle::new(0);
+            let client = Slow {
+                sent,
+                started: Instant::now(),
+            };
+
+            let throttle = handle
+                .spawn_async_throttle(client, |slow, value| Box::pin(slow.send(value)), freq)
+                .await;
+
+            for value in 1..=5 {
+                handle.set(value).await;
+            }
+
+            (handle, throttle, received)
+        }
+
+        type Receiver = mpsc::Receiver<(Duration, i32)>;
+
+        #[tokio::test(start_paused = true)]
+        async fn test_on_event_drains_the_backlog_in_order() {
+            let (_handle, throttle, mut sent) = with_backlog(Frequency::OnEvent).await;
+
+            // One send per period, every value, oldest first
+            assert_eq!(next_sent(&mut sent).await, Some((PERIOD, 0)));
+            assert_eq!(next_sent(&mut sent).await, Some((PERIOD * 2, 1)));
+            assert_eq!(next_sent(&mut sent).await, Some((PERIOD * 3, 2)));
+            assert_eq!(next_sent(&mut sent).await, Some((PERIOD * 4, 3)));
+            assert_eq!(next_sent(&mut sent).await, Some((PERIOD * 5, 4)));
+            assert_eq!(next_sent(&mut sent).await, Some((PERIOD * 6, 5)));
+
+            throttle.abort();
+        }
+
+        #[tokio::test(start_paused = true)]
+        async fn test_interval_collapses_the_backlog_and_keeps_going() {
+            let (_handle, throttle, mut sent) = with_backlog(Frequency::Interval(PERIOD)).await;
+
+            assert_eq!(next_sent(&mut sent).await, Some((PERIOD, 0)));
+
+            // 1 through 4 are never sent: the tick takes the newest queued value
+            assert_eq!(next_sent(&mut sent).await, Some((PERIOD * 2, 5)));
+
+            // And it goes on sending the current value every period
+            assert_eq!(next_sent(&mut sent).await, Some((PERIOD * 3, 5)));
+
+            throttle.abort();
+        }
+
+        #[tokio::test(start_paused = true)]
+        async fn test_on_event_when_collapses_the_backlog_then_goes_quiet() {
+            let (_handle, throttle, mut sent) = with_backlog(Frequency::OnEventWhen(PERIOD)).await;
+
+            assert_eq!(next_sent(&mut sent).await, Some((PERIOD, 0)));
+
+            // The whole backlog becomes one send of its newest value
+            assert_eq!(next_sent(&mut sent).await, Some((PERIOD * 2, 5)));
+
+            // Nothing has arrived since, so the ticks pass without sending
+            assert!(still_waiting(sent.recv()).await);
+
+            throttle.abort();
         }
     }
 

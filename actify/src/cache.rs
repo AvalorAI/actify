@@ -5,6 +5,7 @@ use tokio::sync::broadcast::{
     error::{RecvError, TryRecvError},
 };
 
+use crate::throttle::BoxFuture;
 use crate::{Frequency, Throttle, Throttled};
 
 /// A simple caching struct that can be used to locally maintain a synchronized state with an actor.
@@ -587,6 +588,36 @@ where
         let receiver = self.rx.resubscribe();
         _ = self.drain_to_newest();
         Throttle::spawn_from_receiver(client, call, freq, receiver, Some(self.inner.clone()))
+    }
+
+    /// Spawns a [`Throttle`] whose callback is awaited before the next value is
+    /// looked for.
+    ///
+    /// Synchronizes the cache first, exactly as
+    /// [`spawn_throttle`](Self::spawn_throttle) does.
+    ///
+    /// `call` borrows the client and returns a [`BoxFuture`](crate::BoxFuture),
+    /// built with [`Box::pin`]. See
+    /// [`Handle::spawn_async_throttle`](crate::Handle::spawn_async_throttle)
+    /// for how to write one.
+    pub fn spawn_async_throttle<C, F, Fun>(
+        &mut self,
+        client: C,
+        call: Fun,
+        freq: Frequency,
+    ) -> Throttle
+    where
+        C: Send + Sync + 'static,
+        T: Throttled<F>,
+        F: Send + Sync + 'static,
+        Fun: for<'a> Fn(&'a C, F) -> BoxFuture<'a> + Send + 'static,
+    {
+        // Subscribe before draining, so an update arriving in between reaches
+        // the throttle instead of being lost. It may then be part of the
+        // initial value and still be delivered, which a throttle absorbs.
+        let receiver = self.rx.resubscribe();
+        _ = self.drain_to_newest();
+        Throttle::spawn_async_from_receiver(client, call, freq, receiver, Some(self.inner.clone()))
     }
 }
 
