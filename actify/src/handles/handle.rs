@@ -811,6 +811,95 @@ mod tests {
         });
     }
 
+    mod waiting {
+        use super::*;
+        use tokio::time::{Duration, Instant, sleep, timeout};
+
+        const PERIOD: Duration = Duration::from_millis(100);
+
+        /// Fails rather than hanging when the wait never ends.
+        async fn finished<T>(wait: impl Future<Output = T>) -> T {
+            timeout(PERIOD * 10, wait).await.expect("the wait never ended")
+        }
+
+        #[tokio::test(start_paused = true)]
+        async fn test_a_satisfied_predicate_returns_without_waiting() {
+            let handle = Handle::new(7);
+            let start = Instant::now();
+
+            assert_eq!(finished(handle.wait_until(|v| *v == 7)).await, 7);
+            assert_eq!(start.elapsed(), Duration::ZERO);
+        }
+
+        #[tokio::test(start_paused = true)]
+        async fn test_the_wait_ends_on_the_matching_update() {
+            let handle = Handle::new(0);
+            let setter = handle.clone();
+            tokio::spawn(async move {
+                sleep(PERIOD).await;
+                setter.set(9).await;
+            });
+
+            let start = Instant::now();
+
+            assert_eq!(finished(handle.wait_until(|v| *v == 9)).await, 9);
+            assert_eq!(start.elapsed(), PERIOD);
+        }
+
+        #[tokio::test(start_paused = true)]
+        async fn test_updates_that_do_not_match_are_skipped() {
+            let handle = Handle::new(0);
+            let setter = handle.clone();
+            tokio::spawn(async move {
+                for value in [1, 2, 3] {
+                    sleep(PERIOD).await;
+                    setter.set(value).await;
+                }
+            });
+
+            assert_eq!(finished(handle.wait_until(|v| *v == 3)).await, 3);
+        }
+
+        #[tokio::test(start_paused = true)]
+        async fn test_an_update_during_construction_is_not_lost() {
+            let handle = Handle::new(1);
+            let setter = handle.clone();
+            // On the current-thread test runtime this task first runs when
+            // wait_until awaits the actor, so the update is broadcast exactly
+            // between its subscribe and its read.
+            let update = tokio::spawn(async move { setter.set(2).await });
+
+            assert_eq!(finished(handle.wait_until(|v| *v == 2)).await, 2);
+            update.await.unwrap();
+        }
+
+        /// The predicate runs on the broadcast type, so the actor type itself
+        /// never has to be cloned or even be `Clone`.
+        #[tokio::test(start_paused = true)]
+        async fn test_a_non_clone_actor_can_be_waited_on() {
+            let handle: Handle<NonCloneActor, i32> = Handle::new(NonCloneActor { value: 1 });
+            let setter = handle.clone();
+            tokio::spawn(async move { setter.set_value(2).await });
+
+            assert_eq!(finished(handle.wait_until(|value| *value == 2)).await, 2);
+        }
+
+        #[tokio::test]
+        async fn test_a_dead_actor_ends_the_wait_with_a_panic() {
+            let handle = Handle::new(PanicStruct {});
+            let waiter = handle.clone();
+            let wait = tokio::spawn(async move { waiter.wait_until(|_| false).await });
+
+            let _ = tokio::spawn(async move { handle.panic().await }).await;
+
+            let message = panic_message(wait.await.unwrap_err());
+            assert!(
+                message.contains("A panic occurred in the Actor"),
+                "expected the actor's panic to be reported, got: {message}"
+            );
+        }
+    }
+
     fn panic_message(error: tokio::task::JoinError) -> String {
         let panic = error.into_panic();
         panic

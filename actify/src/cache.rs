@@ -663,6 +663,70 @@ mod tests {
     use crate::Handle;
     use tokio::time::{Duration, sleep};
 
+    mod waiting {
+        use super::*;
+        use tokio::time::{Instant, timeout};
+
+        const PERIOD: Duration = Duration::from_millis(100);
+
+        /// Fails rather than hanging when the wait never ends.
+        async fn finished<T>(wait: impl std::future::Future<Output = T>) -> T {
+            timeout(PERIOD * 10, wait).await.expect("the wait never ended")
+        }
+
+        #[tokio::test(start_paused = true)]
+        async fn test_a_satisfied_predicate_returns_without_waiting() {
+            let handle = Handle::new(7);
+            let mut cache = handle.create_cache().await;
+            let start = Instant::now();
+
+            assert_eq!(finished(cache.wait_for(|v| *v == 7)).await, Ok(&7));
+            assert_eq!(start.elapsed(), Duration::ZERO);
+        }
+
+        #[tokio::test(start_paused = true)]
+        async fn test_the_wait_ends_on_the_matching_update() {
+            let handle = Handle::new(0);
+            let mut cache = handle.create_cache().await;
+            let setter = handle.clone();
+            tokio::spawn(async move {
+                for value in [1, 2, 3] {
+                    sleep(PERIOD).await;
+                    setter.set(value).await;
+                }
+            });
+
+            assert_eq!(finished(cache.wait_for(|v| *v == 3)).await, Ok(&3));
+            assert_eq!(cache.get_current(), &3);
+        }
+
+        /// Every queued value is tested, including one the actor has already
+        /// moved past. Skipping to the newest value would miss the 1 entirely
+        /// and wait forever.
+        #[tokio::test(start_paused = true)]
+        async fn test_a_value_the_actor_has_moved_past_still_matches() {
+            let handle = Handle::new(0);
+            let mut cache = handle.create_cache().await;
+
+            handle.set(1).await;
+            handle.set(2).await;
+
+            assert_eq!(finished(cache.wait_for(|v| *v == 1)).await, Ok(&1));
+        }
+
+        #[tokio::test(start_paused = true)]
+        async fn test_a_dropped_actor_ends_the_wait() {
+            let handle = Handle::new(0);
+            let mut cache = handle.create_cache().await;
+            drop(handle);
+
+            assert_eq!(
+                finished(cache.wait_for(|v| *v == 9)).await,
+                Err(CacheRecvNewestError::Closed)
+            );
+        }
+    }
+
     #[tokio::test(start_paused = true)]
     async fn test_create_cache_update_during_construction() {
         let handle = Handle::new(1);
