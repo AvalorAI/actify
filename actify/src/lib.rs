@@ -312,7 +312,7 @@
 //! current value), [`Handle::create_cache_from`] (custom initial value),
 //! or [`Handle::create_cache_from_default`] (starts from `T::default()`).
 //!
-//! [`Cache::wait_for`] waits until the cached value satisfies a predicate,
+//! [`Cache::wait_until`] waits until the cached value satisfies a predicate,
 //! reading through the cache so it holds the value that matched.
 //!
 //! See [`CacheRecvError`] and [`CacheRecvNewestError`] for possible error conditions.

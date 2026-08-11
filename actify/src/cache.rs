@@ -591,11 +591,11 @@ where
     /// let setter = handle.clone();
     /// tokio::spawn(async move { setter.set(3).await });
     ///
-    /// assert_eq!(cache.wait_for(|value| *value == 3).await, Ok(&3));
+    /// assert_eq!(cache.wait_until(|value| *value == 3).await, Ok(&3));
     /// assert_eq!(cache.get_current(), &3);
     /// # }
     /// ```
-    pub async fn wait_for<P>(&mut self, mut predicate: P) -> Result<&T, CacheRecvNewestError>
+    pub async fn wait_until<P>(&mut self, mut predicate: P) -> Result<&T, CacheRecvNewestError>
     where
         P: FnMut(&T) -> bool,
     {
@@ -736,7 +736,7 @@ mod tests {
             let mut cache = handle.create_cache().await;
             let start = Instant::now();
 
-            assert_eq!(finished(cache.wait_for(|v| *v == 7)).await, Ok(&7));
+            assert_eq!(finished(cache.wait_until(|v| *v == 7)).await, Ok(&7));
             assert_eq!(start.elapsed(), Duration::ZERO);
         }
 
@@ -752,7 +752,7 @@ mod tests {
                 }
             });
 
-            assert_eq!(finished(cache.wait_for(|v| *v == 3)).await, Ok(&3));
+            assert_eq!(finished(cache.wait_until(|v| *v == 3)).await, Ok(&3));
             assert_eq!(cache.get_current(), &3);
         }
 
@@ -767,7 +767,7 @@ mod tests {
             handle.set(1).await;
             handle.set(2).await;
 
-            assert_eq!(finished(cache.wait_for(|v| *v == 1)).await, Ok(&1));
+            assert_eq!(finished(cache.wait_until(|v| *v == 1)).await, Ok(&1));
         }
 
         #[tokio::test(start_paused = true)]
@@ -777,7 +777,7 @@ mod tests {
             drop(handle);
 
             assert_eq!(
-                finished(cache.wait_for(|v| *v == 9)).await,
+                finished(cache.wait_until(|v| *v == 9)).await,
                 Err(CacheRecvNewestError::Closed)
             );
         }

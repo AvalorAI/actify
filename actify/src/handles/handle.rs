@@ -895,6 +895,12 @@ mod tests {
                 .expect("the wait never ended")
         }
 
+        /// Whether the future is still waiting after several periods. The clock
+        /// is paused in these tests, so the wait costs no real time.
+        async fn still_waiting<T>(wait: impl Future<Output = T>) -> bool {
+            timeout(PERIOD * 10, wait).await.is_err()
+        }
+
         #[tokio::test(start_paused = true)]
         async fn test_a_satisfied_predicate_returns_without_waiting() {
             let handle = Handle::new(7);
@@ -966,8 +972,40 @@ mod tests {
             assert_eq!(finished(read_handle.wait_until(|v| *v == 5)).await, 5);
         }
 
-        /// A handle holds a broadcast sender, so a waiting handle keeps its own
-        /// channel open and cannot learn from it that the actor is gone.
+        /// A dead actor closes the job channel but not the broadcast channel.
+        /// A broadcast channel closes when its last sender drops, and a `Handle`
+        /// owns one, so code waiting on a subscription taken from a handle is
+        /// holding that channel open itself. This is why [`Handle::wait_until`]
+        /// watches the exit signal and not only its receiver: on this path
+        /// `recv` waits forever.
+        #[tokio::test(start_paused = true)]
+        async fn test_a_handle_keeps_its_own_broadcast_channel_open() {
+            let handle = Handle::new(PanicStruct {});
+            let mut receiver = handle.subscribe();
+
+            let killer = handle.clone();
+            let killed = tokio::spawn(async move { killer.panic().await }).await;
+            assert!(killed.is_err(), "the actor must be dead for the rest");
+
+            let caller = handle.clone();
+            let call = tokio::spawn(async move { caller.get().await }).await;
+            assert!(call.is_err(), "a call through the job channel panics");
+
+            assert!(
+                still_waiting(receiver.recv()).await,
+                "the subscription reported the actor gone while a handle held a sender"
+            );
+
+            drop(handle);
+            assert!(
+                matches!(
+                    receiver.recv().await,
+                    Err(broadcast::error::RecvError::Closed)
+                ),
+                "dropping the last sender closes the channel"
+            );
+        }
+
         #[tokio::test(start_paused = true)]
         async fn test_a_dead_actor_ends_the_wait_with_a_panic() {
             let handle = Handle::new(PanicStruct {});
