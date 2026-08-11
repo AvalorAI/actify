@@ -1,9 +1,14 @@
-use tokio::sync::broadcast::error::RecvError;
+use tokio::sync::broadcast::error::{RecvError, TryRecvError};
 use tokio::sync::broadcast::{self, Receiver};
 use tokio::task::AbortHandle;
 use tokio::time::{self, Duration, Interval};
 
 /// The Frequency is used to tune the speed of a [`Throttle`].
+///
+/// For the two interval variants, a send that outlasts its interval does not
+/// build up the ticks it missed. The interval keeps its original schedule and
+/// the next send happens at the next boundary, carrying the newest value
+/// received in the meantime rather than the one current when the tick came due.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Frequency {
     /// Sends every value as it arrives.
@@ -63,16 +68,17 @@ impl Timing {
         }
     }
 
+    /// Notes that a value arrived, without deciding whether to send it.
+    fn record_value(&mut self) {
+        if let Timing::OnEventWhen { event_pending, .. } = self {
+            *event_pending = true;
+        }
+    }
+
     /// A value arrived. Returns whether to send it now.
     fn on_value(&mut self) -> bool {
-        match self {
-            Timing::OnEvent => true,
-            Timing::Interval(_) => false,
-            Timing::OnEventWhen { event_pending, .. } => {
-                *event_pending = true;
-                false
-            }
-        }
+        self.record_value();
+        matches!(self, Timing::OnEvent)
     }
 
     /// The interval elapsed. Returns whether to send the stored value.
@@ -89,13 +95,20 @@ impl Timing {
     }
 }
 
-/// Moves the first tick a full period out.
+/// An interval whose first tick is a full period out, and which never releases
+/// more than one tick for a period it spent waiting.
 ///
 /// `tokio::time::interval` completes its first tick immediately, and
 /// `ThrottleTask::run` already sends the initial value before entering the loop,
-/// so without this an interval frequency sends twice at startup.
+/// so without the reset an interval frequency sends twice at startup.
+///
+/// Its default [`MissedTickBehavior::Burst`](time::MissedTickBehavior::Burst)
+/// hands over every tick that came due while the loop was busy, all at once. A
+/// throttle sends at most once per period, so it skips them and stays on the
+/// original schedule instead.
 fn interval_after(duration: Duration) -> Interval {
     let mut interval = time::interval(duration);
+    interval.set_missed_tick_behavior(time::MissedTickBehavior::Skip);
     interval.reset();
     interval
 }
@@ -141,7 +154,14 @@ impl<T: Clone> ThrottleState<T> {
     {
         loop {
             let ready = match self.wake().await {
-                Wake::Tick => self.timing.on_tick(),
+                Wake::Tick => {
+                    // An overdue tick can win the select against values already
+                    // queued, which would send an older one than is available.
+                    if drain_available(&mut self.val_rx, &mut self.current_val) {
+                        self.timing.record_value();
+                    }
+                    self.timing.on_tick()
+                }
                 Wake::Value => self.timing.on_value(),
                 Wake::Lagged => false,
                 Wake::Closed => return None,
@@ -184,6 +204,35 @@ async fn recv_value<T: Clone>(val_rx: &mut Option<broadcast::Receiver<T>>) -> Re
         rx.recv().await
     } else {
         std::future::pending::<Result<T, RecvError>>().await
+    }
+}
+
+/// Takes every value already queued, keeping the newest. Returns whether any
+/// were there.
+fn drain_available<T: Clone>(
+    val_rx: &mut Option<broadcast::Receiver<T>>,
+    current: &mut Option<T>,
+) -> bool {
+    let Some(rx) = val_rx else {
+        return false;
+    };
+
+    let mut received = false;
+    loop {
+        match rx.try_recv() {
+            Ok(value) => {
+                *current = Some(value);
+                received = true;
+            }
+            Err(TryRecvError::Lagged(nr)) => {
+                log::debug!(
+                    "Throttle of type {} lagged {nr} messages",
+                    std::any::type_name::<T>()
+                );
+            }
+            // A closed channel is reported by the next receive in the loop.
+            Err(TryRecvError::Empty | TryRecvError::Closed) => return received,
+        }
     }
 }
 

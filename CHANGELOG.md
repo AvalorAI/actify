@@ -53,6 +53,16 @@ they record what changed rather than why, and are not exhaustive. 0.8.0 through
 
 ### Fixed
 
+- A `Throttle` on `Frequency::Interval` no longer sends a burst when a send
+  outlasts its interval. `tokio::time::interval` releases every tick that came
+  due while the loop was busy, so one send lasting three intervals was followed
+  by three sends in the same instant. The interval now skips the ticks it missed
+  and stays on its original schedule.
+- Both interval frequencies send the newest value available rather than the one
+  that was current when the tick came due. An overdue tick can win the race
+  against values already queued, and it previously sent the older value while a
+  newer one sat unread in the channel.
+
 - Extension getters such as `VecHandle::is_empty` and `HashMapHandle::keys` no
   longer broadcast.
 
