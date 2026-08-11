@@ -388,6 +388,60 @@ mod tests {
             assert_eq!(start.elapsed(), Duration::ZERO);
         }
 
+        /// Ticks that come due while nobody is polling must not all fire at
+        /// once when polling resumes. One send per period is the whole contract.
+        #[tokio::test(start_paused = true)]
+        async fn test_interval_does_not_burst_after_a_delay() {
+            let (_tx, rx) = broadcast::channel::<i32>(8);
+            let mut state = ThrottleState::new(Frequency::Interval(PERIOD), Some(rx), Some(1));
+
+            // Three periods pass with nobody driving the state
+            sleep(PERIOD * 3).await;
+
+            // The overdue tick fires now
+            let start = Instant::now();
+            assert_eq!(state.next::<i32>().await, Some(1));
+            assert_eq!(start.elapsed(), Duration::ZERO);
+
+            // And the one after it waits a full period rather than catching up
+            let start = Instant::now();
+            assert_eq!(state.next::<i32>().await, Some(1));
+            assert_eq!(start.elapsed(), PERIOD);
+        }
+
+        /// An overdue tick can win the select over values already queued, so it
+        /// must take the newest of them rather than whatever it happens to hold.
+        #[tokio::test(start_paused = true)]
+        async fn test_an_overdue_interval_tick_sends_the_newest_value() {
+            let (tx, rx) = broadcast::channel(8);
+            let mut state = ThrottleState::new(Frequency::Interval(PERIOD), Some(rx), Some(0));
+
+            for value in 1..=3 {
+                tx.send(value).unwrap();
+            }
+
+            // The tick is overdue and three values are waiting
+            sleep(PERIOD * 2).await;
+
+            assert_eq!(state.next::<i32>().await, Some(3));
+        }
+
+        /// The same for OnEventWhen, which must also not lose the event: the
+        /// drained values are what makes it fire.
+        #[tokio::test(start_paused = true)]
+        async fn test_an_overdue_on_event_when_tick_sends_the_newest_value() {
+            let (tx, rx) = broadcast::channel(8);
+            let mut state = ThrottleState::new(Frequency::OnEventWhen(PERIOD), Some(rx), None);
+
+            for value in 1..=3 {
+                tx.send(value).unwrap();
+            }
+
+            sleep(PERIOD * 2).await;
+
+            assert_eq!(state.next::<i32>().await, Some(3));
+        }
+
         #[tokio::test(start_paused = true)]
         async fn test_interval_repeats_the_value_without_events() {
             let (_tx, rx) = broadcast::channel::<i32>(8);
