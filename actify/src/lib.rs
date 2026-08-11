@@ -379,6 +379,8 @@
 //! that actor.
 //!
 //! Jobs queue in a bounded channel, so callers wait when it is full.
+//! [`Handle::builder`] sets that bound and the broadcast bound separately; both
+//! default to 100.
 //!
 //! Two actors that call each other never return: each waits for a reply the
 //! other can only produce once it is free. The same holds for a method calling
@@ -455,7 +457,7 @@ pub use cache::{Cache, CacheRecvError, CacheRecvNewestError};
 pub use extensions::{
     map::HashMapHandle, option::OptionHandle, set::HashSetHandle, vec::VecHandle,
 };
-pub use handles::{BroadcastAs, Handle, ReadHandle};
+pub use handles::{BroadcastAs, Handle, HandleBuilder, ReadHandle};
 pub use throttle::{BoxFuture, Frequency, Throttle, Throttled};
 
 #[doc(hidden)]
