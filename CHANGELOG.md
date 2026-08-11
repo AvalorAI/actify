@@ -28,6 +28,12 @@ they record what changed rather than why, and are not exhaustive. 0.8.0 through
   cloned nor required to be `Clone`. A future that borrows carries the lifetime
   of that borrow in its type, which a plain generic return type cannot express,
   hence the box. `BoxFuture` is exported for naming the bound.
+- `Handle::builder`, which sets the job channel and broadcast channel capacities
+  independently before spawning the actor:
+  `Handle::builder(val).job_capacity(8).broadcast_capacity(1024).spawn()`. Both
+  still default to 100, which is what `Handle::new` uses. Before this a single
+  internal constant sized both channels, so a burst of queued calls and a
+  subscriber that reads rarely could not be accommodated separately.
 - `ReadHandle::spawn_throttle` and `ReadHandle::spawn_async_throttle`, so a
   throttle can be spawned from a read-only view of an actor. Both behave as
   their `Handle` counterparts.

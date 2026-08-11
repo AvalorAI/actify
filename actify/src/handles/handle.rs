@@ -3,12 +3,11 @@ use std::any::type_name;
 use std::fmt::{self, Debug};
 use tokio::sync::{broadcast, mpsc, oneshot, watch};
 
+use super::builder::{DEFAULT_BROADCAST_CAPACITY, DEFAULT_JOB_CAPACITY, HandleBuilder};
 use super::read_handle::ReadHandle;
 use crate::actor::{Actor, ActorExit, ActorMethod, BroadcastFn, ExitState, Job, serve};
 use crate::throttle::{BoxFuture, Throttle};
 use crate::{Cache, Frequency, Throttled};
-
-pub(crate) const CHANNEL_SIZE: usize = 100;
 const DOWNCAST_FAIL: &str =
     "Actify Macro error: failed to downcast arguments to their concrete type";
 
@@ -140,8 +139,40 @@ where
     /// # }
     /// ```
     pub fn new(val: T) -> Handle<T, V> {
-        let (tx, rx) = mpsc::channel(CHANNEL_SIZE);
-        let (broadcast_tx, _) = broadcast::channel::<V>(CHANNEL_SIZE);
+        Handle::spawn_with(val, DEFAULT_JOB_CAPACITY, DEFAULT_BROADCAST_CAPACITY)
+    }
+
+    /// Configures the channel capacities before spawning the actor.
+    ///
+    /// [`Handle::new`] uses the defaults, which are documented on
+    /// [`HandleBuilder`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use actify::Handle;
+    /// # #[tokio::main]
+    /// # async fn main() {
+    /// // Room for a burst of queued calls, and subscribers that read rarely
+    /// let handle: Handle<i32> = Handle::builder(1)
+    ///     .job_capacity(1024)
+    ///     .broadcast_capacity(1024)
+    ///     .spawn();
+    ///
+    /// assert_eq!(handle.capacity(), 1024);
+    /// # }
+    /// ```
+    pub fn builder(val: T) -> HandleBuilder<T, V> {
+        HandleBuilder::new(val)
+    }
+
+    pub(super) fn spawn_with(
+        val: T,
+        job_capacity: usize,
+        broadcast_capacity: usize,
+    ) -> Handle<T, V> {
+        let (tx, rx) = mpsc::channel(job_capacity);
+        let (broadcast_tx, _) = broadcast::channel::<V>(broadcast_capacity);
         let (exit_tx, exit_rx) = watch::channel(None);
         tokio::spawn(serve(
             rx,
@@ -888,7 +919,7 @@ mod tests {
         let handle = Handle::new(Ledger { seen: Vec::new() });
 
         let mut calls = tokio::task::JoinSet::new();
-        for i in 0..2 * CHANNEL_SIZE {
+        for i in 0..2 * DEFAULT_JOB_CAPACITY {
             let handle = handle.clone();
             calls.spawn(async move { handle.record(i).await });
         }
@@ -896,7 +927,7 @@ mod tests {
 
         let mut seen = handle.with(|ledger| ledger.seen.clone()).await;
         seen.sort();
-        assert_eq!(seen, (0..2 * CHANNEL_SIZE).collect::<Vec<_>>());
+        assert_eq!(seen, (0..2 * DEFAULT_JOB_CAPACITY).collect::<Vec<_>>());
     }
 
     #[derive(Debug, Clone)]

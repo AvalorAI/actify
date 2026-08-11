@@ -936,7 +936,7 @@ mod tests {
     /// capacity up internally, so twice the configured size is sent.
     /// Returns the last value sent, which the channel always retains.
     async fn overflow(handle: &Handle<i32>) -> i32 {
-        let last = (2 * crate::handles::CHANNEL_SIZE) as i32;
+        let last = (2 * crate::handles::DEFAULT_BROADCAST_CAPACITY) as i32;
         for i in 1..=last {
             handle.set(i).await;
         }
