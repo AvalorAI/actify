@@ -556,7 +556,7 @@ mod tests {
             let _handle_2 = Handle::new("test");
             let handle_3 = Handle::new(1.); // This goes out of scope
             let _handle_1_clone = handle_1.clone();
-            handle_3.create_cache().await // But the cache doesn't
+            handle_3.cache().await // But the cache doesn't
         };
 
         // Only handle_1's actor survives the scope, even though cache_3 does
@@ -846,7 +846,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_throttle_from_receiver_task_cleanup() {
+    async fn test_throttle_spawn_task_cleanup() {
         // Record baseline task count
         let baseline = alive_tasks();
 
@@ -859,7 +859,7 @@ mod tests {
         // Spawn a throttle from the handle's receiver (spawns another task)
         let client = TestClient::new();
         let receiver = handle.subscribe();
-        Throttle::spawn_from_receiver(
+        Throttle::spawn(
             client.clone(),
             TestClient::call,
             Frequency::Interval(Duration::from_millis(50)),
@@ -964,7 +964,7 @@ mod tests {
         let baseline = alive_tasks();
 
         let handle = Handle::new(1);
-        let read_handle = handle.get_read_handle();
+        let read_handle = handle.read_handle();
 
         let with_handle = await_alive_tasks(baseline + 1).await;
         assert_eq!(with_handle, baseline + 1, "Expected one task for Handle");
@@ -1000,7 +1000,7 @@ mod tests {
         assert_eq!(with_handle, baseline + 1, "Expected one task for Handle");
 
         // Creating a cache should NOT spawn additional tasks
-        let _cache = handle.create_cache().await;
+        let _cache = handle.cache().await;
 
         let with_cache = settled_alive_tasks().await;
         assert_eq!(
@@ -1010,8 +1010,8 @@ mod tests {
         );
 
         // Creating more caches still shouldn't spawn tasks
-        let _cache2 = handle.create_cache().await;
-        let _cache3 = handle.create_cache_from_default();
+        let _cache2 = handle.cache().await;
+        let _cache3 = handle.cache_from_default();
 
         let with_more_caches = settled_alive_tasks().await;
         assert_eq!(
@@ -1026,7 +1026,7 @@ mod tests {
         let baseline = alive_tasks();
 
         let handle = Handle::new(42);
-        let mut cache = handle.create_cache().await;
+        let mut cache = handle.cache().await;
 
         let with_handle = await_alive_tasks(baseline + 1).await;
         assert_eq!(with_handle, baseline + 1, "Expected one task for Handle");

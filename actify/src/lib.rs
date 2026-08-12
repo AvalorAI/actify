@@ -310,9 +310,9 @@
 //! # Cache
 //!
 //! A [`Cache`] provides local, synchronous access to the actor's value by subscribing
-//! to its broadcast stream. Create one with [`Handle::create_cache`] (initialized with the
-//! current value), [`Handle::create_cache_from`] (custom initial value),
-//! or [`Handle::create_cache_from_default`] (starts from `T::default()`).
+//! to its broadcast stream. Create one with [`Handle::cache`] (initialized with the
+//! current value), [`Handle::cache_from`] (custom initial value),
+//! or [`Handle::cache_from_default`] (starts from `T::default()`).
 //!
 //! [`Cache::wait_until`] waits until the cached value satisfies a predicate,
 //! reading through the cache so it holds the value that matched.
@@ -324,7 +324,7 @@
 //! A [`ReadHandle`] is a read-only view of an actor. It supports [`get`](ReadHandle::get),
 //! [`subscribe`](ReadHandle::subscribe), [`wait_until`](ReadHandle::wait_until), cache
 //! creation and throttle spawning, but cannot mutate the actor. Obtain one via
-//! [`Handle::get_read_handle`].
+//! [`Handle::read_handle`].
 //!
 //! # Throttle
 //!

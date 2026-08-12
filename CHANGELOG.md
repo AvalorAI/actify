@@ -50,6 +50,29 @@ they record what changed rather than why, and are not exhaustive. 0.8.0 through
 
 ### Changed
 
+- **Breaking:** renames, with no behaviour change and no deprecated aliases.
+
+  | Before | After |
+  | --- | --- |
+  | `Handle::get_read_handle` | `Handle::read_handle` |
+  | `Handle::create_cache` | `Handle::cache` |
+  | `Handle::create_cache_from` | `Handle::cache_from` |
+  | `Handle::create_cache_from_default` | `Handle::cache_from_default` |
+  | `Handle::capacity` | `Handle::remaining_capacity` |
+  | `Cache::get_current` | `Cache::current` |
+  | `Cache::get_newest` | `Cache::newest` |
+  | `Throttle::spawn_from_receiver` | `Throttle::spawn` |
+  | `Throttle::spawn_async_from_receiver` | `Throttle::spawn_async` |
+
+  The `get_` prefixes go because Rust getters do not carry one. `create_cache`
+  loses its verb for the same reason, now that its neighbour `read_handle` has.
+  `capacity` returned tokio's remaining slots rather than the configured size,
+  so the name said the opposite of what it measured, and an inherent `capacity`
+  also shadowed any actor method of that name.
+
+  The `ReadHandle` counterparts of the cache constructors are renamed the same way.
+
+
 - **Breaking:** `Frequency` no longer derives `PartialOrd` and `Ord`. The derived
   order came from the declaration order of the variants, so `OnEvent` compared
   less than `Interval`, which means nothing, and among intervals a longer

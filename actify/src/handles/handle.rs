@@ -174,7 +174,7 @@ where
         let init = val.to_view();
         let handle = Self::new(val);
         let receiver = handle.subscribe();
-        Throttle::spawn_from_receiver(client, call, freq, receiver, Some(init));
+        Throttle::spawn(client, call, freq, receiver, Some(init));
         handle
     }
 
@@ -212,7 +212,7 @@ where
     where
         P: FnMut(&V) -> bool,
     {
-        let mut cache = self.create_cache().await;
+        let mut cache = self.cache().await;
 
         tokio::select! {
             // A handle owns a broadcast sender, so the cache's channel stays
@@ -258,14 +258,14 @@ where
     /// Creates an initialized [`Cache`] that locally synchronizes with the remote actor.
     /// As it is initialized with the current value, any updates before or during construction are included.
     ///
-    /// See also [`Handle::create_cache_from_default`] for a cache that starts from `V::default()`.
+    /// See also [`Handle::cache_from_default`] for a cache that starts from `V::default()`.
     ///
     /// # Panics
     ///
     /// Panics if the actor has stopped, either because one of its methods
     /// panicked or because its runtime shut down. See [Actor lifetime and
     /// panics](crate#actor-lifetime-and-panics).
-    pub async fn create_cache(&self) -> Cache<V> {
+    pub async fn cache(&self) -> Cache<V> {
         // Subscribe before reading, so an update arriving in between is queued
         // rather than lost.
         let rx = self.subscribe();
@@ -320,7 +320,7 @@ where
         // rather than lost.
         let receiver = self.subscribe();
         let current = self.get().await;
-        Throttle::spawn_from_receiver(client, call, freq, receiver, Some(current))
+        Throttle::spawn(client, call, freq, receiver, Some(current))
     }
 
     /// Spawns a [`Throttle`] whose callback is awaited before the next value is
@@ -448,7 +448,7 @@ where
         // rather than lost.
         let receiver = self.subscribe();
         let current = self.get().await;
-        Throttle::spawn_async_from_receiver(client, call, freq, receiver, Some(current))
+        Throttle::spawn_async(client, call, freq, receiver, Some(current))
     }
 }
 
@@ -474,7 +474,7 @@ impl<T, V> Handle<T, V> {
     }
 
     /// Returns a [`ReadHandle`] that provides read-only access to this actor.
-    pub fn get_read_handle(&self) -> ReadHandle<T, V> {
+    pub fn read_handle(&self) -> ReadHandle<T, V> {
         ReadHandle::new(self.clone())
     }
 
@@ -498,8 +498,11 @@ impl<T, V> Handle<T, V> {
 }
 
 impl<T: Send + Sync + 'static, V> Handle<T, V> {
-    /// Returns the current capacity of the channel.
-    pub fn capacity(&self) -> usize {
+    /// Returns how many more jobs can be queued before a call has to wait.
+    ///
+    /// Falls as calls queue up and rises again as the actor serves them, so it
+    /// is the way to observe the actor falling behind.
+    pub fn remaining_capacity(&self) -> usize {
         self.tx.capacity()
     }
 
@@ -707,8 +710,8 @@ impl<T, V: Clone + Send + Sync + 'static> Handle<T, V> {
     /// with broadcasted updates from the actor.
     /// As it is not initialized with the current value, any updates before construction are missed.
     ///
-    /// See also [`Handle::create_cache`] for a cache initialized with the current actor value,
-    /// or [`Handle::create_cache_from_default`] to start from `V::default()`.
+    /// See also [`Handle::cache`] for a cache initialized with the current actor value,
+    /// or [`Handle::cache_from_default`] to start from `V::default()`.
     ///
     /// # Examples
     ///
@@ -717,14 +720,14 @@ impl<T, V: Clone + Send + Sync + 'static> Handle<T, V> {
     /// # #[tokio::main]
     /// # async fn main() {
     /// let handle = Handle::new(10);
-    /// let mut cache = handle.create_cache_from(42);
-    /// assert_eq!(cache.get_current(), &42);
+    /// let mut cache = handle.cache_from(42);
+    /// assert_eq!(cache.current(), &42);
     ///
     /// handle.set(99).await;
-    /// assert_eq!(cache.get_newest(), &99);
+    /// assert_eq!(cache.newest(), &99);
     /// # }
     /// ```
-    pub fn create_cache_from(&self, initial_value: V) -> Cache<V> {
+    pub fn cache_from(&self, initial_value: V) -> Cache<V> {
         Cache::new(self.subscribe(), initial_value)
     }
 }
@@ -734,10 +737,10 @@ impl<T, V: Default + Clone + Send + Sync + 'static> Handle<T, V> {
     /// with broadcasted updates from the actor.
     /// As it is not initialized with the current value, any updates before construction are missed.
     ///
-    /// See also [`Handle::create_cache`] for a cache initialized with the current actor value,
-    /// or [`Handle::create_cache_from`] to start from a custom value.
-    pub fn create_cache_from_default(&self) -> Cache<V> {
-        self.create_cache_from(V::default())
+    /// See also [`Handle::cache`] for a cache initialized with the current actor value,
+    /// or [`Handle::cache_from`] to start from a custom value.
+    pub fn cache_from_default(&self) -> Cache<V> {
+        self.cache_from(V::default())
     }
 }
 
@@ -940,7 +943,7 @@ mod tests {
         #[tokio::test(start_paused = true)]
         async fn test_a_read_handle_can_wait() {
             let handle = Handle::new(0);
-            let read_handle = handle.get_read_handle();
+            let read_handle = handle.read_handle();
             tokio::spawn(async move { handle.set(5).await });
 
             assert_eq!(finished(read_handle.wait_until(|v| *v == 5)).await, 5);
@@ -976,9 +979,9 @@ mod tests {
         async fn test_a_non_clone_actor_can_create_a_cache() {
             let handle: Handle<NonCloneActor, i32> = Handle::new(NonCloneActor { value: 1 });
 
-            let cache = handle.create_cache().await;
+            let cache = handle.cache().await;
 
-            assert_eq!(cache.get_current(), &1);
+            assert_eq!(cache.current(), &1);
         }
 
         #[tokio::test]
@@ -1031,9 +1034,9 @@ mod tests {
                 value: 1,
             });
 
-            let cache = handle.create_cache().await;
+            let cache = handle.cache().await;
 
-            assert_eq!(cache.get_current(), &1);
+            assert_eq!(cache.current(), &1);
             assert_eq!(clones.load(Ordering::SeqCst), 0);
 
             // Reading the actor value itself does clone it, which is what makes
@@ -1065,7 +1068,7 @@ mod tests {
             let handle: Handle<NonCloneActor, i32> = Handle::new(NonCloneActor { value: 1 });
 
             assert_eq!(handle.get().await, 1);
-            assert_eq!(handle.get_read_handle().get().await, 1);
+            assert_eq!(handle.read_handle().get().await, 1);
         }
 
         #[tokio::test]

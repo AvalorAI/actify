@@ -81,7 +81,7 @@ async fn main() {
     let mut rx = handle.subscribe();
 
     // Or create a local cache that stays in sync
-    let mut cache = handle.create_cache().await;
+    let mut cache = handle.cache().await;
 
     handle.set(42).await;
 
@@ -89,7 +89,7 @@ async fn main() {
     assert_eq!(rx.recv().await.unwrap(), 42);
 
     // The cache provides synchronous access to the latest value
-    assert_eq!(cache.get_newest(), &42);
+    assert_eq!(cache.newest(), &42);
 }
 ```
 
