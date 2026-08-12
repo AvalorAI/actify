@@ -54,7 +54,8 @@
 //!
 //! This roughly desugars to:
 //! ```
-//! # use actify::{Handle, actify, Actor};
+//! # use actify::{Handle, actify};
+//! # use actify::__private::Actor;
 //! # #[derive(Clone, Debug)]
 //! # struct Greeter {}
 //! impl Greeter {
@@ -74,7 +75,7 @@
 //! impl GreeterHandle for Handle<Greeter> {
 //!     async fn say_hi(&self, name: String) -> String {
 //!         let res = self
-//!             .send_job(
+//!             .__send_job(
 //!                 Box::new(
 //!                     |s: &mut Actor<Greeter>, args: Box<dyn std::any::Any + Send>|
 //!                     Box::pin(async move {
@@ -456,6 +457,9 @@ mod readme {
     #![doc = include_str!("../../README.md")]
 }
 
+// Generated code refers to ::actify, which has to resolve inside this crate too.
+extern crate self as actify;
+
 mod actor;
 mod cache;
 mod extensions;
@@ -471,8 +475,15 @@ pub use extensions::{
 pub use handles::{Handle, ReadHandle, ToView};
 pub use throttle::{BoxFuture, Frequency, Throttle};
 
+/// The crate's own items that the [`actify`](macro@crate::actify) macro needs in
+/// generated code. Standard library types are named by absolute path instead.
+///
+/// Not part of the public API. Anything here may change in a patch release, and
+/// nothing outside generated code should name it.
 #[doc(hidden)]
-pub use actor::Actor;
+pub mod __private {
+    pub use crate::actor::Actor;
+}
 
 #[cfg(feature = "profiler")]
 pub use actor::{get_broadcast_counts, get_sorted_broadcast_counts};
