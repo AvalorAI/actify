@@ -544,13 +544,7 @@ where
             _ = self.wait_for_exit() => self.report_actor_gone().await,
         }
     }
-}
 
-impl<T, V> Handle<T, V>
-where
-    T: Clone + BroadcastAs<V> + Send + Sync + 'static,
-    V: Clone + Send + Sync + 'static,
-{
     /// Creates an initialized [`Cache`] that locally synchronizes with the remote actor.
     /// As it is initialized with the current value, any updates before or during construction are included.
     ///
@@ -562,10 +556,11 @@ where
     /// panicked or because its runtime shut down. See [Actor lifetime and
     /// panics](crate#actor-lifetime-and-panics).
     pub async fn create_cache(&self) -> Cache<V> {
-        // Subscribe before get, so an update arriving in between is queued rather than lost.
+        // Subscribe before reading, so an update arriving in between is queued
+        // rather than lost.
         let rx = self.subscribe();
-        let init = self.get().await;
-        Cache::new(rx, init.to_broadcast())
+        let init = self.with(|inner| inner.to_broadcast()).await;
+        Cache::new(rx, init)
     }
 
     /// Spawns a [`Throttle`] that fires given a specified [`Frequency`].
@@ -611,10 +606,11 @@ where
         F: Send + Sync + 'static,
         Fun: Fn(&C, F) + Send + 'static,
     {
-        // Subscribe before get, so an update arriving in between is queued rather than lost.
+        // Subscribe before reading, so an update arriving in between is queued
+        // rather than lost.
         let receiver = self.subscribe();
-        let current = self.get().await;
-        Throttle::spawn_from_receiver(client, call, freq, receiver, Some(current.to_broadcast()))
+        let current = self.with(|inner| inner.to_broadcast()).await;
+        Throttle::spawn_from_receiver(client, call, freq, receiver, Some(current))
     }
 
     /// Spawns a [`Throttle`] whose callback is awaited before the next value is
@@ -738,16 +734,11 @@ where
         F: Send + Sync + 'static,
         Fun: for<'a> Fn(&'a C, F) -> BoxFuture<'a> + Send + 'static,
     {
-        // Subscribe before get, so an update arriving in between is queued rather than lost.
+        // Subscribe before reading, so an update arriving in between is queued
+        // rather than lost.
         let receiver = self.subscribe();
-        let current = self.get().await;
-        Throttle::spawn_async_from_receiver(
-            client,
-            call,
-            freq,
-            receiver,
-            Some(current.to_broadcast()),
-        )
+        let current = self.with(|inner| inner.to_broadcast()).await;
+        Throttle::spawn_async_from_receiver(client, call, freq, receiver, Some(current))
     }
 }
 
@@ -1083,6 +1074,10 @@ mod tests {
 
             assert_eq!(cache.get_current(), &1);
             assert_eq!(clones.load(Ordering::SeqCst), 0);
+
+            // Reading the value does clone it, so the count above is a count.
+            let _ = handle.get().await;
+            assert_eq!(clones.load(Ordering::SeqCst), 1);
         }
     }
 

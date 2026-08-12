@@ -50,6 +50,15 @@ they record what changed rather than why, and are not exhaustive. 0.8.0 through
 
 ### Changed
 
+- `Handle::create_cache`, `Handle::spawn_throttle` and `Handle::spawn_async_throttle`,
+  and their `ReadHandle` counterparts, no longer require the actor type to be
+  `Clone`. Each of them seeded itself by cloning the whole actor value out with
+  `get` and deriving the broadcast value from that clone. They now ask the actor
+  to derive it in place, which drops the bound and the clone: a
+  `Handle<BigState, Summary>` no longer copies all of `BigState` to create a
+  cache, and actor types that are not `Clone` can now use both.
+
+
 - **Breaking:** `Cache::spawn_throttle` takes `&mut self` and first
   synchronizes the cache to the newest broadcast value, which becomes the
   throttle's initial fire. Previously the throttle got a fresh subscription
