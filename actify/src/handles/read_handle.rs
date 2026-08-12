@@ -14,12 +14,6 @@ use crate::throttle::{BoxFuture, Frequency, Throttle, Throttled};
 /// [`ReadHandle::spawn_async_throttle`].
 pub struct ReadHandle<T, V = T>(Handle<T, V>);
 
-impl<T, V> ReadHandle<T, V> {
-    pub(super) fn new(handle: Handle<T, V>) -> Self {
-        ReadHandle(handle)
-    }
-}
-
 impl<T, V> Clone for ReadHandle<T, V> {
     fn clone(&self) -> Self {
         ReadHandle(self.0.clone())
@@ -50,6 +44,10 @@ impl<T, V> ReadHandle<T, V> {
     /// ```
     pub fn subscribe(&self) -> broadcast::Receiver<V> {
         self.0.subscribe()
+    }
+
+    pub(super) fn new(handle: Handle<T, V>) -> Self {
+        ReadHandle(handle)
     }
 }
 
@@ -100,28 +98,6 @@ impl<T: Send + Sync + 'static, V> ReadHandle<T, V> {
         R: Send + 'static,
     {
         self.0.with(f).await
-    }
-}
-
-impl<T, V> ReadHandle<T, V>
-where
-    T: BroadcastAs<V> + Send + Sync + 'static,
-    V: Clone + Send + Sync + 'static,
-{
-    /// Waits until the broadcast value satisfies `predicate` and returns it.
-    ///
-    /// See [`Handle::wait_until`] for which values are tested.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the actor has stopped, either because one of its methods
-    /// panicked or because its runtime shut down. See [Actor lifetime and
-    /// panics](crate#actor-lifetime-and-panics).
-    pub async fn wait_until<P>(&self, predicate: P) -> V
-    where
-        P: FnMut(&V) -> bool,
-    {
-        self.0.wait_until(predicate).await
     }
 }
 
@@ -227,6 +203,22 @@ where
         Fun: for<'a> Fn(&'a C, F) -> BoxFuture<'a> + Send + 'static,
     {
         self.0.spawn_async_throttle(client, call, freq).await
+    }
+
+    /// Waits until the broadcast value satisfies `predicate` and returns it.
+    ///
+    /// See [`Handle::wait_until`] for which values are tested.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the actor has stopped, either because one of its methods
+    /// panicked or because its runtime shut down. See [Actor lifetime and
+    /// panics](crate#actor-lifetime-and-panics).
+    pub async fn wait_until<P>(&self, predicate: P) -> V
+    where
+        P: FnMut(&V) -> bool,
+    {
+        self.0.wait_until(predicate).await
     }
 }
 
