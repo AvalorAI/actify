@@ -6,7 +6,7 @@ use tokio::sync::{broadcast, mpsc, oneshot, watch};
 use super::read_handle::ReadHandle;
 use crate::actor::{Actor, ActorExit, ActorMethod, BroadcastFn, ExitState, Job, serve};
 use crate::throttle::{BoxFuture, Throttle};
-use crate::{Cache, Frequency, Throttled};
+use crate::{Cache, Frequency};
 
 pub(crate) const CHANNEL_SIZE: usize = 100;
 const DOWNCAST_FAIL: &str =
@@ -167,7 +167,7 @@ where
     pub fn new_throttled<C, F, Fun>(val: T, client: C, call: Fun, freq: Frequency) -> Handle<T, V>
     where
         C: Send + Sync + 'static,
-        V: Throttled<F>,
+        V: ToView<F>,
         F: Send + Sync + 'static,
         Fun: Fn(&C, F) + Send + 'static,
     {
@@ -275,8 +275,8 @@ where
 
     /// Spawns a [`Throttle`] that fires given a specified [`Frequency`].
     ///
-    /// The broadcast type must implement [`Throttled<F>`](crate::Throttled) to
-    /// convert the value into the callback argument.
+    /// The view must implement [`ToView<F>`] for the callback argument `F`,
+    /// which the blanket implementation already covers when they are the same type.
     ///
     /// `call` is any `Fn(&C, F)`, so it can be a method such as `Logger::log`
     /// below, or a closure holding captured state.
@@ -312,7 +312,7 @@ where
     pub async fn spawn_throttle<C, F, Fun>(&self, client: C, call: Fun, freq: Frequency) -> Throttle
     where
         C: Send + Sync + 'static,
-        V: Throttled<F>,
+        V: ToView<F>,
         F: Send + Sync + 'static,
         Fun: Fn(&C, F) + Send + 'static,
     {
@@ -440,7 +440,7 @@ where
     ) -> Throttle
     where
         C: Send + Sync + 'static,
-        V: Throttled<F>,
+        V: ToView<F>,
         F: Send + Sync + 'static,
         Fun: for<'a> Fn(&'a C, F) -> BoxFuture<'a> + Send + 'static,
     {

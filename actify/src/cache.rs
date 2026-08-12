@@ -5,7 +5,7 @@ use tokio::sync::broadcast::{
 };
 
 use crate::throttle::BoxFuture;
-use crate::{Frequency, Throttle, Throttled};
+use crate::{Frequency, Throttle, ToView};
 
 /// A simple caching struct that can be used to locally maintain a synchronized state with an actor.
 ///
@@ -644,7 +644,7 @@ where
     pub fn spawn_throttle<C, F, Fun>(&mut self, client: C, call: Fun, freq: Frequency) -> Throttle
     where
         C: Send + Sync + 'static,
-        V: Throttled<F>,
+        V: ToView<F>,
         F: Send + Sync + 'static,
         Fun: Fn(&C, F) + Send + 'static,
     {
@@ -674,7 +674,7 @@ where
     ) -> Throttle
     where
         C: Send + Sync + 'static,
-        V: Throttled<F>,
+        V: ToView<F>,
         F: Send + Sync + 'static,
         Fun: for<'a> Fn(&'a C, F) -> BoxFuture<'a> + Send + 'static,
     {
