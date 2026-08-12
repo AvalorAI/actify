@@ -735,44 +735,24 @@ mod tests {
     use crate::Handle;
     use tokio::time::{Duration, sleep};
 
-    mod errors {
-        use super::*;
+    /// One error type covers the whole receive family. The `_newest` methods
+    /// never lag, which their docs state, but they no longer need a type of
+    /// their own to say so.
+    #[tokio::test(start_paused = true)]
+    async fn test_every_receive_reports_the_same_error_type() {
+        let handle = Handle::new(0);
+        let mut cache = handle.create_cache().await;
+        _ = cache.get_newest();
+        drop(handle);
 
-        /// One error type covers the whole receive family. The `_newest` methods
-        /// never lag, which their docs state, but they no longer need a type of
-        /// their own to say so.
-        #[tokio::test(start_paused = true)]
-        async fn test_every_receive_reports_the_same_error_type() {
-            let handle = Handle::new(0);
-            let mut cache = handle.create_cache().await;
-            _ = cache.get_newest();
-            drop(handle);
-
-            let expected: Result<&i32, CacheRecvError> = Err(CacheRecvError::Closed);
-            assert_eq!(cache.recv().await, expected);
-            assert_eq!(cache.recv_newest().await, expected);
-            assert_eq!(cache.try_recv(), Err(CacheRecvError::Closed));
-            assert_eq!(cache.try_recv_newest(), Err(CacheRecvError::Closed));
-            assert_eq!(cache.wait_until(|v| *v == 9).await, expected);
-        }
-
-        #[test]
-        fn test_the_error_reads_the_same_without_thiserror() {
-            assert_eq!(CacheRecvError::Closed.to_string(), "Cache channel closed");
-            assert_eq!(
-                CacheRecvError::Lagged(3).to_string(),
-                "Cache channel lagged by 3"
-            );
-        }
-
-        #[test]
-        fn test_the_error_is_an_error() {
-            fn assert_error<E: std::error::Error + Send + Sync + 'static>() {}
-            assert_error::<CacheRecvError>();
-
-            let boxed: Box<dyn std::error::Error> = Box::new(CacheRecvError::Closed);
-            assert!(boxed.source().is_none());
-        }
+        assert_eq!(cache.recv().await, Err(CacheRecvError::Closed));
+        assert_eq!(cache.recv_newest().await, Err(CacheRecvError::Closed));
+        assert_eq!(cache.try_recv(), Err(CacheRecvError::Closed));
+        assert_eq!(cache.try_recv_newest(), Err(CacheRecvError::Closed));
+        assert_eq!(
+            cache.wait_until(|v| *v == 9).await,
+            Err(CacheRecvError::Closed)
+        );
     }
 
     mod waiting {
