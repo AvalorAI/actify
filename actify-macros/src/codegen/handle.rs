@@ -47,7 +47,7 @@ pub fn generate_trait_impl(info: &ImplInfo) -> proc_macro2::TokenStream {
     quote! {
         #(#impl_attrs)*
         #[allow(unused_parens)]
-        impl #impl_generics #handle_trait_ident #trait_generics for actify::Handle<#impl_type, __V> #where_clause
+        impl #impl_generics #handle_trait_ident #trait_generics for ::actify::Handle<#impl_type, __V> #where_clause
         {
             #(#methods)*
         }
@@ -120,9 +120,9 @@ fn method_body(
     quote! {
         #(#attrs)*
         async fn #ident #method_generics(&self, #(#arg_names: #arg_types),*) #return_type #where_clause {
-            let __actify_res = self.send_job(
-                Box::new(|__actify_s: &mut actify::Actor<#impl_type>, __actify_args: Box<dyn std::any::Any + Send>|
-                Box::pin(async move {
+            let __actify_res = self.__send_job(
+                ::actify::__private::Box::new(|__actify_s: &mut ::actify::__private::Actor<#impl_type>, __actify_args: ::actify::__private::Box<dyn ::actify::__private::Any + Send>|
+                ::actify::__private::Box::pin(async move {
                     let (#(#arg_names),*): (#(#arg_types),*) = *__actify_args
                         .downcast()
                         .expect("Downcasting failed due to an error in the Actify macro");
@@ -131,9 +131,9 @@ fn method_body(
 
                     #broadcast
 
-                    Box::new(__actify_result) as Box<dyn std::any::Any + Send>
+                    ::actify::__private::Box::new(__actify_result) as ::actify::__private::Box<dyn ::actify::__private::Any + Send>
                 })),
-                Box::new((#(#arg_names),*)),
+                ::actify::__private::Box::new((#(#arg_names),*)),
             ).await;
 
             *__actify_res.downcast().expect("Downcasting failed due to an error in the Actify macro")

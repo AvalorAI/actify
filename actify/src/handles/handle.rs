@@ -490,7 +490,7 @@ impl<T: Send + Sync + 'static, V> Handle<T, V> {
     }
 
     #[doc(hidden)]
-    pub async fn send_job(
+    pub async fn __send_job(
         &self,
         call: ActorMethod<T>,
         args: Box<dyn Any + Send>,
@@ -530,7 +530,7 @@ impl<T: Send + Sync + 'static, V> Handle<T, V> {
         R: Send + 'static,
     {
         let res = self
-            .send_job(
+            .__send_job(
                 Box::new(move |s: &mut Actor<T>, boxed_args: Box<dyn Any + Send>| {
                     Box::pin(async move {
                         let args = *boxed_args.downcast::<A>().expect(DOWNCAST_FAIL);
@@ -730,7 +730,6 @@ impl<T, V: Default + Clone + Send + Sync + 'static> Handle<T, V> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate as actify;
 
     /// A panicking actor method must surface as a panic naming that cause, not
     /// as the generic message used when the actor merely stopped.

@@ -65,7 +65,19 @@ they record what changed rather than why, and are not exhaustive. 0.8.0 through
   that actor exists yet. Note that the initial value is now passed explicitly, so
   it is on the caller to pass the value the actor was created with.
 
+### Fixed
+
+- Generated code no longer breaks when a type in scope shares a name with
+  something that code refers to. A user type called `Box` or `Any` next to an
+  `#[actify]` impl made the generated body resolve `Box::new` to that type. All
+  such references are now absolute paths into a private module.
+
 ### Changed
+
+- **Breaking:** `Handle::send_job` is renamed to `Handle::__send_job`, and `Actor`
+  moves from the crate root to `actify::__private`. Both were `#[doc(hidden)]`
+  already and exist only for generated code to call. The names now say so.
+
 
 
 - **Breaking:** the `Throttled` trait is gone. A throttle callback's argument type

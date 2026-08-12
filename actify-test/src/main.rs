@@ -130,6 +130,35 @@ impl ShadowingActor {
     }
 }
 
+/// Types in scope whose names collide with what the generated code refers to.
+///
+/// A module of its own, since shadowing `Box` at file scope would break every
+/// other test here.
+///
+/// Only the test build reaches it, hence the allowance.
+#[allow(dead_code)]
+mod shadowed_std_names {
+    use actify::actify;
+
+    #[allow(dead_code)]
+    struct Box;
+
+    #[allow(dead_code)]
+    struct Any;
+
+    #[derive(Clone, Debug)]
+    pub struct ShadowedStdNames {
+        pub value: i32,
+    }
+
+    #[actify]
+    impl ShadowedStdNames {
+        pub fn value(&self) -> i32 {
+            self.value
+        }
+    }
+}
+
 /// Generic bounds written inline on the impl block instead of in a where clause
 #[allow(dead_code)]
 #[derive(Clone, Debug)]
@@ -407,6 +436,17 @@ mod tests {
     use std::sync::{Arc, Mutex};
     use std::time::Duration;
     use tokio::time::{Instant, sleep};
+
+    /// Generated code must not resolve `Box` or `Any` to a user type that
+    /// happens to share the name.
+    #[tokio::test]
+    async fn test_shadowed_std_names() {
+        use crate::shadowed_std_names::{ShadowedStdNames, ShadowedStdNamesHandle};
+
+        let handle = Handle::new(ShadowedStdNames { value: 7 });
+
+        assert_eq!(handle.value().await, 7);
+    }
 
     #[tokio::test]
     async fn test_custom_trait_name() {

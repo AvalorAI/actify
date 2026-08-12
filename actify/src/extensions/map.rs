@@ -1,4 +1,3 @@
-use crate as actify;
 use actify_macros::actify;
 use std::collections::HashMap;
 use std::hash::Hash;
