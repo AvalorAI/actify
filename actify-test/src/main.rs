@@ -1,6 +1,6 @@
 //! This workspace is used to test the functionalities of actify as would any user that imports the library
 
-use actify::{BroadcastAs, Handle, actify};
+use actify::{Handle, ToView, actify};
 use std::{collections::HashMap, fmt::Debug, sync::Mutex};
 
 fn main() {}
@@ -326,8 +326,8 @@ struct InteriorMutabilityActor {
     value: Mutex<i32>,
 }
 
-impl BroadcastAs<i32> for InteriorMutabilityActor {
-    fn to_broadcast(&self) -> i32 {
+impl ToView<i32> for InteriorMutabilityActor {
+    fn to_view(&self) -> i32 {
         *self.value.lock().unwrap()
     }
 }

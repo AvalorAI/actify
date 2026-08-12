@@ -50,6 +50,28 @@ they record what changed rather than why, and are not exhaustive. 0.8.0 through
 
 ### Changed
 
+- **Breaking:** `BroadcastAs<V>` is renamed to `ToView<V>` and `to_broadcast` to
+  `to_view`, because the trait no longer decides only what is broadcast.
+
+- **Breaking:** `Handle::get` and `ReadHandle::get` return the actor's view `V`
+  rather than the actor type `T`, and no longer require `T: Clone`.
+
+  `V` is now what a handle exposes: `get`, `subscribe`, `Cache`, `Throttle` and
+  `wait_until` all speak it, while `with` and `with_mut` reach the actor type
+  itself. Reading a value no longer clones the whole actor to derive a summary
+  from the clone.
+
+  **Nothing changes when `V = T`**, which is the default for every `Clone` actor
+  type: `get` still returns a clone of the value, at the same cost. Actor types
+  that are not `Clone` gain a `get`, which they did not have. Only actors with an
+  explicit view type see a difference, and it is the view they asked for; the
+  whole value is still available through `with(|state| state.clone())`.
+
+  Most call sites that need updating fail to compile. The exception is a value
+  passed to something generic, such as `log::info!("{:?}", handle.get().await)`
+  or a serializer, which keeps compiling and starts reporting the view.
+
+
 - `Handle::create_cache`, `Handle::spawn_throttle` and `Handle::spawn_async_throttle`,
   and their `ReadHandle` counterparts, no longer require the actor type to be
   `Clone`. Each of them seeded itself by cloning the whole actor value out with

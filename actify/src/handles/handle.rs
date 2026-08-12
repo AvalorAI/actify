@@ -12,19 +12,22 @@ pub(crate) const CHANNEL_SIZE: usize = 100;
 const DOWNCAST_FAIL: &str =
     "Actify Macro error: failed to downcast arguments to their concrete type";
 
-/// Defines how to convert an actor's value to its broadcast type.
+/// Defines the view an actor exposes: the type `V` that [`Handle::get`] returns
+/// and that the actor broadcasts.
 ///
-/// A blanket implementation is provided for [`Clone`] types, broadcasting
-/// themselves. Implement this trait to broadcast a different type `V` from
-/// your actor type `T`, enabling:
+/// A blanket implementation is provided for [`Clone`] types, whose view is
+/// themselves. Implement this trait to expose a different type `V` from your
+/// actor type `T`, which allows:
 ///
-/// - Non-Clone types to participate in broadcasting
-/// - Clone types to broadcast a lightweight summary instead of the full value
+/// - Non-Clone types to be read and broadcast
+/// - Clone types to expose a lightweight summary instead of the full value
+///
+/// [`Handle::with`] reads the actor type itself either way.
 ///
 /// # Examples
 ///
 /// ```
-/// use actify::BroadcastAs;
+/// use actify::ToView;
 ///
 /// struct HeavyState {
 ///     data: Vec<u8>,
@@ -34,35 +37,36 @@ const DOWNCAST_FAIL: &str =
 /// #[derive(Clone, Debug)]
 /// struct Summary(String);
 ///
-/// impl BroadcastAs<Summary> for HeavyState {
-///     fn to_broadcast(&self) -> Summary {
+/// impl ToView<Summary> for HeavyState {
+///     fn to_view(&self) -> Summary {
 ///         Summary(self.summary.clone())
 ///     }
 /// }
 /// ```
-pub trait BroadcastAs<V> {
-    /// Produces the value to broadcast to subscribers.
+pub trait ToView<V> {
+    /// Produces the view of the actor.
     ///
-    /// Runs on the actor task after every broadcasting method.
-    fn to_broadcast(&self) -> V;
+    /// Runs on the actor task, after every broadcasting method and on every
+    /// [`Handle::get`].
+    fn to_view(&self) -> V;
 }
 
-impl<T: Clone> BroadcastAs<T> for T {
-    fn to_broadcast(&self) -> T {
+impl<T: Clone> ToView<T> for T {
+    fn to_view(&self) -> T {
         self.clone()
     }
 }
 
 /// Creates the broadcast function that the [`Actor`] calls after each `&mut self` method.
-/// Converts the actor value to `V` via [`BroadcastAs`] and sends it to all subscribers.
+/// Converts the actor value to `V` via [`ToView`] and sends it to all subscribers.
 fn make_broadcast_fn<T, V>(sender: broadcast::Sender<V>) -> BroadcastFn<T>
 where
-    T: BroadcastAs<V>,
+    T: ToView<V>,
     V: Clone + Send + Sync + 'static,
 {
     Box::new(move |inner: &T, method: &str| {
         if sender.receiver_count() > 0 {
-            if sender.send(inner.to_broadcast()).is_err() {
+            if sender.send(inner.to_view()).is_err() {
                 log::trace!("Broadcast failed because there are no active receivers on {method:?}");
             } else {
                 log::trace!("Broadcasted new value on {method:?}");
@@ -79,10 +83,12 @@ where
 /// access across tasks. For read-only access, see [`ReadHandle`]. For local
 /// synchronization, see [`Cache`]. For rate-limited updates, see [`Throttle`].
 ///
-/// The second type parameter `V` is the broadcast type. By default `V = T`,
-/// meaning the actor broadcasts clones of itself. To broadcast a different
-/// type, implement [`BroadcastAs<V>`] and specify `V` explicitly
-/// (e.g. `Handle::<MyType, Summary>::new(val)`).
+/// The second type parameter `V` is the view the handle exposes: what
+/// [`Handle::get`] returns and what the actor broadcasts. By default `V = T`,
+/// so reads and broadcasts are clones of the actor itself. To expose a
+/// different type, implement [`ToView<V>`] and specify `V` explicitly
+/// (e.g. `Handle::<MyType, Summary>::new(val)`). [`Handle::with`] always reads
+/// the actor type.
 pub struct Handle<T, V = T> {
     pub(super) tx: mpsc::Sender<Job<T>>,
     pub(super) broadcast_sender: broadcast::Sender<V>,
@@ -113,7 +119,7 @@ impl<T: Default + Clone + Send + Sync + 'static> Default for Handle<T> {
 
 impl<T, V> Handle<T, V>
 where
-    T: BroadcastAs<V> + Send + Sync + 'static,
+    T: ToView<V> + Send + Sync + 'static,
     V: Clone + Send + Sync + 'static,
 {
     /// Creates a new [`Handle`] and spawns the corresponding [`Actor`].
@@ -122,17 +128,17 @@ where
     /// itself and you can simply write `Handle::new(val)`.
     ///
     /// For non-Clone types (or to broadcast a lightweight summary), implement
-    /// [`BroadcastAs<V>`] and specify `V` explicitly:
+    /// [`ToView<V>`] and specify `V` explicitly:
     ///
     /// ```
-    /// # use actify::{Handle, BroadcastAs};
+    /// # use actify::{Handle, ToView};
     /// # #[tokio::main]
     /// # async fn main() {
     /// #[derive(Clone, Debug, PartialEq)]
     /// struct Size(usize);
     ///
-    /// impl BroadcastAs<Size> for Vec<u8> {
-    ///     fn to_broadcast(&self) -> Size { Size(self.len()) }
+    /// impl ToView<Size> for Vec<u8> {
+    ///     fn to_view(&self) -> Size { Size(self.len()) }
     /// }
     ///
     /// let handle: Handle<Vec<u8>, Size> = Handle::new(vec![1, 2, 3]);
@@ -165,7 +171,7 @@ where
         F: Send + Sync + 'static,
         Fun: Fn(&C, F) + Send + 'static,
     {
-        let init = val.to_broadcast();
+        let init = val.to_view();
         let handle = Self::new(val);
         let receiver = handle.subscribe();
         Throttle::spawn_from_receiver(client, call, freq, receiver, Some(init));
@@ -220,6 +226,35 @@ where
         }
     }
 
+    /// Returns the actor's current view, the type `V` it broadcasts.
+    ///
+    /// For a `Clone` actor type without a [`ToView`] implementation of its own,
+    /// `V` is the actor type and this is a clone of the whole value. Otherwise it
+    /// is whatever [`ToView::to_view`] produces, and [`Handle::with`] reads the
+    /// actor value itself.
+    /// Does not broadcast.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use actify::Handle;
+    /// # #[tokio::main]
+    /// # async fn main() {
+    /// let handle = Handle::new(1);
+    /// let result = handle.get().await;
+    /// assert_eq!(result, 1);
+    /// # }
+    /// ```
+    ///
+    /// # Panics
+    ///
+    /// Panics if the actor has stopped, either because one of its methods
+    /// panicked or because its runtime shut down. See [Actor lifetime and
+    /// panics](crate#actor-lifetime-and-panics).
+    pub async fn get(&self) -> V {
+        self.run((), |s, _| s.inner.to_view()).await
+    }
+
     /// Creates an initialized [`Cache`] that locally synchronizes with the remote actor.
     /// As it is initialized with the current value, any updates before or during construction are included.
     ///
@@ -234,7 +269,7 @@ where
         // Subscribe before reading, so an update arriving in between is queued
         // rather than lost.
         let rx = self.subscribe();
-        let init = self.with(|inner| inner.to_broadcast()).await;
+        let init = self.get().await;
         Cache::new(rx, init)
     }
 
@@ -284,7 +319,7 @@ where
         // Subscribe before reading, so an update arriving in between is queued
         // rather than lost.
         let receiver = self.subscribe();
-        let current = self.with(|inner| inner.to_broadcast()).await;
+        let current = self.get().await;
         Throttle::spawn_from_receiver(client, call, freq, receiver, Some(current))
     }
 
@@ -412,7 +447,7 @@ where
         // Subscribe before reading, so an update arriving in between is queued
         // rather than lost.
         let receiver = self.subscribe();
-        let current = self.with(|inner| inner.to_broadcast()).await;
+        let current = self.get().await;
         Throttle::spawn_async_from_receiver(client, call, freq, receiver, Some(current))
     }
 }
@@ -664,32 +699,6 @@ impl<T: Send + Sync + 'static, V> Handle<T, V> {
             result
         })
         .await
-    }
-}
-
-impl<T: Clone + Send + Sync + 'static, V> Handle<T, V> {
-    /// Receives a clone of the current value of the actor.
-    /// Does not broadcast.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// # use actify::Handle;
-    /// # #[tokio::main]
-    /// # async fn main() {
-    /// let handle = Handle::new(1);
-    /// let result = handle.get().await;
-    /// assert_eq!(result, 1);
-    /// # }
-    /// ```
-    ///
-    /// # Panics
-    ///
-    /// Panics if the actor has stopped, either because one of its methods
-    /// panicked or because its runtime shut down. See [Actor lifetime and
-    /// panics](crate#actor-lifetime-and-panics).
-    pub async fn get(&self) -> T {
-        self.run((), |s, _| s.inner.clone()).await
     }
 }
 
@@ -1008,8 +1017,8 @@ mod tests {
             }
         }
 
-        impl BroadcastAs<i32> for Counted {
-            fn to_broadcast(&self) -> i32 {
+        impl ToView<i32> for Counted {
+            fn to_view(&self) -> i32 {
                 self.value
             }
         }
@@ -1027,8 +1036,9 @@ mod tests {
             assert_eq!(cache.get_current(), &1);
             assert_eq!(clones.load(Ordering::SeqCst), 0);
 
-            // Reading the value does clone it, so the count above is a count.
-            let _ = handle.get().await;
+            // Reading the actor value itself does clone it, which is what makes
+            // the zero above a count rather than a broken counter.
+            let _ = handle.with(|state| state.clone()).await;
             assert_eq!(clones.load(Ordering::SeqCst), 1);
         }
     }
@@ -1208,8 +1218,8 @@ mod tests {
         }
     }
 
-    impl BroadcastAs<i32> for NonCloneActor {
-        fn to_broadcast(&self) -> i32 {
+    impl ToView<i32> for NonCloneActor {
+        fn to_view(&self) -> i32 {
             self.value
         }
     }
@@ -1244,8 +1254,8 @@ mod tests {
         count: usize,
     }
 
-    impl BroadcastAs<usize> for BigState {
-        fn to_broadcast(&self) -> usize {
+    impl ToView<usize> for BigState {
+        fn to_view(&self) -> usize {
             self.count
         }
     }
@@ -1285,7 +1295,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_clone_actor_with_custom_broadcast() {
+    async fn test_clone_actor_with_custom_view() {
         let handle: Handle<BigState, usize> = Handle::new(BigState {
             data: vec![1, 2, 3],
             count: 3,
@@ -1293,19 +1303,16 @@ mod tests {
 
         let mut rx = handle.subscribe();
 
-        let val = handle.get().await;
-        assert_eq!(val.count, 3);
+        assert_eq!(handle.get().await, 3);
 
-        let new_big_state = BigState {
+        let updated = BigState {
             data: vec![1, 2, 3, 4],
             count: 4,
         };
-        handle.set(new_big_state.clone()).await;
+        handle.set(updated.clone()).await;
 
-        let broadcast_val: usize = rx.recv().await.unwrap();
-        assert_eq!(broadcast_val, 4);
-
-        let big_state = handle.get().await;
-        assert_eq!(big_state, new_big_state);
+        assert_eq!(rx.recv().await.unwrap(), 4);
+        assert_eq!(handle.get().await, 4);
+        assert_eq!(handle.with(|state| state.clone()).await, updated);
     }
 }
