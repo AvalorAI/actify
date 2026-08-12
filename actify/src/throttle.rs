@@ -221,17 +221,17 @@ enum Wake {
 
 /// Owns the broadcast receiver and the timing, so the loop in
 /// `ThrottleTask::spawn` is only a call to [`Self::next`] and a callback.
-struct ThrottleState<T> {
+struct ThrottleState<V> {
     timing: Timing,
-    val_rx: Option<broadcast::Receiver<T>>,
-    current_val: Option<T>,
+    val_rx: Option<broadcast::Receiver<V>>,
+    current_val: Option<V>,
 }
 
-impl<T: Clone> ThrottleState<T> {
+impl<V: Clone> ThrottleState<V> {
     fn new(
         frequency: Frequency,
-        val_rx: Option<broadcast::Receiver<T>>,
-        current_val: Option<T>,
+        val_rx: Option<broadcast::Receiver<V>>,
+        current_val: Option<V>,
     ) -> Self {
         Self {
             timing: Timing::new(frequency),
@@ -244,7 +244,7 @@ impl<T: Clone> ThrottleState<T> {
     /// once every sender is gone, which ends the throttle.
     async fn next<F>(&mut self) -> Option<F>
     where
-        T: ToView<F>,
+        V: ToView<F>,
     {
         loop {
             let ready = match self.wake().await {
@@ -285,7 +285,7 @@ impl<T: Clone> ThrottleState<T> {
     /// no value has arrived yet.
     fn current<F>(&self) -> Option<F>
     where
-        T: ToView<F>,
+        V: ToView<F>,
     {
         self.current_val.as_ref().map(|val| val.to_view())
     }
@@ -293,19 +293,19 @@ impl<T: Clone> ThrottleState<T> {
 
 /// Waits for the next broadcast value, or forever when the throttle has no
 /// receiver, as [`Throttle::spawn_interval`] does.
-async fn recv_value<T: Clone>(val_rx: &mut Option<broadcast::Receiver<T>>) -> Result<T, RecvError> {
+async fn recv_value<V: Clone>(val_rx: &mut Option<broadcast::Receiver<V>>) -> Result<V, RecvError> {
     if let Some(rx) = val_rx {
         rx.recv().await
     } else {
-        std::future::pending::<Result<T, RecvError>>().await
+        std::future::pending::<Result<V, RecvError>>().await
     }
 }
 
 /// Takes every value already queued, keeping the newest. Returns whether any
 /// were there.
-fn drain_available<T: Clone>(
-    val_rx: &mut Option<broadcast::Receiver<T>>,
-    current: &mut Option<T>,
+fn drain_available<V: Clone>(
+    val_rx: &mut Option<broadcast::Receiver<V>>,
+    current: &mut Option<V>,
 ) -> bool {
     let Some(rx) = val_rx else {
         return false;
@@ -321,7 +321,7 @@ fn drain_available<T: Clone>(
             Err(TryRecvError::Lagged(nr)) => {
                 log::debug!(
                     "Throttle of type {} lagged {nr} messages",
-                    std::any::type_name::<T>()
+                    std::any::type_name::<V>()
                 );
             }
             // A closed channel is reported by the next receive in the loop.
@@ -331,7 +331,7 @@ fn drain_available<T: Clone>(
 }
 
 /// Records a received value, or reports why none arrived.
-fn store<T>(current: &mut Option<T>, received: Result<T, RecvError>) -> Wake {
+fn store<V>(current: &mut Option<V>, received: Result<V, RecvError>) -> Wake {
     match received {
         Ok(value) => {
             *current = Some(value);
@@ -340,14 +340,14 @@ fn store<T>(current: &mut Option<T>, received: Result<T, RecvError>) -> Wake {
         Err(RecvError::Closed) => {
             log::debug!(
                 "Attached actor of type {} closed - exiting throttle",
-                std::any::type_name::<T>()
+                std::any::type_name::<V>()
             );
             Wake::Closed
         }
         Err(RecvError::Lagged(nr)) => {
             log::debug!(
                 "Throttle of type {} lagged {nr} messages",
-                std::any::type_name::<T>()
+                std::any::type_name::<V>()
             );
             Wake::Lagged
         }
@@ -358,19 +358,19 @@ fn store<T>(current: &mut Option<T>, received: Result<T, RecvError>) -> Wake {
 ///
 /// `F` is fixed by `Fun` rather than stored, so it is a parameter of
 /// [`Self::spawn`] instead of the struct.
-struct ThrottleTask<C, T, Fun> {
+struct ThrottleTask<C, V, Fun> {
     frequency: Frequency,
     client: C,
     call: Fun,
-    val_rx: Option<broadcast::Receiver<T>>,
-    current_val: Option<T>,
+    val_rx: Option<broadcast::Receiver<V>>,
+    current_val: Option<V>,
 }
 
-impl<C, T, Fun> ThrottleTask<C, T, Fun> {
+impl<C, V, Fun> ThrottleTask<C, V, Fun> {
     fn spawn<F>(self) -> Throttle
     where
         C: Send + Sync + 'static,
-        T: Clone + ToView<F> + Send + Sync + 'static,
+        V: Clone + ToView<F> + Send + Sync + 'static,
         F: Send + Sync + 'static,
         Fun: Fn(&C, F) + Send + 'static,
     {
@@ -406,7 +406,7 @@ impl<C, T, Fun> ThrottleTask<C, T, Fun> {
     fn spawn_async<F>(self) -> Throttle
     where
         C: Send + Sync + 'static,
-        T: Clone + ToView<F> + Send + Sync + 'static,
+        V: Clone + ToView<F> + Send + Sync + 'static,
         F: Send + Sync + 'static,
         Fun: for<'a> Fn(&'a C, F) -> BoxFuture<'a> + Send + 'static,
     {
@@ -489,16 +489,16 @@ impl Throttle {
     /// [`Handle::spawn_throttle`](crate::Handle::spawn_throttle) and
     /// [`Cache::spawn_throttle`](crate::Cache::spawn_throttle) take the
     /// receiver without losing updates during setup.
-    pub fn spawn<C, T, F, Fun>(
+    pub fn spawn<C, V, F, Fun>(
         client: C,
         call: Fun,
         frequency: Frequency,
-        receiver: Receiver<T>,
-        init: Option<T>,
+        receiver: Receiver<V>,
+        init: Option<V>,
     ) -> Throttle
     where
         C: Send + Sync + 'static,
-        T: Clone + ToView<F> + Send + Sync + 'static,
+        V: Clone + ToView<F> + Send + Sync + 'static,
         F: Send + Sync + 'static,
         Fun: Fn(&C, F) + Send + 'static,
     {
@@ -517,15 +517,15 @@ impl Throttle {
     /// No actor is attached, so nothing ends the task on its own. It runs until
     /// [`abort`](Self::abort) or the runtime shuts down.
     #[must_use = "without this handle the interval task cannot be stopped"]
-    pub fn spawn_interval<C, T, F, Fun>(
+    pub fn spawn_interval<C, V, F, Fun>(
         client: C,
         call: Fun,
         interval: Duration,
-        val: T,
+        val: V,
     ) -> Throttle
     where
         C: Send + Sync + 'static,
-        T: Clone + ToView<F> + Send + Sync + 'static,
+        V: Clone + ToView<F> + Send + Sync + 'static,
         F: Send + Sync + 'static,
         Fun: Fn(&C, F) + Send + 'static,
     {
@@ -548,16 +548,16 @@ impl Throttle {
     ///
     /// `call` borrows the client and returns a [`BoxFuture`], built with
     /// [`Box::pin`].
-    pub fn spawn_async<C, T, F, Fun>(
+    pub fn spawn_async<C, V, F, Fun>(
         client: C,
         call: Fun,
         frequency: Frequency,
-        receiver: Receiver<T>,
-        init: Option<T>,
+        receiver: Receiver<V>,
+        init: Option<V>,
     ) -> Throttle
     where
         C: Send + Sync + 'static,
-        T: Clone + ToView<F> + Send + Sync + 'static,
+        V: Clone + ToView<F> + Send + Sync + 'static,
         F: Send + Sync + 'static,
         Fun: for<'a> Fn(&'a C, F) -> BoxFuture<'a> + Send + 'static,
     {
@@ -573,15 +573,15 @@ impl Throttle {
 
     /// The async counterpart of [`spawn_interval`](Self::spawn_interval).
     #[must_use = "without this handle the interval task cannot be stopped"]
-    pub fn spawn_async_interval<C, T, F, Fun>(
+    pub fn spawn_async_interval<C, V, F, Fun>(
         client: C,
         call: Fun,
         interval: Duration,
-        val: T,
+        val: V,
     ) -> Throttle
     where
         C: Send + Sync + 'static,
-        T: Clone + ToView<F> + Send + Sync + 'static,
+        V: Clone + ToView<F> + Send + Sync + 'static,
         F: Send + Sync + 'static,
         Fun: for<'a> Fn(&'a C, F) -> BoxFuture<'a> + Send + 'static,
     {
