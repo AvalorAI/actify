@@ -50,6 +50,17 @@ they record what changed rather than why, and are not exhaustive. 0.8.0 through
 
 ### Changed
 
+- **Breaking:** the `Throttled` trait is gone. A throttle callback's argument type
+  now comes from `ToView`, which the trait duplicated: both were a parameterized
+  owned conversion from `&self` with a blanket implementation for `Clone` types.
+
+  Replace `impl Throttled<Payload> for View` with `impl ToView<Payload> for View`
+  and rename the method from `parse` to `to_view`. Bounds change from
+  `V: Throttled<F>` to `V: ToView<F>`. A view type can carry several `ToView`
+  implementations, and the callback signature selects which one is used, exactly
+  as it did before.
+
+
 - **Breaking:** renames, with no behaviour change and no deprecated aliases.
 
   | Before | After |
