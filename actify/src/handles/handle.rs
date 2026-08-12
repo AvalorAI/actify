@@ -925,7 +925,10 @@ mod tests {
                 }
             });
 
+            let start = Instant::now();
+
             assert_eq!(finished(handle.wait_until(|v| *v == 3)).await, 3);
+            assert_eq!(start.elapsed(), PERIOD * 3);
         }
 
         #[tokio::test(start_paused = true)]
