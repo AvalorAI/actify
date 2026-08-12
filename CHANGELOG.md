@@ -50,6 +50,13 @@ they record what changed rather than why, and are not exhaustive. 0.8.0 through
 
 ### Changed
 
+- **Breaking:** `Frequency` no longer derives `PartialOrd` and `Ord`. The derived
+  order came from the declaration order of the variants, so `OnEvent` compared
+  less than `Interval`, which means nothing, and among intervals a longer
+  duration compared greater while being the lower frequency. `PartialEq` and `Eq`
+  stay.
+
+
 - **Breaking:** `CacheRecvNewestError` is gone. Every receive on a `Cache`
   returns `CacheRecvError`. The methods that skip to the newest value never
   return `Lagged`, which each of them documents, so a caller of those gains a
