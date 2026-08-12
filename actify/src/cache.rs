@@ -564,6 +564,61 @@ where
         }
     }
 
+    /// Waits until the cached value satisfies `predicate` and returns it.
+    ///
+    /// Reads through the cache, so the value that satisfied the predicate is the
+    /// one the cache holds afterwards. Tests the value the cache holds, then
+    /// each value queued in it, then values as they are broadcast, in the order
+    /// they were sent, except values lost while the cache was behind, which are
+    /// logged.
+    ///
+    /// Counts as the cache's first read, which means a predicate satisfied by
+    /// the value the cache already holds returns without waiting.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CacheRecvNewestError::Closed`] once the actor has stopped and
+    /// every update it broadcast has been tested.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use actify::Handle;
+    /// # #[tokio::main]
+    /// # async fn main() {
+    /// let handle = Handle::new(0);
+    /// let mut cache = handle.create_cache().await;
+    ///
+    /// let setter = handle.clone();
+    /// tokio::spawn(async move { setter.set(3).await });
+    ///
+    /// assert_eq!(cache.wait_until(|value| *value == 3).await, Ok(&3));
+    /// assert_eq!(cache.get_current(), &3);
+    /// # }
+    /// ```
+    pub async fn wait_until<P>(&mut self, mut predicate: P) -> Result<&T, CacheRecvNewestError>
+    where
+        P: FnMut(&T) -> bool,
+    {
+        if self.is_first_request() && predicate(self.get_current()) {
+            return Ok(&self.inner);
+        }
+
+        loop {
+            match self.rx.recv().await {
+                Ok(value) => {
+                    if predicate(self.store(value)) {
+                        return Ok(&self.inner);
+                    }
+                }
+                // Values were dropped, so one of them may have satisfied the
+                // predicate. Nothing can recover them, so the wait goes on.
+                Err(RecvError::Lagged(nr)) => log_lag::<T>(nr),
+                Err(RecvError::Closed) => return Err(CacheRecvNewestError::Closed),
+            }
+        }
+    }
+
     /// Spawns a [`Throttle`] that fires given a specified [`Frequency`], given any broadcasted updates by the actor.
     ///
     /// First synchronizes the cache to the newest broadcast value, which
@@ -623,7 +678,7 @@ where
 
 fn log_lag<T>(nr: u64) {
     log::debug!(
-        "Cache of actor type {} lagged {nr:?} messages",
+        "A receiver on actor type {} lagged {nr:?} messages",
         std::any::type_name::<T>()
     );
 }
@@ -662,6 +717,72 @@ mod tests {
     use super::*;
     use crate::Handle;
     use tokio::time::{Duration, sleep};
+
+    mod waiting {
+        use super::*;
+        use tokio::time::{Instant, timeout};
+
+        const PERIOD: Duration = Duration::from_millis(100);
+
+        /// Fails rather than hanging when the wait never ends.
+        async fn finished<T>(wait: impl std::future::Future<Output = T>) -> T {
+            timeout(PERIOD * 10, wait)
+                .await
+                .expect("the wait never ended")
+        }
+
+        #[tokio::test(start_paused = true)]
+        async fn test_a_satisfied_predicate_returns_without_waiting() {
+            let handle = Handle::new(7);
+            let mut cache = handle.create_cache().await;
+            let start = Instant::now();
+
+            assert_eq!(finished(cache.wait_until(|v| *v == 7)).await, Ok(&7));
+            assert_eq!(start.elapsed(), Duration::ZERO);
+        }
+
+        #[tokio::test(start_paused = true)]
+        async fn test_the_wait_ends_on_the_matching_update() {
+            let handle = Handle::new(0);
+            let mut cache = handle.create_cache().await;
+            let setter = handle.clone();
+            tokio::spawn(async move {
+                for value in [1, 2, 3] {
+                    sleep(PERIOD).await;
+                    setter.set(value).await;
+                }
+            });
+
+            assert_eq!(finished(cache.wait_until(|v| *v == 3)).await, Ok(&3));
+            assert_eq!(cache.get_current(), &3);
+        }
+
+        /// Every queued value is tested, including one the actor has already
+        /// moved past. Skipping to the newest value would miss the 1 entirely
+        /// and wait forever.
+        #[tokio::test(start_paused = true)]
+        async fn test_a_value_the_actor_has_moved_past_still_matches() {
+            let handle = Handle::new(0);
+            let mut cache = handle.create_cache().await;
+
+            handle.set(1).await;
+            handle.set(2).await;
+
+            assert_eq!(finished(cache.wait_until(|v| *v == 1)).await, Ok(&1));
+        }
+
+        #[tokio::test(start_paused = true)]
+        async fn test_a_dropped_actor_ends_the_wait() {
+            let handle = Handle::new(0);
+            let mut cache = handle.create_cache().await;
+            drop(handle);
+
+            assert_eq!(
+                finished(cache.wait_until(|v| *v == 9)).await,
+                Err(CacheRecvNewestError::Closed)
+            );
+        }
+    }
 
     #[tokio::test(start_paused = true)]
     async fn test_create_cache_update_during_construction() {

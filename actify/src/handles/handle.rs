@@ -171,6 +171,250 @@ where
         Throttle::spawn_from_receiver(client, call, freq, receiver, Some(init));
         handle
     }
+
+    /// Waits until the broadcast value satisfies `predicate` and returns it.
+    ///
+    /// Tests the actor's current value first, so a predicate that already holds
+    /// returns without waiting for an update. Every value broadcast after that
+    /// is tested in the order it was sent, except values lost while the receiver
+    /// was behind, which are logged.
+    ///
+    /// The predicate receives the broadcast type `V`, which the actor produces
+    /// without cloning itself, so this works on non-Clone actor types.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use actify::Handle;
+    /// # #[tokio::main]
+    /// # async fn main() {
+    /// let handle = Handle::new(0);
+    ///
+    /// let setter = handle.clone();
+    /// tokio::spawn(async move { setter.set(3).await });
+    ///
+    /// assert_eq!(handle.wait_until(|value| *value == 3).await, 3);
+    /// # }
+    /// ```
+    ///
+    /// # Panics
+    ///
+    /// Panics if the actor has stopped, either because one of its methods
+    /// panicked or because its runtime shut down. See [Actor lifetime and
+    /// panics](crate#actor-lifetime-and-panics).
+    pub async fn wait_until<P>(&self, predicate: P) -> V
+    where
+        P: FnMut(&V) -> bool,
+    {
+        let mut cache = self.create_cache().await;
+
+        tokio::select! {
+            // A handle owns a broadcast sender, so the cache's channel stays
+            // open even once the actor has panicked or its runtime has gone
+            // away. The exit signal is what reports those.
+            found = cache.wait_until(predicate) => match found {
+                Ok(value) => value.clone(),
+                Err(_) => self.report_actor_gone().await,
+            },
+            _ = self.wait_for_exit() => self.report_actor_gone().await,
+        }
+    }
+
+    /// Creates an initialized [`Cache`] that locally synchronizes with the remote actor.
+    /// As it is initialized with the current value, any updates before or during construction are included.
+    ///
+    /// See also [`Handle::create_cache_from_default`] for a cache that starts from `V::default()`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the actor has stopped, either because one of its methods
+    /// panicked or because its runtime shut down. See [Actor lifetime and
+    /// panics](crate#actor-lifetime-and-panics).
+    pub async fn create_cache(&self) -> Cache<V> {
+        // Subscribe before reading, so an update arriving in between is queued
+        // rather than lost.
+        let rx = self.subscribe();
+        let init = self.with(|inner| inner.to_broadcast()).await;
+        Cache::new(rx, init)
+    }
+
+    /// Spawns a [`Throttle`] that fires given a specified [`Frequency`].
+    ///
+    /// The broadcast type must implement [`Throttled<F>`](crate::Throttled) to
+    /// convert the value into the callback argument.
+    ///
+    /// `call` is any `Fn(&C, F)`, so it can be a method such as `Logger::log`
+    /// below, or a closure holding captured state.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use actify::{Handle, Frequency};
+    /// # use std::sync::{Arc, Mutex};
+    /// # #[tokio::main]
+    /// # async fn main() {
+    /// struct Logger(Arc<Mutex<Vec<i32>>>);
+    /// impl Logger {
+    ///     fn log(&self, val: i32) { self.0.lock().unwrap().push(val); }
+    /// }
+    ///
+    /// let handle = Handle::new(1);
+    /// let values = Arc::new(Mutex::new(Vec::new()));
+    /// handle.spawn_throttle(Logger(values.clone()), Logger::log, Frequency::OnEvent).await;
+    ///
+    /// handle.set(2).await;
+    /// tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    /// // Fires once with the current value on creation, then on each broadcast
+    /// assert_eq!(*values.lock().unwrap(), vec![1, 2]);
+    /// # }
+    /// ```
+    ///
+    /// # Panics
+    ///
+    /// Panics if the actor has stopped, either because one of its methods
+    /// panicked or because its runtime shut down. See [Actor lifetime and
+    /// panics](crate#actor-lifetime-and-panics).
+    pub async fn spawn_throttle<C, F, Fun>(&self, client: C, call: Fun, freq: Frequency) -> Throttle
+    where
+        C: Send + Sync + 'static,
+        V: Throttled<F>,
+        F: Send + Sync + 'static,
+        Fun: Fn(&C, F) + Send + 'static,
+    {
+        // Subscribe before reading, so an update arriving in between is queued
+        // rather than lost.
+        let receiver = self.subscribe();
+        let current = self.with(|inner| inner.to_broadcast()).await;
+        Throttle::spawn_from_receiver(client, call, freq, receiver, Some(current))
+    }
+
+    /// Spawns a [`Throttle`] whose callback is awaited before the next value is
+    /// looked for.
+    ///
+    /// `call` borrows the client and returns a [`BoxFuture`], so the client is
+    /// neither cloned nor required to be `Clone`. See [Slow
+    /// calls](Throttle#slow-calls) for what happens while one runs.
+    ///
+    /// # Writing the callback
+    ///
+    /// The future may borrow the client, and a future's type carries the
+    /// lifetime of what it borrows. A plain generic return type cannot express
+    /// that, so the future is boxed and every callback ends up shaped like:
+    ///
+    /// ```text
+    /// |client, value| Box::pin(async move { ... })
+    /// ```
+    ///
+    /// An `async fn` on the client wraps directly, without an `async` block of
+    /// its own:
+    ///
+    /// ```
+    /// # use actify::{Frequency, Handle};
+    /// # use tokio::sync::mpsc;
+    /// # #[tokio::main]
+    /// # async fn main() {
+    /// struct Forwarder {
+    ///     sink: mpsc::Sender<i32>,
+    /// }
+    ///
+    /// impl Forwarder {
+    ///     async fn forward(&self, value: i32) {
+    ///         let _ = self.sink.send(value).await;
+    ///     }
+    /// }
+    ///
+    /// let (sink, mut received) = mpsc::channel(8);
+    /// let handle = Handle::new(1);
+    ///
+    /// let throttle = handle
+    ///     .spawn_async_throttle(
+    ///         Forwarder { sink },
+    ///         |forwarder, value| Box::pin(forwarder.forward(value)),
+    ///         Frequency::OnEvent,
+    ///     )
+    ///     .await;
+    ///
+    /// handle.set(2).await;
+    ///
+    /// assert_eq!(received.recv().await, Some(1));
+    /// assert_eq!(received.recv().await, Some(2));
+    /// throttle.abort();
+    /// # }
+    /// ```
+    ///
+    /// Anything longer goes in an `async move` block, which can await as often
+    /// as it likes and use the client throughout:
+    ///
+    /// ```
+    /// # use actify::{Frequency, Handle};
+    /// # use tokio::sync::mpsc;
+    /// # #[tokio::main]
+    /// # async fn main() {
+    /// struct Journal {
+    ///     writes: mpsc::Sender<String>,
+    /// }
+    ///
+    /// let (writes, mut received) = mpsc::channel(8);
+    /// let handle = Handle::new(1);
+    ///
+    /// let throttle = handle
+    ///     .spawn_async_throttle(
+    ///         Journal { writes },
+    ///         |journal, value: i32| {
+    ///             Box::pin(async move {
+    ///                 let _ = journal.writes.send(format!("begin {value}")).await;
+    ///                 let _ = journal.writes.send(format!("end {value}")).await;
+    ///             })
+    ///         },
+    ///         Frequency::OnEvent,
+    ///     )
+    ///     .await;
+    ///
+    /// assert_eq!(received.recv().await.as_deref(), Some("begin 1"));
+    /// assert_eq!(received.recv().await.as_deref(), Some("end 1"));
+    /// throttle.abort();
+    /// # }
+    /// ```
+    ///
+    /// A method reference on its own does not work, because an `async fn`
+    /// returns its own future type rather than a boxed one:
+    ///
+    /// ```compile_fail
+    /// # use actify::{Frequency, Handle};
+    /// # struct Forwarder;
+    /// # impl Forwarder { async fn forward(&self, _value: i32) {} }
+    /// # #[tokio::main]
+    /// # async fn main() {
+    /// # let handle = Handle::new(1);
+    /// handle
+    ///     .spawn_async_throttle(Forwarder, Forwarder::forward, Frequency::OnEvent)
+    ///     .await;
+    /// # }
+    /// ```
+    ///
+    /// # Panics
+    ///
+    /// Panics if the actor has stopped, either because one of its methods
+    /// panicked or because its runtime shut down. See [Actor lifetime and
+    /// panics](crate#actor-lifetime-and-panics).
+    pub async fn spawn_async_throttle<C, F, Fun>(
+        &self,
+        client: C,
+        call: Fun,
+        freq: Frequency,
+    ) -> Throttle
+    where
+        C: Send + Sync + 'static,
+        V: Throttled<F>,
+        F: Send + Sync + 'static,
+        Fun: for<'a> Fn(&'a C, F) -> BoxFuture<'a> + Send + 'static,
+    {
+        // Subscribe before reading, so an update arriving in between is queued
+        // rather than lost.
+        let receiver = self.subscribe();
+        let current = self.with(|inner| inner.to_broadcast()).await;
+        Throttle::spawn_async_from_receiver(client, call, freq, receiver, Some(current))
+    }
 }
 
 impl<T, V> Handle<T, V> {
@@ -237,7 +481,7 @@ impl<T: Send + Sync + 'static, V> Handle<T, V> {
             respond_to,
         };
         if self.tx.send(job).await.is_err() {
-            return self.report_actor_gone().await;
+            self.report_actor_gone().await;
         }
         match get_result.await {
             Ok(res) => res,
@@ -250,7 +494,7 @@ impl<T: Send + Sync + 'static, V> Handle<T, V> {
     /// The exit signal may not have been written yet when the channel first
     /// reports its failure, so this waits for it rather than guessing from
     /// scheduling order.
-    async fn report_actor_gone(&self) -> Box<dyn Any + Send> {
+    async fn report_actor_gone(&self) -> ! {
         if self.wait_for_exit().await == ActorExit::Panicked {
             panic!("A panic occurred in the Actor of type {}", type_name::<T>());
         }
@@ -488,211 +732,6 @@ impl<T, V: Default + Clone + Send + Sync + 'static> Handle<T, V> {
     }
 }
 
-impl<T, V> Handle<T, V>
-where
-    T: Clone + BroadcastAs<V> + Send + Sync + 'static,
-    V: Clone + Send + Sync + 'static,
-{
-    /// Creates an initialized [`Cache`] that locally synchronizes with the remote actor.
-    /// As it is initialized with the current value, any updates before or during construction are included.
-    ///
-    /// See also [`Handle::create_cache_from_default`] for a cache that starts from `V::default()`.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the actor has stopped, either because one of its methods
-    /// panicked or because its runtime shut down. See [Actor lifetime and
-    /// panics](crate#actor-lifetime-and-panics).
-    pub async fn create_cache(&self) -> Cache<V> {
-        // Subscribe before get, so an update arriving in between is queued rather than lost.
-        let rx = self.subscribe();
-        let init = self.get().await;
-        Cache::new(rx, init.to_broadcast())
-    }
-
-    /// Spawns a [`Throttle`] that fires given a specified [`Frequency`].
-    ///
-    /// The broadcast type must implement [`Throttled<F>`](crate::Throttled) to
-    /// convert the value into the callback argument.
-    ///
-    /// `call` is any `Fn(&C, F)`, so it can be a method such as `Logger::log`
-    /// below, or a closure holding captured state.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// # use actify::{Handle, Frequency};
-    /// # use std::sync::{Arc, Mutex};
-    /// # #[tokio::main]
-    /// # async fn main() {
-    /// struct Logger(Arc<Mutex<Vec<i32>>>);
-    /// impl Logger {
-    ///     fn log(&self, val: i32) { self.0.lock().unwrap().push(val); }
-    /// }
-    ///
-    /// let handle = Handle::new(1);
-    /// let values = Arc::new(Mutex::new(Vec::new()));
-    /// handle.spawn_throttle(Logger(values.clone()), Logger::log, Frequency::OnEvent).await;
-    ///
-    /// handle.set(2).await;
-    /// tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-    /// // Fires once with the current value on creation, then on each broadcast
-    /// assert_eq!(*values.lock().unwrap(), vec![1, 2]);
-    /// # }
-    /// ```
-    ///
-    /// # Panics
-    ///
-    /// Panics if the actor has stopped, either because one of its methods
-    /// panicked or because its runtime shut down. See [Actor lifetime and
-    /// panics](crate#actor-lifetime-and-panics).
-    pub async fn spawn_throttle<C, F, Fun>(&self, client: C, call: Fun, freq: Frequency) -> Throttle
-    where
-        C: Send + Sync + 'static,
-        V: Throttled<F>,
-        F: Send + Sync + 'static,
-        Fun: Fn(&C, F) + Send + 'static,
-    {
-        // Subscribe before get, so an update arriving in between is queued rather than lost.
-        let receiver = self.subscribe();
-        let current = self.get().await;
-        Throttle::spawn_from_receiver(client, call, freq, receiver, Some(current.to_broadcast()))
-    }
-
-    /// Spawns a [`Throttle`] whose callback is awaited before the next value is
-    /// looked for.
-    ///
-    /// `call` borrows the client and returns a [`BoxFuture`], so the client is
-    /// neither cloned nor required to be `Clone`. See [Slow
-    /// calls](Throttle#slow-calls) for what happens while one runs.
-    ///
-    /// # Writing the callback
-    ///
-    /// The future may borrow the client, and a future's type carries the
-    /// lifetime of what it borrows. A plain generic return type cannot express
-    /// that, so the future is boxed and every callback ends up shaped like:
-    ///
-    /// ```text
-    /// |client, value| Box::pin(async move { ... })
-    /// ```
-    ///
-    /// An `async fn` on the client wraps directly, without an `async` block of
-    /// its own:
-    ///
-    /// ```
-    /// # use actify::{Frequency, Handle};
-    /// # use tokio::sync::mpsc;
-    /// # #[tokio::main]
-    /// # async fn main() {
-    /// struct Forwarder {
-    ///     sink: mpsc::Sender<i32>,
-    /// }
-    ///
-    /// impl Forwarder {
-    ///     async fn forward(&self, value: i32) {
-    ///         let _ = self.sink.send(value).await;
-    ///     }
-    /// }
-    ///
-    /// let (sink, mut received) = mpsc::channel(8);
-    /// let handle = Handle::new(1);
-    ///
-    /// let throttle = handle
-    ///     .spawn_async_throttle(
-    ///         Forwarder { sink },
-    ///         |forwarder, value| Box::pin(forwarder.forward(value)),
-    ///         Frequency::OnEvent,
-    ///     )
-    ///     .await;
-    ///
-    /// handle.set(2).await;
-    ///
-    /// assert_eq!(received.recv().await, Some(1));
-    /// assert_eq!(received.recv().await, Some(2));
-    /// throttle.abort();
-    /// # }
-    /// ```
-    ///
-    /// Anything longer goes in an `async move` block, which can await as often
-    /// as it likes and use the client throughout:
-    ///
-    /// ```
-    /// # use actify::{Frequency, Handle};
-    /// # use tokio::sync::mpsc;
-    /// # #[tokio::main]
-    /// # async fn main() {
-    /// struct Journal {
-    ///     writes: mpsc::Sender<String>,
-    /// }
-    ///
-    /// let (writes, mut received) = mpsc::channel(8);
-    /// let handle = Handle::new(1);
-    ///
-    /// let throttle = handle
-    ///     .spawn_async_throttle(
-    ///         Journal { writes },
-    ///         |journal, value: i32| {
-    ///             Box::pin(async move {
-    ///                 let _ = journal.writes.send(format!("begin {value}")).await;
-    ///                 let _ = journal.writes.send(format!("end {value}")).await;
-    ///             })
-    ///         },
-    ///         Frequency::OnEvent,
-    ///     )
-    ///     .await;
-    ///
-    /// assert_eq!(received.recv().await.as_deref(), Some("begin 1"));
-    /// assert_eq!(received.recv().await.as_deref(), Some("end 1"));
-    /// throttle.abort();
-    /// # }
-    /// ```
-    ///
-    /// A method reference on its own does not work, because an `async fn`
-    /// returns its own future type rather than a boxed one:
-    ///
-    /// ```compile_fail
-    /// # use actify::{Frequency, Handle};
-    /// # struct Forwarder;
-    /// # impl Forwarder { async fn forward(&self, _value: i32) {} }
-    /// # #[tokio::main]
-    /// # async fn main() {
-    /// # let handle = Handle::new(1);
-    /// handle
-    ///     .spawn_async_throttle(Forwarder, Forwarder::forward, Frequency::OnEvent)
-    ///     .await;
-    /// # }
-    /// ```
-    ///
-    /// # Panics
-    ///
-    /// Panics if the actor has stopped, either because one of its methods
-    /// panicked or because its runtime shut down. See [Actor lifetime and
-    /// panics](crate#actor-lifetime-and-panics).
-    pub async fn spawn_async_throttle<C, F, Fun>(
-        &self,
-        client: C,
-        call: Fun,
-        freq: Frequency,
-    ) -> Throttle
-    where
-        C: Send + Sync + 'static,
-        V: Throttled<F>,
-        F: Send + Sync + 'static,
-        Fun: for<'a> Fn(&'a C, F) -> BoxFuture<'a> + Send + 'static,
-    {
-        // Subscribe before get, so an update arriving in between is queued rather than lost.
-        let receiver = self.subscribe();
-        let current = self.get().await;
-        Throttle::spawn_async_from_receiver(
-            client,
-            call,
-            freq,
-            receiver,
-            Some(current.to_broadcast()),
-        )
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -809,6 +848,189 @@ mod tests {
                 "expected a stopped-actor message, got: {message}"
             );
         });
+    }
+
+    mod waiting {
+        use super::*;
+        use tokio::time::{Duration, Instant, sleep, timeout};
+
+        const PERIOD: Duration = Duration::from_millis(100);
+
+        /// Fails rather than hanging when the wait never ends.
+        async fn finished<T>(wait: impl Future<Output = T>) -> T {
+            timeout(PERIOD * 10, wait)
+                .await
+                .expect("the wait never ended")
+        }
+
+        #[tokio::test(start_paused = true)]
+        async fn test_a_satisfied_predicate_returns_without_waiting() {
+            let handle = Handle::new(7);
+            let start = Instant::now();
+
+            assert_eq!(finished(handle.wait_until(|v| *v == 7)).await, 7);
+            assert_eq!(start.elapsed(), Duration::ZERO);
+        }
+
+        #[tokio::test(start_paused = true)]
+        async fn test_the_wait_ends_on_the_matching_update() {
+            let handle = Handle::new(0);
+            let setter = handle.clone();
+            tokio::spawn(async move {
+                sleep(PERIOD).await;
+                setter.set(9).await;
+            });
+
+            let start = Instant::now();
+
+            assert_eq!(finished(handle.wait_until(|v| *v == 9)).await, 9);
+            assert_eq!(start.elapsed(), PERIOD);
+        }
+
+        #[tokio::test(start_paused = true)]
+        async fn test_updates_that_do_not_match_are_skipped() {
+            let handle = Handle::new(0);
+            let setter = handle.clone();
+            tokio::spawn(async move {
+                for value in [1, 2, 3] {
+                    sleep(PERIOD).await;
+                    setter.set(value).await;
+                }
+            });
+
+            let start = Instant::now();
+
+            assert_eq!(finished(handle.wait_until(|v| *v == 3)).await, 3);
+            assert_eq!(start.elapsed(), PERIOD * 3);
+        }
+
+        #[tokio::test(start_paused = true)]
+        async fn test_an_update_during_construction_is_not_lost() {
+            let handle = Handle::new(1);
+            let setter = handle.clone();
+            // On the current-thread test runtime this task first runs when
+            // wait_until awaits the actor, so the update is broadcast exactly
+            // between its subscribe and its read.
+            let update = tokio::spawn(async move { setter.set(2).await });
+
+            assert_eq!(finished(handle.wait_until(|v| *v == 2)).await, 2);
+            update.await.unwrap();
+        }
+
+        /// The predicate runs on the broadcast type, so the actor type itself
+        /// never has to be cloned or even be `Clone`.
+        #[tokio::test(start_paused = true)]
+        async fn test_a_non_clone_actor_can_be_waited_on() {
+            let handle: Handle<NonCloneActor, i32> = Handle::new(NonCloneActor { value: 1 });
+            let setter = handle.clone();
+            tokio::spawn(async move { setter.set_value(2).await });
+
+            assert_eq!(finished(handle.wait_until(|value| *value == 2)).await, 2);
+        }
+
+        #[tokio::test(start_paused = true)]
+        async fn test_a_read_handle_can_wait() {
+            let handle = Handle::new(0);
+            let read_handle = handle.get_read_handle();
+            tokio::spawn(async move { handle.set(5).await });
+
+            assert_eq!(finished(read_handle.wait_until(|v| *v == 5)).await, 5);
+        }
+
+        /// A handle owns a broadcast sender, so the channel the wait is reading
+        /// never reports the actor gone. Only the exit signal does.
+        #[tokio::test(start_paused = true)]
+        async fn test_a_dead_actor_ends_the_wait_with_a_panic() {
+            let handle = Handle::new(PanicStruct {});
+            let waiter = handle.clone();
+            let wait = tokio::spawn(async move { waiter.wait_until(|_| false).await });
+
+            let _ = tokio::spawn(async move { handle.panic().await }).await;
+
+            let message = panic_message(finished(wait).await.unwrap_err());
+            assert!(
+                message.contains("A panic occurred in the Actor"),
+                "expected the actor's panic to be reported, got: {message}"
+            );
+        }
+    }
+
+    /// Deriving the broadcast value inside the actor means the actor value
+    /// itself is never cloned, so these work on actor types that are not Clone.
+    mod broadcast_derivation {
+        use super::*;
+        use crate::Frequency;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::{Arc, Mutex};
+
+        #[tokio::test]
+        async fn test_a_non_clone_actor_can_create_a_cache() {
+            let handle: Handle<NonCloneActor, i32> = Handle::new(NonCloneActor { value: 1 });
+
+            let cache = handle.create_cache().await;
+
+            assert_eq!(cache.get_current(), &1);
+        }
+
+        #[tokio::test]
+        async fn test_a_non_clone_actor_can_spawn_a_throttle() {
+            let handle: Handle<NonCloneActor, i32> = Handle::new(NonCloneActor { value: 1 });
+            let seen = Arc::new(Mutex::new(Vec::new()));
+            let sink = seen.clone();
+
+            let throttle = handle
+                .spawn_throttle(
+                    sink,
+                    |sink: &Arc<Mutex<Vec<i32>>>, value: i32| sink.lock().unwrap().push(value),
+                    Frequency::OnEvent,
+                )
+                .await;
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+
+            assert_eq!(*seen.lock().unwrap(), vec![1]);
+            throttle.abort();
+        }
+
+        /// Counts every clone of the actor value.
+        #[derive(Debug)]
+        struct Counted {
+            clones: Arc<AtomicUsize>,
+            value: i32,
+        }
+
+        impl Clone for Counted {
+            fn clone(&self) -> Self {
+                self.clones.fetch_add(1, Ordering::SeqCst);
+                Counted {
+                    clones: self.clones.clone(),
+                    value: self.value,
+                }
+            }
+        }
+
+        impl BroadcastAs<i32> for Counted {
+            fn to_broadcast(&self) -> i32 {
+                self.value
+            }
+        }
+
+        #[tokio::test]
+        async fn test_creating_a_cache_does_not_clone_the_actor_value() {
+            let clones = Arc::new(AtomicUsize::new(0));
+            let handle: Handle<Counted, i32> = Handle::new(Counted {
+                clones: clones.clone(),
+                value: 1,
+            });
+
+            let cache = handle.create_cache().await;
+
+            assert_eq!(cache.get_current(), &1);
+            assert_eq!(clones.load(Ordering::SeqCst), 0);
+
+            // Reading the value does clone it, so the count above is a count.
+            let _ = handle.get().await;
+            assert_eq!(clones.load(Ordering::SeqCst), 1);
+        }
     }
 
     fn panic_message(error: tokio::task::JoinError) -> String {

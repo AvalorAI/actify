@@ -28,6 +28,19 @@ they record what changed rather than why, and are not exhaustive. 0.8.0 through
   cloned nor required to be `Clone`. A future that borrows carries the lifetime
   of that borrow in its type, which a plain generic return type cannot express,
   hence the box. `BoxFuture` is exported for naming the bound.
+- `Handle::wait_until`, `ReadHandle::wait_until` and `Cache::wait_until`, which
+  wait until the broadcast value satisfies a predicate and return the value that
+  satisfied it. The current value is tested first, so a predicate that already
+  holds returns without waiting for an update.
+
+  Every value is tested in the order it was broadcast, so a state the actor has
+  since moved past still ends the wait. A lagging receiver is the one case where
+  a matching value can be missed: it is logged and the wait continues.
+
+  The predicate takes the broadcast type, which the actor produces without
+  cloning itself, so waiting works on non-Clone actor types. `Handle::wait_until`
+  panics if the actor stops while it waits, as the other handle methods do;
+  `Cache::wait_until` returns `CacheRecvNewestError::Closed`.
 - `ReadHandle::spawn_throttle` and `ReadHandle::spawn_async_throttle`, so a
   throttle can be spawned from a read-only view of an actor. Both behave as
   their `Handle` counterparts.
@@ -36,6 +49,15 @@ they record what changed rather than why, and are not exhaustive. 0.8.0 through
   stop it short of shutting down the runtime.
 
 ### Changed
+
+- `Handle::create_cache`, `Handle::spawn_throttle` and `Handle::spawn_async_throttle`,
+  and their `ReadHandle` counterparts, no longer require the actor type to be
+  `Clone`. Each of them seeded itself by cloning the whole actor value out with
+  `get` and deriving the broadcast value from that clone. They now ask the actor
+  to derive it in place, which drops the bound and the clone: a
+  `Handle<BigState, Summary>` no longer copies all of `BigState` to create a
+  cache, and actor types that are not `Clone` can now use both.
+
 
 - **Breaking:** `Cache::spawn_throttle` takes `&mut self` and first
   synchronizes the cache to the newest broadcast value, which becomes the
