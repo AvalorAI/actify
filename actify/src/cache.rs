@@ -1,5 +1,4 @@
-use std::fmt::Debug;
-use thiserror::Error;
+use std::fmt::{self, Debug};
 use tokio::sync::broadcast::{
     self, Receiver,
     error::{RecvError, TryRecvError},
@@ -96,7 +95,7 @@ where
     /// A closed channel is only reported once its queue is exhausted, so a final
     /// update broadcast before the actor stopped is still returned. Closing is
     /// permanent, so the next call reports it.
-    fn drain_to_newest(&mut self) -> Result<bool, CacheRecvNewestError> {
+    fn drain_to_newest(&mut self) -> Result<bool, CacheRecvError> {
         let mut received = false;
         loop {
             match self.rx.try_recv() {
@@ -106,7 +105,7 @@ where
                 }
                 Err(TryRecvError::Empty) => return Ok(received),
                 Err(TryRecvError::Closed) if received => return Ok(true),
-                Err(TryRecvError::Closed) => return Err(CacheRecvNewestError::Closed),
+                Err(TryRecvError::Closed) => return Err(CacheRecvError::Closed),
                 Err(TryRecvError::Lagged(nr)) => log_lag::<V>(nr),
             }
         }
@@ -258,8 +257,11 @@ where
     ///
     /// # Errors
     ///
-    /// Returns [`CacheRecvNewestError::Closed`] once the actor has been dropped
+    /// Returns [`CacheRecvError::Closed`] once the actor has been dropped
     /// and every update it broadcast has been delivered (after the first call).
+    ///
+    /// Never returns [`CacheRecvError::Lagged`]: falling behind is what skipping
+    /// to the newest value does.
     ///
     /// # Examples
     ///
@@ -279,7 +281,7 @@ where
     /// assert_eq!(cache.recv_newest().await.unwrap(), &3);
     /// # }
     /// ```
-    pub async fn recv_newest(&mut self) -> Result<&V, CacheRecvNewestError> {
+    pub async fn recv_newest(&mut self) -> Result<&V, CacheRecvError> {
         if self.is_first_request() {
             return Ok(self.get_newest());
         }
@@ -290,7 +292,7 @@ where
                     self.inner = val;
                     break;
                 }
-                Err(RecvError::Closed) => return Err(CacheRecvNewestError::Closed),
+                Err(RecvError::Closed) => return Err(CacheRecvError::Closed),
                 Err(RecvError::Lagged(nr)) => log_lag::<V>(nr),
             }
         }
@@ -353,9 +355,12 @@ where
     ///
     /// # Errors
     ///
-    /// Returns [`CacheRecvNewestError::Closed`] once the actor has been dropped
+    /// Returns [`CacheRecvError::Closed`] once the actor has been dropped
     /// and every update it broadcast has been delivered. A final update sent
     /// just before the actor stopped is therefore still returned.
+    ///
+    /// Never returns [`CacheRecvError::Lagged`]: falling behind is what skipping
+    /// to the newest value does.
     ///
     /// # Examples
     ///
@@ -394,7 +399,7 @@ where
     /// assert_eq!(cache.try_recv_newest().unwrap(), None);
     /// # }
     /// ```
-    pub fn try_recv_newest(&mut self) -> Result<Option<&V>, CacheRecvNewestError> {
+    pub fn try_recv_newest(&mut self) -> Result<Option<&V>, CacheRecvError> {
         let first = self.is_first_request();
         let received = self.drain_to_newest()?;
         if received || first {
@@ -525,8 +530,11 @@ where
     ///
     /// # Errors
     ///
-    /// Returns [`CacheRecvNewestError::Closed`] once the actor has been dropped
+    /// Returns [`CacheRecvError::Closed`] once the actor has been dropped
     /// and every update it broadcast has been delivered (after the first call).
+    ///
+    /// Never returns [`CacheRecvError::Lagged`]: falling behind is what skipping
+    /// to the newest value does.
     ///
     /// # Examples
     ///
@@ -545,7 +553,7 @@ where
     /// }).join().unwrap();
     /// # }
     /// ```
-    pub fn blocking_recv_newest(&mut self) -> Result<&V, CacheRecvNewestError> {
+    pub fn blocking_recv_newest(&mut self) -> Result<&V, CacheRecvError> {
         if self.is_first_request() {
             return Ok(self.get_newest());
         }
@@ -558,7 +566,7 @@ where
                         return Ok(&self.inner);
                     }
                 }
-                Err(RecvError::Closed) => return Err(CacheRecvNewestError::Closed),
+                Err(RecvError::Closed) => return Err(CacheRecvError::Closed),
                 Err(RecvError::Lagged(nr)) => log_lag::<V>(nr),
             }
         }
@@ -577,8 +585,11 @@ where
     ///
     /// # Errors
     ///
-    /// Returns [`CacheRecvNewestError::Closed`] once the actor has stopped and
+    /// Returns [`CacheRecvError::Closed`] once the actor has stopped and
     /// every update it broadcast has been tested.
+    ///
+    /// Never returns [`CacheRecvError::Lagged`]: a lagging channel is logged and
+    /// the wait continues.
     ///
     /// # Examples
     ///
@@ -596,7 +607,7 @@ where
     /// assert_eq!(cache.get_current(), &3);
     /// # }
     /// ```
-    pub async fn wait_until<P>(&mut self, mut predicate: P) -> Result<&V, CacheRecvNewestError>
+    pub async fn wait_until<P>(&mut self, mut predicate: P) -> Result<&V, CacheRecvError>
     where
         P: FnMut(&V) -> bool,
     {
@@ -614,7 +625,7 @@ where
                 // Values were dropped, so one of them may have satisfied the
                 // predicate. Nothing can recover them, so the wait goes on.
                 Err(RecvError::Lagged(nr)) => log_lag::<V>(nr),
-                Err(RecvError::Closed) => return Err(CacheRecvNewestError::Closed),
+                Err(RecvError::Closed) => return Err(CacheRecvError::Closed),
             }
         }
     }
@@ -683,17 +694,31 @@ fn log_lag<V>(nr: u64) {
     );
 }
 
-/// Error returned by [`Cache::recv`] and [`Cache::try_recv`].
-#[derive(Error, Debug, PartialEq, Clone)]
+/// Error returned when a [`Cache`] cannot deliver a value.
+///
+/// The methods that skip to the newest value never return
+/// [`Lagged`](Self::Lagged), because falling behind is what they are for. Their
+/// documentation says so individually.
+#[derive(Debug, PartialEq, Clone)]
+#[non_exhaustive]
 pub enum CacheRecvError {
     /// The actor has stopped and every update it broadcast has been delivered.
-    #[error("Cache channel closed")]
     Closed,
     /// The cache fell behind and the channel dropped the given number of
     /// updates. The cached value is unchanged.
-    #[error("Cache channel lagged by {0}")]
     Lagged(u64),
 }
+
+impl fmt::Display for CacheRecvError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            CacheRecvError::Closed => write!(f, "Cache channel closed"),
+            CacheRecvError::Lagged(nr) => write!(f, "Cache channel lagged by {nr}"),
+        }
+    }
+}
+
+impl std::error::Error for CacheRecvError {}
 
 impl From<RecvError> for CacheRecvError {
     fn from(err: RecvError) -> Self {
@@ -702,14 +727,6 @@ impl From<RecvError> for CacheRecvError {
             RecvError::Lagged(nr) => CacheRecvError::Lagged(nr),
         }
     }
-}
-
-/// Error returned by [`Cache::recv_newest`] and [`Cache::try_recv_newest`].
-#[derive(Error, Debug, PartialEq, Clone)]
-pub enum CacheRecvNewestError {
-    /// The actor has stopped and every update it broadcast has been delivered.
-    #[error("Cache channel closed")]
-    Closed,
 }
 
 #[cfg(test)]
@@ -819,7 +836,7 @@ mod tests {
 
             assert_eq!(
                 finished(cache.wait_until(|v| *v == 9)).await,
-                Err(CacheRecvNewestError::Closed)
+                Err(CacheRecvError::Closed)
             );
         }
     }
@@ -1055,9 +1072,9 @@ mod tests {
 
         drop(handle);
         assert_eq!(cache.recv().await, Err(CacheRecvError::Closed));
-        assert_eq!(cache.recv_newest().await, Err(CacheRecvNewestError::Closed));
+        assert_eq!(cache.recv_newest().await, Err(CacheRecvError::Closed));
         assert_eq!(cache.try_recv(), Err(CacheRecvError::Closed));
-        assert_eq!(cache.try_recv_newest(), Err(CacheRecvNewestError::Closed));
+        assert_eq!(cache.try_recv_newest(), Err(CacheRecvError::Closed));
     }
 
     /// A value broadcast just before the actor stops is still buffered in the
@@ -1074,7 +1091,7 @@ mod tests {
 
         assert_eq!(cache.try_recv_newest().unwrap(), Some(&2));
         // Only once the queue is drained does the closed channel surface
-        assert_eq!(cache.try_recv_newest(), Err(CacheRecvNewestError::Closed));
+        assert_eq!(cache.try_recv_newest(), Err(CacheRecvError::Closed));
     }
 
     /// The same guarantee for the awaiting variant.
@@ -1089,7 +1106,7 @@ mod tests {
         sleep(Duration::from_millis(10)).await;
 
         assert_eq!(cache.recv_newest().await.unwrap(), &2);
-        assert_eq!(cache.recv_newest().await, Err(CacheRecvNewestError::Closed));
+        assert_eq!(cache.recv_newest().await, Err(CacheRecvError::Closed));
     }
 
     /// Fills the broadcast channel past its capacity, so the cache's receiver

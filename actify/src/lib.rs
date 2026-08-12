@@ -317,7 +317,7 @@
 //! [`Cache::wait_until`] waits until the cached value satisfies a predicate,
 //! reading through the cache so it holds the value that matched.
 //!
-//! See [`CacheRecvError`] and [`CacheRecvNewestError`] for possible error conditions.
+//! See [`CacheRecvError`] for the possible error conditions.
 //!
 //! # ReadHandle
 //!
@@ -463,7 +463,7 @@ mod throttle;
 
 // Reexport for easier reference
 pub use actify_macros::{actify, broadcast, skip_broadcast};
-pub use cache::{Cache, CacheRecvError, CacheRecvNewestError};
+pub use cache::{Cache, CacheRecvError};
 pub use extensions::{
     map::HashMapHandle, option::OptionHandle, set::HashSetHandle, vec::VecHandle,
 };

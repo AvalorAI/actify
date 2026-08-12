@@ -10,7 +10,6 @@ documentation = "https://docs.rs/actify/latest/actify/"
 readme = "../README.md"
 
 [dependencies]
-thiserror = "2.0.12"
 tokio = { version = "1.44.1", features = ["full"] }
 log = "0.4"
 actify-macros = { path = "../actify-macros", version = "0.5.0" }
