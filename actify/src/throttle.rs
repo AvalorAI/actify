@@ -1209,13 +1209,21 @@ mod tests {
         assert_eq!(count, 1)
     }
 
-    /// The throttle attached by new_throttled fires once with the initial
-    /// value before any broadcast, and then again for each update.
+    /// Attaching a throttle to a new actor takes no await, so it works from a
+    /// synchronous function. It fires once with the initial value before any
+    /// broadcast, and then again for each update.
     #[tokio::test(start_paused = true)]
-    async fn test_new_throttled_fires_init_and_updates() {
+    async fn test_a_throttle_can_be_attached_without_awaiting() {
         let counter = CounterClient::new();
-        let handle: Handle<i32> =
-            Handle::new_throttled(1, counter.clone(), CounterClient::call, Frequency::OnEvent);
+
+        let handle: Handle<i32> = Handle::new(1);
+        let _throttle = Throttle::spawn(
+            counter.clone(),
+            CounterClient::call,
+            Frequency::OnEvent,
+            handle.subscribe(),
+            Some(1),
+        );
         sleep(Duration::from_millis(10)).await;
 
         assert_eq!(*counter.count.lock().unwrap(), 1);

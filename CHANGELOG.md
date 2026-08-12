@@ -48,7 +48,25 @@ they record what changed rather than why, and are not exhaustive. 0.8.0 through
   `Throttle::spawn_interval` has no actor attached, so before this nothing could
   stop it short of shutting down the runtime.
 
+### Removed
+
+- **Breaking:** `Handle::new_throttled`. It was `Handle::new` followed by a
+  throttle spawn, and it stopped composing once spawn functions began returning a
+  `Throttle`: it would have had to hand back a tuple. Its one property worth
+  keeping is that it needs no `await`, and the replacement does not either:
+
+  ```rust
+  let init = value.to_view();
+  let handle = Handle::new(value);
+  let throttle = Throttle::spawn(client, call, freq, handle.subscribe(), Some(init));
+  ```
+
+  Nothing can broadcast between `new` and `subscribe`, because no other handle to
+  that actor exists yet. Note that the initial value is now passed explicitly, so
+  it is on the caller to pass the value the actor was created with.
+
 ### Changed
+
 
 - **Breaking:** the `Throttled` trait is gone. A throttle callback's argument type
   now comes from `ToView`, which the trait duplicated: both were a parameterized
