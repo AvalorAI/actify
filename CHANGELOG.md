@@ -33,11 +33,9 @@ they record what changed rather than why, and are not exhaustive. 0.8.0 through
   satisfied it. The current value is tested first, so a predicate that already
   holds returns without waiting for an update.
 
-  Every value is tested in the order it was broadcast, including values the actor
-  has already moved past, so a state the actor passed through still ends the
-  wait. The value returned may therefore be older than the actor's current one.
-  A lagging receiver is the one case where a matching value can be missed: it is
-  logged and the wait continues.
+  Every value is tested in the order it was broadcast, so a state the actor has
+  since moved past still ends the wait. A lagging receiver is the one case where
+  a matching value can be missed: it is logged and the wait continues.
 
   The predicate takes the broadcast type, which the actor produces without
   cloning itself, so waiting works on non-Clone actor types. `Handle::wait_until`

@@ -570,8 +570,7 @@ where
     /// one the cache holds afterwards. Tests the value the cache holds, then
     /// each value queued in it, then values as they are broadcast, in the order
     /// they were sent, except values lost while the cache was behind, which are
-    /// logged. The value returned may be older than the value the actor holds by
-    /// then.
+    /// logged.
     ///
     /// Counts as the cache's first read, which means a predicate satisfied by
     /// the value the cache already holds returns without waiting.

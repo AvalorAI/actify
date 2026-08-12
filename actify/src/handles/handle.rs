@@ -498,9 +498,7 @@ where
     /// Tests the actor's current value first, so a predicate that already holds
     /// returns without waiting for an update. Every value broadcast after that
     /// is tested in the order it was sent, except values lost while the receiver
-    /// was behind, which are logged. The value returned is the one that
-    /// satisfied the predicate, which may be older than the value the actor
-    /// holds by then.
+    /// was behind, which are logged.
     ///
     /// The predicate receives the broadcast type `V`, which the actor produces
     /// without cloning itself, so this works on non-Clone actor types.
