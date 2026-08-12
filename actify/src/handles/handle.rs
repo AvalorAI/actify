@@ -1033,6 +1033,39 @@ mod tests {
         }
     }
 
+    /// `V` is what a handle exposes: reads return it, and the actor type stays
+    /// private behind `with`.
+    mod views {
+        use super::*;
+
+        fn big() -> Handle<BigState, usize> {
+            Handle::new(BigState {
+                data: vec![1, 2, 3],
+                count: 7,
+            })
+        }
+
+        #[tokio::test]
+        async fn test_get_returns_the_view_not_the_state() {
+            assert_eq!(big().get().await, 7);
+        }
+
+        #[tokio::test]
+        async fn test_a_non_clone_actor_can_be_read() {
+            let handle: Handle<NonCloneActor, i32> = Handle::new(NonCloneActor { value: 1 });
+
+            assert_eq!(handle.get().await, 1);
+            assert_eq!(handle.get_read_handle().get().await, 1);
+        }
+
+        #[tokio::test]
+        async fn test_the_state_stays_reachable_through_with() {
+            let handle = big();
+
+            assert_eq!(handle.with(|state| state.data.clone()).await, vec![1, 2, 3]);
+        }
+    }
+
     fn panic_message(error: tokio::task::JoinError) -> String {
         let panic = error.into_panic();
         panic
