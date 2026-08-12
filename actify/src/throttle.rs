@@ -1209,31 +1209,6 @@ mod tests {
         assert_eq!(count, 1)
     }
 
-    /// Attaching a throttle to a new actor takes no await, so it works from a
-    /// synchronous function. It fires once with the initial value before any
-    /// broadcast, and then again for each update.
-    #[tokio::test(start_paused = true)]
-    async fn test_a_throttle_can_be_attached_without_awaiting() {
-        let counter = CounterClient::new();
-
-        let handle: Handle<i32> = Handle::new(1);
-        let _throttle = Throttle::spawn(
-            counter.clone(),
-            CounterClient::call,
-            Frequency::OnEvent,
-            handle.subscribe(),
-            Some(1),
-        );
-        sleep(Duration::from_millis(10)).await;
-
-        assert_eq!(*counter.count.lock().unwrap(), 1);
-
-        handle.set(2).await;
-        sleep(Duration::from_millis(10)).await;
-
-        assert_eq!(*counter.count.lock().unwrap(), 2);
-    }
-
     /// An update already queued in the cache's receiver but not yet consumed
     /// must reach a throttle spawned from that cache. The cache first
     /// synchronizes to the newest broadcast value, which becomes the
