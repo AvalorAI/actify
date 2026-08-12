@@ -1012,6 +1012,80 @@ mod tests {
         }
     }
 
+    /// Deriving the broadcast value inside the actor means the actor value
+    /// itself is never cloned, so these work on actor types that are not Clone.
+    mod broadcast_derivation {
+        use super::*;
+        use crate::Frequency;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::{Arc, Mutex};
+
+        #[tokio::test]
+        async fn test_a_non_clone_actor_can_create_a_cache() {
+            let handle: Handle<NonCloneActor, i32> = Handle::new(NonCloneActor { value: 1 });
+
+            let cache = handle.create_cache().await;
+
+            assert_eq!(cache.get_current(), &1);
+        }
+
+        #[tokio::test]
+        async fn test_a_non_clone_actor_can_spawn_a_throttle() {
+            let handle: Handle<NonCloneActor, i32> = Handle::new(NonCloneActor { value: 1 });
+            let seen = Arc::new(Mutex::new(Vec::new()));
+            let sink = seen.clone();
+
+            let throttle = handle
+                .spawn_throttle(
+                    sink,
+                    |sink: &Arc<Mutex<Vec<i32>>>, value: i32| sink.lock().unwrap().push(value),
+                    Frequency::OnEvent,
+                )
+                .await;
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+
+            assert_eq!(*seen.lock().unwrap(), vec![1]);
+            throttle.abort();
+        }
+
+        /// Counts every clone of the actor value.
+        #[derive(Debug)]
+        struct Counted {
+            clones: Arc<AtomicUsize>,
+            value: i32,
+        }
+
+        impl Clone for Counted {
+            fn clone(&self) -> Self {
+                self.clones.fetch_add(1, Ordering::SeqCst);
+                Counted {
+                    clones: self.clones.clone(),
+                    value: self.value,
+                }
+            }
+        }
+
+        impl BroadcastAs<i32> for Counted {
+            fn to_broadcast(&self) -> i32 {
+                self.value
+            }
+        }
+
+        #[tokio::test]
+        async fn test_creating_a_cache_does_not_clone_the_actor_value() {
+            let clones = Arc::new(AtomicUsize::new(0));
+            let handle: Handle<Counted, i32> = Handle::new(Counted {
+                clones: clones.clone(),
+                value: 1,
+            });
+
+            let cache = handle.create_cache().await;
+
+            assert_eq!(cache.get_current(), &1);
+            assert_eq!(clones.load(Ordering::SeqCst), 0);
+        }
+    }
+
     fn panic_message(error: tokio::task::JoinError) -> String {
         let panic = error.into_panic();
         panic
