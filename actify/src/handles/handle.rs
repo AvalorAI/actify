@@ -496,10 +496,11 @@ where
     /// Waits until the broadcast value satisfies `predicate` and returns it.
     ///
     /// Tests the actor's current value first, so a predicate that already holds
-    /// returns without waiting for an update. After that, every value the actor
-    /// broadcasts is tested in the order it was sent, including values the actor
-    /// has already moved past. The value returned is the one that satisfied the
-    /// predicate, which may no longer be the actor's current value.
+    /// returns without waiting for an update. Every value broadcast after that
+    /// is tested in the order it was sent, except values lost while the receiver
+    /// was behind, which are logged. The value returned is the one that
+    /// satisfied the predicate, which may be older than the value the actor
+    /// holds by then.
     ///
     /// The predicate receives the broadcast type `V`, which the actor produces
     /// without cloning itself, so this works on non-Clone actor types.
@@ -524,37 +525,25 @@ where
     /// Panics if the actor has stopped, either because one of its methods
     /// panicked or because its runtime shut down. See [Actor lifetime and
     /// panics](crate#actor-lifetime-and-panics).
-    pub async fn wait_until<P>(&self, mut predicate: P) -> V
+    pub async fn wait_until<P>(&self, predicate: P) -> V
     where
         P: FnMut(&V) -> bool,
     {
         // Subscribe before reading, so an update arriving in between is queued
         // rather than lost.
-        let mut receiver = self.subscribe();
+        let receiver = self.subscribe();
         let current = self.with(|inner| inner.to_broadcast()).await;
-        if predicate(&current) {
-            return current;
-        }
+        let mut cache = Cache::new(receiver, current);
 
-        loop {
-            // This handle holds a broadcast sender, so the channel it is
-            // waiting on cannot report a stopped actor. The exit signal can.
-            let received = tokio::select! {
-                received = receiver.recv() => received,
-                _ = self.wait_for_exit() => self.report_actor_gone().await,
-            };
-
-            match received {
-                Ok(value) if predicate(&value) => return value,
-                Ok(_) => continue,
-                // Values were dropped, so one of them may have satisfied the
-                // predicate. Nothing can recover them, so the wait goes on.
-                Err(broadcast::error::RecvError::Lagged(nr)) => log::debug!(
-                    "A wait on actor type {} lagged {nr} messages",
-                    type_name::<T>()
-                ),
-                Err(broadcast::error::RecvError::Closed) => self.report_actor_gone().await,
-            }
+        tokio::select! {
+            // A handle owns a broadcast sender, so the cache's channel stays
+            // open even once the actor has panicked or its runtime has gone
+            // away. The exit signal is what reports those.
+            found = cache.wait_until(predicate) => match found {
+                Ok(value) => value.clone(),
+                Err(_) => self.report_actor_gone().await,
+            },
+            _ = self.wait_for_exit() => self.report_actor_gone().await,
         }
     }
 }

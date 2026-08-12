@@ -567,9 +567,11 @@ where
     /// Waits until the cached value satisfies `predicate` and returns it.
     ///
     /// Reads through the cache, so the value that satisfied the predicate is the
-    /// one the cache holds afterwards. Every queued value is tested in the order
-    /// it was sent, including values the actor has already moved past, so the
-    /// value returned may no longer be the actor's current value.
+    /// one the cache holds afterwards. Tests the value the cache holds, then
+    /// each value queued in it, then values as they are broadcast, in the order
+    /// they were sent, except values lost while the cache was behind, which are
+    /// logged. The value returned may be older than the value the actor holds by
+    /// then.
     ///
     /// Counts as the cache's first read, which means a predicate satisfied by
     /// the value the cache already holds returns without waiting.
@@ -677,7 +679,7 @@ where
 
 fn log_lag<T>(nr: u64) {
     log::debug!(
-        "Cache of actor type {} lagged {nr:?} messages",
+        "A receiver on actor type {} lagged {nr:?} messages",
         std::any::type_name::<T>()
     );
 }
