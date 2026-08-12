@@ -169,7 +169,7 @@ impl<T, V: Default + Clone + Send + Sync + 'static> ReadHandle<T, V> {
 
 impl<T, V> ReadHandle<T, V>
 where
-    T: Clone + BroadcastAs<V> + Send + Sync + 'static,
+    T: BroadcastAs<V> + Send + Sync + 'static,
     V: Clone + Send + Sync + 'static,
 {
     /// Creates an initialized [`Cache`] that locally synchronizes with the remote actor.

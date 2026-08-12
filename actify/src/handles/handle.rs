@@ -544,13 +544,7 @@ where
             _ = self.wait_for_exit() => self.report_actor_gone().await,
         }
     }
-}
 
-impl<T, V> Handle<T, V>
-where
-    T: Clone + BroadcastAs<V> + Send + Sync + 'static,
-    V: Clone + Send + Sync + 'static,
-{
     /// Creates an initialized [`Cache`] that locally synchronizes with the remote actor.
     /// As it is initialized with the current value, any updates before or during construction are included.
     ///
@@ -562,10 +556,11 @@ where
     /// panicked or because its runtime shut down. See [Actor lifetime and
     /// panics](crate#actor-lifetime-and-panics).
     pub async fn create_cache(&self) -> Cache<V> {
-        // Subscribe before get, so an update arriving in between is queued rather than lost.
+        // Subscribe before reading, so an update arriving in between is queued
+        // rather than lost.
         let rx = self.subscribe();
-        let init = self.get().await;
-        Cache::new(rx, init.to_broadcast())
+        let init = self.with(|inner| inner.to_broadcast()).await;
+        Cache::new(rx, init)
     }
 
     /// Spawns a [`Throttle`] that fires given a specified [`Frequency`].
@@ -611,10 +606,11 @@ where
         F: Send + Sync + 'static,
         Fun: Fn(&C, F) + Send + 'static,
     {
-        // Subscribe before get, so an update arriving in between is queued rather than lost.
+        // Subscribe before reading, so an update arriving in between is queued
+        // rather than lost.
         let receiver = self.subscribe();
-        let current = self.get().await;
-        Throttle::spawn_from_receiver(client, call, freq, receiver, Some(current.to_broadcast()))
+        let current = self.with(|inner| inner.to_broadcast()).await;
+        Throttle::spawn_from_receiver(client, call, freq, receiver, Some(current))
     }
 
     /// Spawns a [`Throttle`] whose callback is awaited before the next value is
@@ -738,16 +734,11 @@ where
         F: Send + Sync + 'static,
         Fun: for<'a> Fn(&'a C, F) -> BoxFuture<'a> + Send + 'static,
     {
-        // Subscribe before get, so an update arriving in between is queued rather than lost.
+        // Subscribe before reading, so an update arriving in between is queued
+        // rather than lost.
         let receiver = self.subscribe();
-        let current = self.get().await;
-        Throttle::spawn_async_from_receiver(
-            client,
-            call,
-            freq,
-            receiver,
-            Some(current.to_broadcast()),
-        )
+        let current = self.with(|inner| inner.to_broadcast()).await;
+        Throttle::spawn_async_from_receiver(client, call, freq, receiver, Some(current))
     }
 }
 
@@ -1009,6 +1000,84 @@ mod tests {
                 message.contains("A panic occurred in the Actor"),
                 "expected the actor's panic to be reported, got: {message}"
             );
+        }
+    }
+
+    /// Deriving the broadcast value inside the actor means the actor value
+    /// itself is never cloned, so these work on actor types that are not Clone.
+    mod broadcast_derivation {
+        use super::*;
+        use crate::Frequency;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::{Arc, Mutex};
+
+        #[tokio::test]
+        async fn test_a_non_clone_actor_can_create_a_cache() {
+            let handle: Handle<NonCloneActor, i32> = Handle::new(NonCloneActor { value: 1 });
+
+            let cache = handle.create_cache().await;
+
+            assert_eq!(cache.get_current(), &1);
+        }
+
+        #[tokio::test]
+        async fn test_a_non_clone_actor_can_spawn_a_throttle() {
+            let handle: Handle<NonCloneActor, i32> = Handle::new(NonCloneActor { value: 1 });
+            let seen = Arc::new(Mutex::new(Vec::new()));
+            let sink = seen.clone();
+
+            let throttle = handle
+                .spawn_throttle(
+                    sink,
+                    |sink: &Arc<Mutex<Vec<i32>>>, value: i32| sink.lock().unwrap().push(value),
+                    Frequency::OnEvent,
+                )
+                .await;
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+
+            assert_eq!(*seen.lock().unwrap(), vec![1]);
+            throttle.abort();
+        }
+
+        /// Counts every clone of the actor value.
+        #[derive(Debug)]
+        struct Counted {
+            clones: Arc<AtomicUsize>,
+            value: i32,
+        }
+
+        impl Clone for Counted {
+            fn clone(&self) -> Self {
+                self.clones.fetch_add(1, Ordering::SeqCst);
+                Counted {
+                    clones: self.clones.clone(),
+                    value: self.value,
+                }
+            }
+        }
+
+        impl BroadcastAs<i32> for Counted {
+            fn to_broadcast(&self) -> i32 {
+                self.value
+            }
+        }
+
+        #[tokio::test]
+        async fn test_creating_a_cache_does_not_clone_the_actor_value() {
+            let clones = Arc::new(AtomicUsize::new(0));
+            let handle: Handle<Counted, i32> = Handle::new(Counted {
+                clones: clones.clone(),
+                value: 1,
+            });
+
+            let cache = handle.create_cache().await;
+
+            assert_eq!(cache.get_current(), &1);
+            assert_eq!(clones.load(Ordering::SeqCst), 0);
+
+            // Reading the value does clone it, so the count above is a count.
+            let _ = handle.get().await;
+            assert_eq!(clones.load(Ordering::SeqCst), 1);
         }
     }
 
