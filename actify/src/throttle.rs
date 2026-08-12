@@ -1209,23 +1209,6 @@ mod tests {
         assert_eq!(count, 1)
     }
 
-    /// The throttle attached by new_throttled fires once with the initial
-    /// value before any broadcast, and then again for each update.
-    #[tokio::test(start_paused = true)]
-    async fn test_new_throttled_fires_init_and_updates() {
-        let counter = CounterClient::new();
-        let handle: Handle<i32> =
-            Handle::new_throttled(1, counter.clone(), CounterClient::call, Frequency::OnEvent);
-        sleep(Duration::from_millis(10)).await;
-
-        assert_eq!(*counter.count.lock().unwrap(), 1);
-
-        handle.set(2).await;
-        sleep(Duration::from_millis(10)).await;
-
-        assert_eq!(*counter.count.lock().unwrap(), 2);
-    }
-
     /// An update already queued in the cache's receiver but not yet consumed
     /// must reach a throttle spawned from that cache. The cache first
     /// synchronizes to the newest broadcast value, which becomes the

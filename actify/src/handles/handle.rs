@@ -161,23 +161,6 @@ where
         }
     }
 
-    /// Creates a new [`Handle`] and initializes a corresponding [`Throttle`].
-    /// The throttle fires given a specified [`Frequency`].
-    /// See [`Handle::spawn_throttle`] for an example.
-    pub fn new_throttled<C, F, Fun>(val: T, client: C, call: Fun, freq: Frequency) -> Handle<T, V>
-    where
-        C: Send + Sync + 'static,
-        V: ToView<F>,
-        F: Send + Sync + 'static,
-        Fun: Fn(&C, F) + Send + 'static,
-    {
-        let init = val.to_view();
-        let handle = Self::new(val);
-        let receiver = handle.subscribe();
-        Throttle::spawn(client, call, freq, receiver, Some(init));
-        handle
-    }
-
     /// Waits until the broadcast value satisfies `predicate` and returns it.
     ///
     /// Tests the actor's current value first, so a predicate that already holds
