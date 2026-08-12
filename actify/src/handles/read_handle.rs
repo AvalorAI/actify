@@ -2,7 +2,7 @@ use std::any::type_name;
 use std::fmt::{self, Debug};
 use tokio::sync::broadcast;
 
-use super::handle::{BroadcastAs, Handle};
+use super::handle::{Handle, ToView};
 use crate::Cache;
 use crate::throttle::{BoxFuture, Frequency, Throttle, Throttled};
 
@@ -54,23 +54,23 @@ impl<T, V> ReadHandle<T, V> {
 impl<T: Send + Sync + 'static, V> ReadHandle<T, V> {
     /// Runs a read-only closure on the actor's value and returns the result.
     ///
-    /// This is especially useful for non-Clone types where [`ReadHandle::get`]
-    /// is not available, but it works with any actor type.
+    /// Unlike [`ReadHandle::get`], which returns the view, this reads the actor
+    /// type itself.
     ///
     /// # Examples
     ///
     /// ```
-    /// # use actify::{Handle, BroadcastAs};
+    /// # use actify::{Handle, ToView};
     /// # #[tokio::main]
     /// # async fn main() {
-    /// // A non-Clone type, so get() is not available on ReadHandle
+    /// // A non-Clone type, so its view is a separate type
     /// struct Inventory { items: Vec<String> }
     ///
     /// #[derive(Clone, Debug)]
     /// struct Count(usize);
     ///
-    /// impl BroadcastAs<Count> for Inventory {
-    ///     fn to_broadcast(&self) -> Count { Count(self.items.len()) }
+    /// impl ToView<Count> for Inventory {
+    ///     fn to_view(&self) -> Count { Count(self.items.len()) }
     /// }
     ///
     /// let handle: Handle<Inventory, Count> = Handle::new(Inventory {
@@ -101,32 +101,6 @@ impl<T: Send + Sync + 'static, V> ReadHandle<T, V> {
     }
 }
 
-impl<T: Clone + Send + Sync + 'static, V> ReadHandle<T, V> {
-    /// Receives a clone of the current value of the actor.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// # use actify::Handle;
-    /// # #[tokio::main]
-    /// # async fn main() {
-    /// let handle = Handle::new(1);
-    /// let read_handle = handle.get_read_handle();
-    /// let result = read_handle.get().await;
-    /// assert_eq!(result, 1);
-    /// # }
-    /// ```
-    ///
-    /// # Panics
-    ///
-    /// Panics if the actor has stopped, either because one of its methods
-    /// panicked or because its runtime shut down. See [Actor lifetime and
-    /// panics](crate#actor-lifetime-and-panics).
-    pub async fn get(&self) -> T {
-        self.0.get().await
-    }
-}
-
 impl<T, V: Clone + Send + Sync + 'static> ReadHandle<T, V> {
     /// Creates a [`Cache`] initialized with the given value that locally synchronizes
     /// with broadcasted updates from the actor.
@@ -145,7 +119,7 @@ impl<T, V: Default + Clone + Send + Sync + 'static> ReadHandle<T, V> {
 
 impl<T, V> ReadHandle<T, V>
 where
-    T: BroadcastAs<V> + Send + Sync + 'static,
+    T: ToView<V> + Send + Sync + 'static,
     V: Clone + Send + Sync + 'static,
 {
     /// Creates an initialized [`Cache`] that locally synchronizes with the remote actor.
@@ -203,6 +177,30 @@ where
         Fun: for<'a> Fn(&'a C, F) -> BoxFuture<'a> + Send + 'static,
     {
         self.0.spawn_async_throttle(client, call, freq).await
+    }
+
+    /// Returns the actor's current view. See [`Handle::get`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use actify::Handle;
+    /// # #[tokio::main]
+    /// # async fn main() {
+    /// let handle = Handle::new(1);
+    /// let read_handle = handle.get_read_handle();
+    /// let result = read_handle.get().await;
+    /// assert_eq!(result, 1);
+    /// # }
+    /// ```
+    ///
+    /// # Panics
+    ///
+    /// Panics if the actor has stopped, either because one of its methods
+    /// panicked or because its runtime shut down. See [Actor lifetime and
+    /// panics](crate#actor-lifetime-and-panics).
+    pub async fn get(&self) -> V {
+        self.0.get().await
     }
 
     /// Waits until the broadcast value satisfies `predicate` and returns it.

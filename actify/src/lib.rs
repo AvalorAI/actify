@@ -192,11 +192,13 @@
 //!
 //! Every [`Handle`] provides a set of built-in methods that work without the macro:
 //!
-//! - [`Handle::get`]: returns a clone of the current actor value (does not broadcast)
+//! - [`Handle::get`]: returns the actor's view, which for a plain `Clone` actor is a
+//!   clone of the value itself (does not broadcast)
 //! - [`Handle::set`]: overwrites the actor value (broadcasts the change)
 //! - [`Handle::set_if_changed`]: only broadcasts when the new value differs (requires `PartialEq`)
 //! - [`Handle::subscribe`]: returns a [`tokio::sync::broadcast::Receiver`] for change notifications
-//! - [`Handle::with`]: runs a read-only closure on `&T` (does not broadcast)
+//! - [`Handle::with`]: runs a read-only closure on `&T`, the actor type rather than
+//!   its view (does not broadcast)
 //! - [`Handle::with_mut`]: runs a mutable closure on `&mut T` (broadcasts the change)
 //! - [`Handle::wait_until`]: waits until the broadcast value satisfies a predicate
 //!
@@ -246,12 +248,12 @@
 //! observe, which requires interior mutability:
 //!
 //! ```
-//! # use actify::{Handle, actify, BroadcastAs};
+//! # use actify::{Handle, actify, ToView};
 //! # use std::sync::Mutex;
 //! # #[derive(Debug)]
 //! # struct Counter { value: Mutex<i32> }
-//! # impl BroadcastAs<i32> for Counter {
-//! #     fn to_broadcast(&self) -> i32 { *self.value.lock().unwrap() }
+//! # impl ToView<i32> for Counter {
+//! #     fn to_view(&self) -> i32 { *self.value.lock().unwrap() }
 //! # }
 //! #[actify]
 //! impl Counter {
@@ -369,12 +371,17 @@
 //! - [`HashMapHandle`] for `Handle<HashMap<K, V>>`
 //! - [`HashSetHandle`] for `Handle<HashSet<K>>`
 //!
-//! # Non-Clone types
+//! # Views and non-Clone types
 //!
-//! By default, [`Handle::new`] requires `T: Clone` so it can broadcast `T`.
-//! For non-Clone types, implement [`BroadcastAs<V>`] for a Clone-able summary
-//! type `V` and specify it explicitly: `Handle::<MyType, Summary>::new(val)`.
-//! Your `#[actify]` methods work normally either way.
+//! A handle exposes a view of its actor: the type `V` that [`Handle::get`]
+//! returns and that the actor broadcasts. By default `V = T`, so
+//! [`Handle::new`] requires `T: Clone` and the view is a clone of the value.
+//!
+//! For a non-Clone type, or to expose a summary instead of the whole value,
+//! implement [`ToView<V>`] for a Clone-able `V` and name it explicitly:
+//! `Handle::<MyType, Summary>::new(val)`. Reads then return the summary, and
+//! [`Handle::with`] reads the actor type itself. Your `#[actify]` methods work
+//! normally either way.
 //!
 //! # Execution model
 //!
@@ -460,7 +467,7 @@ pub use cache::{Cache, CacheRecvError, CacheRecvNewestError};
 pub use extensions::{
     map::HashMapHandle, option::OptionHandle, set::HashSetHandle, vec::VecHandle,
 };
-pub use handles::{BroadcastAs, Handle, ReadHandle};
+pub use handles::{Handle, ReadHandle, ToView};
 pub use throttle::{BoxFuture, Frequency, Throttle, Throttled};
 
 #[doc(hidden)]

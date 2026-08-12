@@ -13,7 +13,7 @@ use crate::{Frequency, Throttle, Throttled};
 /// Create one via [`Handle::create_cache`](crate::Handle::create_cache) (initialized with the
 /// current actor value), [`Handle::create_cache_from`](crate::Handle::create_cache_from) (custom
 /// initial value), or [`Handle::create_cache_from_default`](crate::Handle::create_cache_from_default)
-/// (starts from `T::default()`).
+/// (starts from `V::default()`).
 ///
 /// # Cloning
 ///
@@ -45,15 +45,15 @@ use crate::{Frequency, Throttle, Throttled};
 /// # }
 /// ```
 #[derive(Debug)]
-pub struct Cache<T> {
-    inner: T,
-    rx: broadcast::Receiver<T>,
+pub struct Cache<V> {
+    inner: V,
+    rx: broadcast::Receiver<V>,
     first_request: bool,
 }
 
-impl<T> Clone for Cache<T>
+impl<V> Clone for Cache<V>
 where
-    T: Clone + Send + Sync + 'static,
+    V: Clone + Send + Sync + 'static,
 {
     fn clone(&self) -> Self {
         // resubscribe starts after the values this cache has not read yet, so
@@ -67,11 +67,11 @@ where
     }
 }
 
-impl<T> Cache<T>
+impl<V> Cache<V>
 where
-    T: Clone + Send + Sync + 'static,
+    V: Clone + Send + Sync + 'static,
 {
-    pub(crate) fn new(rx: Receiver<T>, initial_value: T) -> Self {
+    pub(crate) fn new(rx: Receiver<V>, initial_value: V) -> Self {
         Self {
             inner: initial_value,
             rx,
@@ -85,7 +85,7 @@ where
         first
     }
 
-    fn store(&mut self, val: T) -> &T {
+    fn store(&mut self, val: V) -> &V {
         self.inner = val;
         &self.inner
     }
@@ -107,7 +107,7 @@ where
                 Err(TryRecvError::Empty) => return Ok(received),
                 Err(TryRecvError::Closed) if received => return Ok(true),
                 Err(TryRecvError::Closed) => return Err(CacheRecvNewestError::Closed),
-                Err(TryRecvError::Lagged(nr)) => log_lag::<T>(nr),
+                Err(TryRecvError::Lagged(nr)) => log_lag::<V>(nr),
             }
         }
     }
@@ -216,7 +216,7 @@ where
     /// assert_eq!(cache.try_recv().unwrap(), None);
     /// # }
     /// ```
-    pub fn get_newest(&mut self) -> &T {
+    pub fn get_newest(&mut self) -> &V {
         _ = self.try_recv_newest(); // Update if possible
         self.get_current()
     }
@@ -242,7 +242,7 @@ where
     /// assert_eq!(cache.get_current(), &1);
     /// # }
     /// ```
-    pub fn get_current(&self) -> &T {
+    pub fn get_current(&self) -> &V {
         &self.inner
     }
 
@@ -279,7 +279,7 @@ where
     /// assert_eq!(cache.recv_newest().await.unwrap(), &3);
     /// # }
     /// ```
-    pub async fn recv_newest(&mut self) -> Result<&T, CacheRecvNewestError> {
+    pub async fn recv_newest(&mut self) -> Result<&V, CacheRecvNewestError> {
         if self.is_first_request() {
             return Ok(self.get_newest());
         }
@@ -291,7 +291,7 @@ where
                     break;
                 }
                 Err(RecvError::Closed) => return Err(CacheRecvNewestError::Closed),
-                Err(RecvError::Lagged(nr)) => log_lag::<T>(nr),
+                Err(RecvError::Lagged(nr)) => log_lag::<V>(nr),
             }
         }
         _ = self.drain_to_newest();
@@ -331,7 +331,7 @@ where
     /// assert_eq!(cache.recv().await.unwrap(), &2);
     /// # }
     /// ```
-    pub async fn recv(&mut self) -> Result<&T, CacheRecvError> {
+    pub async fn recv(&mut self) -> Result<&V, CacheRecvError> {
         if self.is_first_request() {
             return Ok(self.get_current());
         }
@@ -394,7 +394,7 @@ where
     /// assert_eq!(cache.try_recv_newest().unwrap(), None);
     /// # }
     /// ```
-    pub fn try_recv_newest(&mut self) -> Result<Option<&T>, CacheRecvNewestError> {
+    pub fn try_recv_newest(&mut self) -> Result<Option<&V>, CacheRecvNewestError> {
         let first = self.is_first_request();
         let received = self.drain_to_newest()?;
         if received || first {
@@ -457,7 +457,7 @@ where
     /// assert_eq!(cache.try_recv().unwrap(), None);
     /// # }
     /// ```
-    pub fn try_recv(&mut self) -> Result<Option<&T>, CacheRecvError> {
+    pub fn try_recv(&mut self) -> Result<Option<&V>, CacheRecvError> {
         if self.is_first_request() {
             return Ok(Some(self.get_current()));
         }
@@ -503,7 +503,7 @@ where
     /// }).join().unwrap();
     /// # }
     /// ```
-    pub fn blocking_recv(&mut self) -> Result<&T, CacheRecvError> {
+    pub fn blocking_recv(&mut self) -> Result<&V, CacheRecvError> {
         if self.is_first_request() {
             return Ok(self.get_current());
         }
@@ -545,7 +545,7 @@ where
     /// }).join().unwrap();
     /// # }
     /// ```
-    pub fn blocking_recv_newest(&mut self) -> Result<&T, CacheRecvNewestError> {
+    pub fn blocking_recv_newest(&mut self) -> Result<&V, CacheRecvNewestError> {
         if self.is_first_request() {
             return Ok(self.get_newest());
         }
@@ -559,7 +559,7 @@ where
                     }
                 }
                 Err(RecvError::Closed) => return Err(CacheRecvNewestError::Closed),
-                Err(RecvError::Lagged(nr)) => log_lag::<T>(nr),
+                Err(RecvError::Lagged(nr)) => log_lag::<V>(nr),
             }
         }
     }
@@ -596,9 +596,9 @@ where
     /// assert_eq!(cache.get_current(), &3);
     /// # }
     /// ```
-    pub async fn wait_until<P>(&mut self, mut predicate: P) -> Result<&T, CacheRecvNewestError>
+    pub async fn wait_until<P>(&mut self, mut predicate: P) -> Result<&V, CacheRecvNewestError>
     where
-        P: FnMut(&T) -> bool,
+        P: FnMut(&V) -> bool,
     {
         if self.is_first_request() && predicate(self.get_current()) {
             return Ok(&self.inner);
@@ -613,7 +613,7 @@ where
                 }
                 // Values were dropped, so one of them may have satisfied the
                 // predicate. Nothing can recover them, so the wait goes on.
-                Err(RecvError::Lagged(nr)) => log_lag::<T>(nr),
+                Err(RecvError::Lagged(nr)) => log_lag::<V>(nr),
                 Err(RecvError::Closed) => return Err(CacheRecvNewestError::Closed),
             }
         }
@@ -633,7 +633,7 @@ where
     pub fn spawn_throttle<C, F, Fun>(&mut self, client: C, call: Fun, freq: Frequency) -> Throttle
     where
         C: Send + Sync + 'static,
-        T: Throttled<F>,
+        V: Throttled<F>,
         F: Send + Sync + 'static,
         Fun: Fn(&C, F) + Send + 'static,
     {
@@ -663,7 +663,7 @@ where
     ) -> Throttle
     where
         C: Send + Sync + 'static,
-        T: Throttled<F>,
+        V: Throttled<F>,
         F: Send + Sync + 'static,
         Fun: for<'a> Fn(&'a C, F) -> BoxFuture<'a> + Send + 'static,
     {
@@ -676,10 +676,10 @@ where
     }
 }
 
-fn log_lag<T>(nr: u64) {
+fn log_lag<V>(nr: u64) {
     log::debug!(
         "A receiver on actor type {} lagged {nr:?} messages",
-        std::any::type_name::<T>()
+        std::any::type_name::<V>()
     );
 }
 

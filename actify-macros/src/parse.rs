@@ -135,7 +135,7 @@ impl MethodInfo {
         let mut errors = None;
 
         // A `&self` method cannot change the state, so it only broadcasts when
-        // asked to. Interior mutability and a custom `to_broadcast` are the
+        // asked to. Interior mutability and a custom `to_view` are the
         // cases where that is meaningful.
         let broadcasts = if skip_all_broadcasts {
             if let Some(attr) = skip_attr {
