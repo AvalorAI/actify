@@ -121,8 +121,8 @@ fn method_body(
         #(#attrs)*
         async fn #ident #method_generics(&self, #(#arg_names: #arg_types),*) #return_type #where_clause {
             let __actify_res = self.__send_job(
-                ::actify::__private::Box::new(|__actify_s: &mut ::actify::__private::Actor<#impl_type>, __actify_args: ::actify::__private::Box<dyn ::actify::__private::Any + Send>|
-                ::actify::__private::Box::pin(async move {
+                ::std::boxed::Box::new(|__actify_s: &mut ::actify::__private::Actor<#impl_type>, __actify_args: ::std::boxed::Box<dyn ::std::any::Any + Send>|
+                ::std::boxed::Box::pin(async move {
                     let (#(#arg_names),*): (#(#arg_types),*) = *__actify_args
                         .downcast()
                         .expect("Downcasting failed due to an error in the Actify macro");
@@ -131,9 +131,9 @@ fn method_body(
 
                     #broadcast
 
-                    ::actify::__private::Box::new(__actify_result) as ::actify::__private::Box<dyn ::actify::__private::Any + Send>
+                    ::std::boxed::Box::new(__actify_result) as ::std::boxed::Box<dyn ::std::any::Any + Send>
                 })),
-                ::actify::__private::Box::new((#(#arg_names),*)),
+                ::std::boxed::Box::new((#(#arg_names),*)),
             ).await;
 
             *__actify_res.downcast().expect("Downcasting failed due to an error in the Actify macro")

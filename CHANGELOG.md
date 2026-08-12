@@ -67,16 +67,20 @@ they record what changed rather than why, and are not exhaustive. 0.8.0 through
 
 ### Fixed
 
-- Generated code no longer breaks when a type in scope shares a name with
-  something that code refers to. A user type called `Box` or `Any` next to an
-  `#[actify]` impl made the generated body resolve `Box::new` to that type. All
-  such references are now absolute paths into a private module.
+- Generated code no longer breaks when something in scope shares a name with what
+  that code refers to. A user type called `Box` next to an `#[actify]` impl made
+  the generated body resolve `Box::new` to that type, and a module named `actify`
+  would have broken the paths to the crate itself. Generated code now names
+  standard library types by absolute path (`::std::boxed::Box`) and reaches the
+  crate as `::actify`, neither of which a local item can shadow.
 
 ### Changed
 
 - **Breaking:** `Handle::send_job` is renamed to `Handle::__send_job`, and `Actor`
   moves from the crate root to `actify::__private`. Both were `#[doc(hidden)]`
-  already and exist only for generated code to call. The names now say so.
+  already and exist only for generated code to reach. The names now say so, and
+  the module gives that contract one place to live rather than leaving it spread
+  across a hidden root export and a hidden method.
 
 
 

@@ -475,15 +475,14 @@ pub use extensions::{
 pub use handles::{Handle, ReadHandle, ToView};
 pub use throttle::{BoxFuture, Frequency, Throttle};
 
-/// Items the [`actify`](macro@crate::actify) macro needs in generated code.
+/// The crate's own items that the [`actify`](macro@crate::actify) macro needs in
+/// generated code. Standard library types are named by absolute path instead.
 ///
 /// Not part of the public API. Anything here may change in a patch release, and
 /// nothing outside generated code should name it.
 #[doc(hidden)]
 pub mod __private {
     pub use crate::actor::Actor;
-    pub use std::any::Any;
-    pub use std::boxed::Box;
 }
 
 #[cfg(feature = "profiler")]
