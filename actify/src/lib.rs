@@ -336,8 +336,9 @@
 //! - [`Frequency::OnEventWhen`]: sends at most once per interval, and only when a
 //!   value arrived since the last send
 //!
-//! Use the [`Throttled`] trait to parse the actor's type into a different output type
-//! for the throttle callback.
+//! The callback can take a type other than the view: implement [`ToView<F>`] on
+//! the view type for the payload `F` you want, and the callback signature selects
+//! it. One actor can feed several throttles that way, each with its own payload.
 //!
 //! A throttle is spawned from a [`Handle`], a [`ReadHandle`] or a [`Cache`].
 //!
@@ -468,7 +469,7 @@ pub use extensions::{
     map::HashMapHandle, option::OptionHandle, set::HashSetHandle, vec::VecHandle,
 };
 pub use handles::{Handle, ReadHandle, ToView};
-pub use throttle::{BoxFuture, Frequency, Throttle, Throttled};
+pub use throttle::{BoxFuture, Frequency, Throttle};
 
 #[doc(hidden)]
 pub use actor::Actor;

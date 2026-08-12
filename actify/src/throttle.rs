@@ -5,6 +5,8 @@ use tokio::sync::broadcast::{self, Receiver};
 use tokio::task::AbortHandle;
 use tokio::time::{self, Duration, Interval};
 
+use crate::ToView;
+
 /// The Frequency is used to tune the speed of a [`Throttle`].
 ///
 /// Each variant's example below sends through a callback that takes 50ms, on an
@@ -126,21 +128,6 @@ pub enum Frequency {
     OnEventWhen(Duration),
 }
 
-/// The Throttled trait can be implemented to parse the type held by the actor to a custom output type.
-/// This allows a single [`Handle`](crate::Handle) to attach itself to multiple throttles, each with a separate parsing implementation.
-pub trait Throttled<F> {
-    /// Implement this parse function on the type to be sent by the throttle
-    fn parse(&self) -> F;
-}
-
-// TODO add a derive macro for Throttled derivation for self
-/// A blanket implementation is used to ensure any standard type implements it
-impl<T: Clone> Throttled<T> for T {
-    fn parse(&self) -> T {
-        self.clone()
-    }
-}
-
 /// The interval a [`Frequency`] runs on, and for [`Frequency::OnEventWhen`]
 /// whether a value arrived since the last send.
 enum Timing {
@@ -234,17 +221,17 @@ enum Wake {
 
 /// Owns the broadcast receiver and the timing, so the loop in
 /// `ThrottleTask::spawn` is only a call to [`Self::next`] and a callback.
-struct ThrottleState<T> {
+struct ThrottleState<V> {
     timing: Timing,
-    val_rx: Option<broadcast::Receiver<T>>,
-    current_val: Option<T>,
+    val_rx: Option<broadcast::Receiver<V>>,
+    current_val: Option<V>,
 }
 
-impl<T: Clone> ThrottleState<T> {
+impl<V: Clone> ThrottleState<V> {
     fn new(
         frequency: Frequency,
-        val_rx: Option<broadcast::Receiver<T>>,
-        current_val: Option<T>,
+        val_rx: Option<broadcast::Receiver<V>>,
+        current_val: Option<V>,
     ) -> Self {
         Self {
             timing: Timing::new(frequency),
@@ -257,7 +244,7 @@ impl<T: Clone> ThrottleState<T> {
     /// once every sender is gone, which ends the throttle.
     async fn next<F>(&mut self) -> Option<F>
     where
-        T: Throttled<F>,
+        V: ToView<F>,
     {
         loop {
             let ready = match self.wake().await {
@@ -298,27 +285,27 @@ impl<T: Clone> ThrottleState<T> {
     /// no value has arrived yet.
     fn current<F>(&self) -> Option<F>
     where
-        T: Throttled<F>,
+        V: ToView<F>,
     {
-        self.current_val.as_ref().map(|val| val.parse())
+        self.current_val.as_ref().map(|val| val.to_view())
     }
 }
 
 /// Waits for the next broadcast value, or forever when the throttle has no
 /// receiver, as [`Throttle::spawn_interval`] does.
-async fn recv_value<T: Clone>(val_rx: &mut Option<broadcast::Receiver<T>>) -> Result<T, RecvError> {
+async fn recv_value<V: Clone>(val_rx: &mut Option<broadcast::Receiver<V>>) -> Result<V, RecvError> {
     if let Some(rx) = val_rx {
         rx.recv().await
     } else {
-        std::future::pending::<Result<T, RecvError>>().await
+        std::future::pending::<Result<V, RecvError>>().await
     }
 }
 
 /// Takes every value already queued, keeping the newest. Returns whether any
 /// were there.
-fn drain_available<T: Clone>(
-    val_rx: &mut Option<broadcast::Receiver<T>>,
-    current: &mut Option<T>,
+fn drain_available<V: Clone>(
+    val_rx: &mut Option<broadcast::Receiver<V>>,
+    current: &mut Option<V>,
 ) -> bool {
     let Some(rx) = val_rx else {
         return false;
@@ -334,7 +321,7 @@ fn drain_available<T: Clone>(
             Err(TryRecvError::Lagged(nr)) => {
                 log::debug!(
                     "Throttle of type {} lagged {nr} messages",
-                    std::any::type_name::<T>()
+                    std::any::type_name::<V>()
                 );
             }
             // A closed channel is reported by the next receive in the loop.
@@ -344,7 +331,7 @@ fn drain_available<T: Clone>(
 }
 
 /// Records a received value, or reports why none arrived.
-fn store<T>(current: &mut Option<T>, received: Result<T, RecvError>) -> Wake {
+fn store<V>(current: &mut Option<V>, received: Result<V, RecvError>) -> Wake {
     match received {
         Ok(value) => {
             *current = Some(value);
@@ -353,14 +340,14 @@ fn store<T>(current: &mut Option<T>, received: Result<T, RecvError>) -> Wake {
         Err(RecvError::Closed) => {
             log::debug!(
                 "Attached actor of type {} closed - exiting throttle",
-                std::any::type_name::<T>()
+                std::any::type_name::<V>()
             );
             Wake::Closed
         }
         Err(RecvError::Lagged(nr)) => {
             log::debug!(
                 "Throttle of type {} lagged {nr} messages",
-                std::any::type_name::<T>()
+                std::any::type_name::<V>()
             );
             Wake::Lagged
         }
@@ -371,19 +358,19 @@ fn store<T>(current: &mut Option<T>, received: Result<T, RecvError>) -> Wake {
 ///
 /// `F` is fixed by `Fun` rather than stored, so it is a parameter of
 /// [`Self::spawn`] instead of the struct.
-struct ThrottleTask<C, T, Fun> {
+struct ThrottleTask<C, V, Fun> {
     frequency: Frequency,
     client: C,
     call: Fun,
-    val_rx: Option<broadcast::Receiver<T>>,
-    current_val: Option<T>,
+    val_rx: Option<broadcast::Receiver<V>>,
+    current_val: Option<V>,
 }
 
-impl<C, T, Fun> ThrottleTask<C, T, Fun> {
+impl<C, V, Fun> ThrottleTask<C, V, Fun> {
     fn spawn<F>(self) -> Throttle
     where
         C: Send + Sync + 'static,
-        T: Clone + Throttled<F> + Send + Sync + 'static,
+        V: Clone + ToView<F> + Send + Sync + 'static,
         F: Send + Sync + 'static,
         Fun: Fn(&C, F) + Send + 'static,
     {
@@ -419,7 +406,7 @@ impl<C, T, Fun> ThrottleTask<C, T, Fun> {
     fn spawn_async<F>(self) -> Throttle
     where
         C: Send + Sync + 'static,
-        T: Clone + Throttled<F> + Send + Sync + 'static,
+        V: Clone + ToView<F> + Send + Sync + 'static,
         F: Send + Sync + 'static,
         Fun: for<'a> Fn(&'a C, F) -> BoxFuture<'a> + Send + 'static,
     {
@@ -467,7 +454,7 @@ pub type BoxFuture<'a> = Pin<Box<dyn Future<Output = ()> + Send + 'a>>;
 /// to a callback.
 ///
 /// Configure the rate with [`Frequency`]. The actor type must implement
-/// [`Throttled<F>`](Throttled) to convert the actor value into the callback
+/// [`ToView<F>`](crate::ToView) to convert the view into the callback
 /// argument type `F`.
 ///
 /// Dropping this leaves the throttle running. Call [`abort`](Self::abort) to
@@ -502,16 +489,16 @@ impl Throttle {
     /// [`Handle::spawn_throttle`](crate::Handle::spawn_throttle) and
     /// [`Cache::spawn_throttle`](crate::Cache::spawn_throttle) take the
     /// receiver without losing updates during setup.
-    pub fn spawn<C, T, F, Fun>(
+    pub fn spawn<C, V, F, Fun>(
         client: C,
         call: Fun,
         frequency: Frequency,
-        receiver: Receiver<T>,
-        init: Option<T>,
+        receiver: Receiver<V>,
+        init: Option<V>,
     ) -> Throttle
     where
         C: Send + Sync + 'static,
-        T: Clone + Throttled<F> + Send + Sync + 'static,
+        V: Clone + ToView<F> + Send + Sync + 'static,
         F: Send + Sync + 'static,
         Fun: Fn(&C, F) + Send + 'static,
     {
@@ -530,15 +517,15 @@ impl Throttle {
     /// No actor is attached, so nothing ends the task on its own. It runs until
     /// [`abort`](Self::abort) or the runtime shuts down.
     #[must_use = "without this handle the interval task cannot be stopped"]
-    pub fn spawn_interval<C, T, F, Fun>(
+    pub fn spawn_interval<C, V, F, Fun>(
         client: C,
         call: Fun,
         interval: Duration,
-        val: T,
+        val: V,
     ) -> Throttle
     where
         C: Send + Sync + 'static,
-        T: Clone + Throttled<F> + Send + Sync + 'static,
+        V: Clone + ToView<F> + Send + Sync + 'static,
         F: Send + Sync + 'static,
         Fun: Fn(&C, F) + Send + 'static,
     {
@@ -561,16 +548,16 @@ impl Throttle {
     ///
     /// `call` borrows the client and returns a [`BoxFuture`], built with
     /// [`Box::pin`].
-    pub fn spawn_async<C, T, F, Fun>(
+    pub fn spawn_async<C, V, F, Fun>(
         client: C,
         call: Fun,
         frequency: Frequency,
-        receiver: Receiver<T>,
-        init: Option<T>,
+        receiver: Receiver<V>,
+        init: Option<V>,
     ) -> Throttle
     where
         C: Send + Sync + 'static,
-        T: Clone + Throttled<F> + Send + Sync + 'static,
+        V: Clone + ToView<F> + Send + Sync + 'static,
         F: Send + Sync + 'static,
         Fun: for<'a> Fn(&'a C, F) -> BoxFuture<'a> + Send + 'static,
     {
@@ -586,15 +573,15 @@ impl Throttle {
 
     /// The async counterpart of [`spawn_interval`](Self::spawn_interval).
     #[must_use = "without this handle the interval task cannot be stopped"]
-    pub fn spawn_async_interval<C, T, F, Fun>(
+    pub fn spawn_async_interval<C, V, F, Fun>(
         client: C,
         call: Fun,
         interval: Duration,
-        val: T,
+        val: V,
     ) -> Throttle
     where
         C: Send + Sync + 'static,
-        T: Clone + Throttled<F> + Send + Sync + 'static,
+        V: Clone + ToView<F> + Send + Sync + 'static,
         F: Send + Sync + 'static,
         Fun: for<'a> Fn(&'a C, F) -> BoxFuture<'a> + Send + 'static,
     {
@@ -1578,8 +1565,8 @@ mod tests {
     }
 
     #[tokio::test(start_paused = true)]
-    async fn test_throttle_parsing() {
-        // Parsing to self should succeed
+    async fn test_the_callback_payload_is_inferred() {
+        // The blanket implementation covers a callback taking the value itself
         let _ = Throttle::spawn_interval(
             DummyClient {},
             DummyClient::call_a,
@@ -1587,7 +1574,7 @@ mod tests {
             A {},
         );
 
-        // Parsing to either B or C should be infered by the compiler
+        // A has a ToView impl for both B and C, and the callback picks which
         let _ = Throttle::spawn_interval(
             DummyClient {},
             DummyClient::call_b,
@@ -1612,14 +1599,14 @@ mod tests {
     #[derive(Debug, Clone)]
     struct C {}
 
-    impl Throttled<B> for A {
-        fn parse(&self) -> B {
+    impl ToView<B> for A {
+        fn to_view(&self) -> B {
             B {}
         }
     }
 
-    impl Throttled<C> for A {
-        fn parse(&self) -> C {
+    impl ToView<C> for A {
+        fn to_view(&self) -> C {
             C {}
         }
     }

@@ -4,7 +4,7 @@ use tokio::sync::broadcast;
 
 use super::handle::{Handle, ToView};
 use crate::Cache;
-use crate::throttle::{BoxFuture, Frequency, Throttle, Throttled};
+use crate::throttle::{BoxFuture, Frequency, Throttle};
 
 /// A clonable read-only handle that can only be used to read the internal value.
 ///
@@ -146,7 +146,7 @@ where
     pub async fn spawn_throttle<C, F, Fun>(&self, client: C, call: Fun, freq: Frequency) -> Throttle
     where
         C: Send + Sync + 'static,
-        V: Throttled<F>,
+        V: ToView<F>,
         F: Send + Sync + 'static,
         Fun: Fn(&C, F) + Send + 'static,
     {
@@ -172,7 +172,7 @@ where
     ) -> Throttle
     where
         C: Send + Sync + 'static,
-        V: Throttled<F>,
+        V: ToView<F>,
         F: Send + Sync + 'static,
         Fun: for<'a> Fn(&'a C, F) -> BoxFuture<'a> + Send + 'static,
     {
