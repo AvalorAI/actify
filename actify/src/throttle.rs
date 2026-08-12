@@ -15,7 +15,7 @@ use tokio::time::{self, Duration, Interval};
 /// build up the ticks it missed. The interval keeps its original schedule and
 /// the next send happens at the next boundary, carrying the newest value
 /// received in the meantime rather than the one current when the tick came due.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Frequency {
     /// Sends every value as it arrives.
     ///
