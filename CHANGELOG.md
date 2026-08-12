@@ -11,6 +11,16 @@ they record what changed rather than why, and are not exhaustive. 0.8.0 through
 
 ### Added
 
+- `StringHandle` for `Handle<String>`, with `len`, `is_empty`, `clear`,
+  `truncate`, `push`, `push_str`, `contains`, `starts_with`, `ends_with`,
+  `replace`, `split`, `trim`, `to_lowercase` and `to_uppercase`.
+
+  The methods that borrow in `std` return owned values here, since nothing
+  borrowed can leave an actor: `trim` and `replace` return `String`, and `split`
+  returns `Vec<String>` rather than an iterator. Arguments are owned for the same
+  reason, so the pattern methods take `String`.
+
+
 - `OptionHandle::take` and `OptionHandle::replace`, mirroring
   `std::option::Option::take` and `std::option::Option::replace` in both
   signature and behaviour.
