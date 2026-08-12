@@ -700,7 +700,6 @@ fn log_lag<V>(nr: u64) {
 /// [`Lagged`](Self::Lagged), because falling behind is what they are for. Their
 /// documentation says so individually.
 #[derive(Debug, PartialEq, Clone)]
-#[non_exhaustive]
 pub enum CacheRecvError {
     /// The actor has stopped and every update it broadcast has been delivered.
     Closed,

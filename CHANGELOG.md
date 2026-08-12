@@ -51,10 +51,9 @@ they record what changed rather than why, and are not exhaustive. 0.8.0 through
 ### Changed
 
 - **Breaking:** `CacheRecvNewestError` is gone. Every receive on a `Cache`
-  returns `CacheRecvError`, which is now `#[non_exhaustive]`. The methods that
-  skip to the newest value never return `Lagged`, which each of them documents;
-  a caller of those matched a single-variant enum before and now matches one
-  variant plus the wildcard that `#[non_exhaustive]` requires anyway.
+  returns `CacheRecvError`. The methods that skip to the newest value never
+  return `Lagged`, which each of them documents, so a caller of those gains a
+  match arm that cannot be reached. Matching stays exhaustive.
 
 - The `thiserror` dependency is dropped. `CacheRecvError` implements `Display`
   and `Error` by hand, with the same messages: `Cache channel closed` and
