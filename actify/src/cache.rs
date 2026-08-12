@@ -9,9 +9,9 @@ use crate::{Frequency, Throttle, Throttled};
 
 /// A simple caching struct that can be used to locally maintain a synchronized state with an actor.
 ///
-/// Create one via [`Handle::create_cache`](crate::Handle::create_cache) (initialized with the
-/// current actor value), [`Handle::create_cache_from`](crate::Handle::create_cache_from) (custom
-/// initial value), or [`Handle::create_cache_from_default`](crate::Handle::create_cache_from_default)
+/// Create one via [`Handle::cache`](crate::Handle::cache) (initialized with the
+/// current actor value), [`Handle::cache_from`](crate::Handle::cache_from) (custom
+/// initial value), or [`Handle::cache_from_default`](crate::Handle::cache_from_default)
 /// (starts from `V::default()`).
 ///
 /// # Cloning
@@ -32,15 +32,15 @@ use crate::{Frequency, Throttle, Throttled};
 /// # #[tokio::main]
 /// # async fn main() {
 /// let handle = Handle::new(1);
-/// let mut cache = handle.create_cache().await;
+/// let mut cache = handle.cache().await;
 ///
 /// handle.set(2).await; // Broadcast, not yet read by the cache
 ///
 /// let stale = cache.clone(); // Holds 1: the 2 is behind its subscription
 /// let synced = cache.clone_newest(); // Reads the 2 first, so it holds 2
 ///
-/// assert_eq!(stale.get_current(), &1);
-/// assert_eq!(synced.get_current(), &2);
+/// assert_eq!(stale.current(), &1);
+/// assert_eq!(synced.current(), &2);
 /// # }
 /// ```
 #[derive(Debug)]
@@ -118,7 +118,7 @@ where
     /// what `&mut self` is for. They are delivered by this call and not again:
     /// the next [`recv`](Self::recv) here returns a value the actor broadcasts
     /// after it, and the values passed over on the way to the newest are
-    /// dropped, as in [`get_newest`](Self::get_newest).
+    /// dropped, as in [`newest`](Self::newest).
     ///
     /// [`clone`](Clone::clone) cannot read them, since it takes `&self`, and
     /// the subscription it opens starts after them.
@@ -130,14 +130,14 @@ where
     /// # #[tokio::main]
     /// # async fn main() {
     /// let handle = Handle::new(1);
-    /// let mut cache = handle.create_cache().await;
+    /// let mut cache = handle.cache().await;
     /// handle.set(2).await;
     ///
     /// let mut synced = cache.clone_newest();
-    /// assert_eq!(synced.get_current(), &2);
+    /// assert_eq!(synced.current(), &2);
     ///
     /// // The 2 was read out of this cache as well, so nothing is left waiting
-    /// assert_eq!(cache.get_current(), &2);
+    /// assert_eq!(cache.current(), &2);
     /// assert_eq!(cache.try_recv().unwrap(), Some(&2)); // Its first read
     /// assert_eq!(cache.try_recv().unwrap(), None);
     /// # }
@@ -164,7 +164,7 @@ where
     /// # #[tokio::main]
     /// # async fn main() {
     /// let handle = Handle::new(1);
-    /// let cache = handle.create_cache().await;
+    /// let cache = handle.cache().await;
     /// assert!(!cache.has_updates());
     ///
     /// handle.set(2).await;
@@ -183,7 +183,7 @@ where
     /// the next update instead of handing back a value already seen here.
     ///
     /// Note: when the cache is initialized with a default value (e.g. via
-    /// [`create_cache_from_default`](crate::Handle::create_cache_from_default)),
+    /// [`cache_from_default`](crate::Handle::cache_from_default)),
     /// the returned value may differ from the actor's actual value until a broadcast occurs.
     ///
     /// # Examples
@@ -193,12 +193,12 @@ where
     /// # #[tokio::main]
     /// # async fn main() {
     /// let handle = Handle::new(1);
-    /// let mut cache = handle.create_cache_from_default();
-    /// assert_eq!(cache.get_newest(), &0); // Not initialized, returns default
+    /// let mut cache = handle.cache_from_default();
+    /// assert_eq!(cache.newest(), &0); // Not initialized, returns default
     ///
     /// handle.set(2).await;
     /// handle.set(3).await;
-    /// assert_eq!(cache.get_newest(), &3); // Synchronizes with latest value
+    /// assert_eq!(cache.newest(), &3); // Synchronizes with latest value
     /// # }
     /// ```
     ///
@@ -209,21 +209,21 @@ where
     /// # #[tokio::main]
     /// # async fn main() {
     /// let handle = Handle::new(1);
-    /// let mut cache = handle.create_cache().await;
+    /// let mut cache = handle.cache().await;
     ///
-    /// assert_eq!(cache.get_newest(), &1);
+    /// assert_eq!(cache.newest(), &1);
     /// assert_eq!(cache.try_recv().unwrap(), None);
     /// # }
     /// ```
-    pub fn get_newest(&mut self) -> &V {
+    pub fn newest(&mut self) -> &V {
         _ = self.try_recv_newest(); // Update if possible
-        self.get_current()
+        self.current()
     }
 
     /// Returns the current cached value without synchronizing with the actor.
     ///
     /// Note: when the cache is initialized with a default value (e.g. via
-    /// [`create_cache_from_default`](crate::Handle::create_cache_from_default)),
+    /// [`cache_from_default`](crate::Handle::cache_from_default)),
     /// the returned value may differ from the actor's actual value until a broadcast occurs.
     ///
     /// # Examples
@@ -233,15 +233,15 @@ where
     /// # #[tokio::main]
     /// # async fn main() {
     /// let handle = Handle::new(1);
-    /// let cache = handle.create_cache().await;
-    /// assert_eq!(cache.get_current(), &1);
+    /// let cache = handle.cache().await;
+    /// assert_eq!(cache.current(), &1);
     ///
     /// handle.set(2).await;
     /// // Still returns the cached value, not the updated actor value
-    /// assert_eq!(cache.get_current(), &1);
+    /// assert_eq!(cache.current(), &1);
     /// # }
     /// ```
-    pub fn get_current(&self) -> &V {
+    pub fn current(&self) -> &V {
         &self.inner
     }
 
@@ -249,10 +249,10 @@ where
     ///
     /// On the first read of the cache, returns the current value immediately, even if the channel
     /// is closed. Afterwards, waits until an update is available. A preceding
-    /// [`get_newest`](Self::get_newest) counts as that first read.
+    /// [`newest`](Self::newest) counts as that first read.
     ///
     /// Note: when the cache is initialized with a default value (e.g. via
-    /// [`create_cache_from_default`](crate::Handle::create_cache_from_default)),
+    /// [`cache_from_default`](crate::Handle::cache_from_default)),
     /// the first call may return the default while the actor holds a different value.
     ///
     /// # Errors
@@ -270,7 +270,7 @@ where
     /// # #[tokio::main]
     /// # async fn main() {
     /// let handle = Handle::new(1);
-    /// let mut cache = handle.create_cache().await;
+    /// let mut cache = handle.cache().await;
     ///
     /// // First call returns the initialized value immediately
     /// assert_eq!(cache.recv_newest().await.unwrap(), &1);
@@ -283,7 +283,7 @@ where
     /// ```
     pub async fn recv_newest(&mut self) -> Result<&V, CacheRecvError> {
         if self.is_first_request() {
-            return Ok(self.get_newest());
+            return Ok(self.newest());
         }
 
         loop {
@@ -304,10 +304,10 @@ where
     ///
     /// On the first read of the cache, returns the current value immediately, even if the channel
     /// is closed. Afterwards, waits until an update is available. A preceding
-    /// [`get_newest`](Self::get_newest) counts as that first read.
+    /// [`newest`](Self::newest) counts as that first read.
     ///
     /// Note: when the cache is initialized with a default value (e.g. via
-    /// [`create_cache_from_default`](crate::Handle::create_cache_from_default)),
+    /// [`cache_from_default`](crate::Handle::cache_from_default)),
     /// the first call may return the default while the actor holds a different value.
     ///
     /// # Errors
@@ -322,7 +322,7 @@ where
     /// # #[tokio::main]
     /// # async fn main() {
     /// let handle = Handle::new(1);
-    /// let mut cache = handle.create_cache().await;
+    /// let mut cache = handle.cache().await;
     ///
     /// // First call returns the initialized value immediately
     /// assert_eq!(cache.recv().await.unwrap(), &1);
@@ -335,7 +335,7 @@ where
     /// ```
     pub async fn recv(&mut self) -> Result<&V, CacheRecvError> {
         if self.is_first_request() {
-            return Ok(self.get_current());
+            return Ok(self.current());
         }
 
         let val = self.rx.recv().await?;
@@ -347,10 +347,10 @@ where
     ///
     /// On the first read of the cache, returns `Some` with the current value, even if no updates
     /// are present. Afterwards, returns `None` if no new updates are available. A preceding
-    /// [`get_newest`](Self::get_newest) counts as that first read.
+    /// [`newest`](Self::newest) counts as that first read.
     ///
     /// Note: when the cache is initialized with a default value (e.g. via
-    /// [`create_cache_from_default`](crate::Handle::create_cache_from_default)),
+    /// [`cache_from_default`](crate::Handle::cache_from_default)),
     /// the first call may return the default while the actor holds a different value.
     ///
     /// # Errors
@@ -369,7 +369,7 @@ where
     /// # #[tokio::main]
     /// # async fn main() {
     /// let handle = Handle::new(1);
-    /// let mut cache = handle.create_cache().await;
+    /// let mut cache = handle.cache().await;
     ///
     /// // First call returns the initialized value
     /// assert_eq!(cache.try_recv_newest().unwrap(), Some(&1));
@@ -391,7 +391,7 @@ where
     /// # #[tokio::main]
     /// # async fn main() {
     /// let handle = Handle::new(5);
-    /// let mut cache = handle.create_cache_from_default();
+    /// let mut cache = handle.cache_from_default();
     ///
     /// // Returns the default, not the actor's actual value (5)
     /// assert_eq!(cache.try_recv_newest().unwrap(), Some(&0));
@@ -414,10 +414,10 @@ where
     ///
     /// On the first read of the cache, returns `Some` with the current value, even if no updates
     /// are present or the channel is closed. Afterwards, returns `None` if no new updates are
-    /// available. A preceding [`get_newest`](Self::get_newest) counts as that first read.
+    /// available. A preceding [`newest`](Self::newest) counts as that first read.
     ///
     /// Note: when the cache is initialized with a default value (e.g. via
-    /// [`create_cache_from_default`](crate::Handle::create_cache_from_default)),
+    /// [`cache_from_default`](crate::Handle::cache_from_default)),
     /// the first call may return the default while the actor holds a different value.
     ///
     /// # Errors
@@ -432,7 +432,7 @@ where
     /// # #[tokio::main]
     /// # async fn main() {
     /// let handle = Handle::new(1);
-    /// let mut cache = handle.create_cache().await;
+    /// let mut cache = handle.cache().await;
     ///
     /// // First call returns the initialized value
     /// assert_eq!(cache.try_recv().unwrap(), Some(&1));
@@ -454,7 +454,7 @@ where
     /// # #[tokio::main]
     /// # async fn main() {
     /// let handle = Handle::new(5);
-    /// let mut cache = handle.create_cache_from_default();
+    /// let mut cache = handle.cache_from_default();
     ///
     /// // Returns the default, not the actor's actual value (5)
     /// assert_eq!(cache.try_recv().unwrap(), Some(&0));
@@ -464,7 +464,7 @@ where
     /// ```
     pub fn try_recv(&mut self) -> Result<Option<&V>, CacheRecvError> {
         if self.is_first_request() {
-            return Ok(Some(self.get_current()));
+            return Ok(Some(self.current()));
         }
 
         match self.rx.try_recv() {
@@ -482,7 +482,7 @@ where
     /// closed. On subsequent calls, blocks until an update is available.
     ///
     /// Note: when the cache is initialized with a default value (e.g. via
-    /// [`create_cache_from_default`](crate::Handle::create_cache_from_default)),
+    /// [`cache_from_default`](crate::Handle::cache_from_default)),
     /// the first call may return the default while the actor holds a different value.
     ///
     /// # Errors
@@ -497,7 +497,7 @@ where
     /// # #[tokio::main]
     /// # async fn main() {
     /// let handle = Handle::new(1);
-    /// let mut cache = handle.create_cache().await;
+    /// let mut cache = handle.cache().await;
     /// handle.set(2).await;
     ///
     /// std::thread::spawn(move || {
@@ -510,7 +510,7 @@ where
     /// ```
     pub fn blocking_recv(&mut self) -> Result<&V, CacheRecvError> {
         if self.is_first_request() {
-            return Ok(self.get_current());
+            return Ok(self.current());
         }
 
         let val = self.rx.blocking_recv()?;
@@ -522,10 +522,10 @@ where
     ///
     /// On the first read of the cache, returns the newest available value immediately, even if the
     /// channel is closed. Afterwards, blocks until an update is available. A preceding
-    /// [`get_newest`](Self::get_newest) counts as that first read.
+    /// [`newest`](Self::newest) counts as that first read.
     ///
     /// Note: when the cache is initialized with a default value (e.g. via
-    /// [`create_cache_from_default`](crate::Handle::create_cache_from_default)),
+    /// [`cache_from_default`](crate::Handle::cache_from_default)),
     /// the first call may return the default while the actor holds a different value.
     ///
     /// # Errors
@@ -543,7 +543,7 @@ where
     /// # #[tokio::main]
     /// # async fn main() {
     /// let handle = Handle::new(1);
-    /// let mut cache = handle.create_cache().await;
+    /// let mut cache = handle.cache().await;
     /// handle.set(2).await;
     /// handle.set(3).await;
     ///
@@ -555,7 +555,7 @@ where
     /// ```
     pub fn blocking_recv_newest(&mut self) -> Result<&V, CacheRecvError> {
         if self.is_first_request() {
-            return Ok(self.get_newest());
+            return Ok(self.newest());
         }
 
         loop {
@@ -598,20 +598,20 @@ where
     /// # #[tokio::main]
     /// # async fn main() {
     /// let handle = Handle::new(0);
-    /// let mut cache = handle.create_cache().await;
+    /// let mut cache = handle.cache().await;
     ///
     /// let setter = handle.clone();
     /// tokio::spawn(async move { setter.set(3).await });
     ///
     /// assert_eq!(cache.wait_until(|value| *value == 3).await, Ok(&3));
-    /// assert_eq!(cache.get_current(), &3);
+    /// assert_eq!(cache.current(), &3);
     /// # }
     /// ```
     pub async fn wait_until<P>(&mut self, mut predicate: P) -> Result<&V, CacheRecvError>
     where
         P: FnMut(&V) -> bool,
     {
-        if self.is_first_request() && predicate(self.get_current()) {
+        if self.is_first_request() && predicate(self.current()) {
             return Ok(&self.inner);
         }
 
@@ -653,7 +653,7 @@ where
         // initial value and still be delivered, which a throttle absorbs.
         let receiver = self.rx.resubscribe();
         _ = self.drain_to_newest();
-        Throttle::spawn_from_receiver(client, call, freq, receiver, Some(self.inner.clone()))
+        Throttle::spawn(client, call, freq, receiver, Some(self.inner.clone()))
     }
 
     /// Spawns a [`Throttle`] whose callback is awaited before the next value is
@@ -683,7 +683,7 @@ where
         // initial value and still be delivered, which a throttle absorbs.
         let receiver = self.rx.resubscribe();
         _ = self.drain_to_newest();
-        Throttle::spawn_async_from_receiver(client, call, freq, receiver, Some(self.inner.clone()))
+        Throttle::spawn_async(client, call, freq, receiver, Some(self.inner.clone()))
     }
 }
 
@@ -740,8 +740,8 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn test_every_receive_reports_the_same_error_type() {
         let handle = Handle::new(0);
-        let mut cache = handle.create_cache().await;
-        _ = cache.get_newest();
+        let mut cache = handle.cache().await;
+        _ = cache.newest();
         drop(handle);
 
         assert_eq!(cache.recv().await, Err(CacheRecvError::Closed));
@@ -770,7 +770,7 @@ mod tests {
         #[tokio::test(start_paused = true)]
         async fn test_a_satisfied_predicate_returns_without_waiting() {
             let handle = Handle::new(7);
-            let mut cache = handle.create_cache().await;
+            let mut cache = handle.cache().await;
             let start = Instant::now();
 
             assert_eq!(finished(cache.wait_until(|v| *v == 7)).await, Ok(&7));
@@ -780,7 +780,7 @@ mod tests {
         #[tokio::test(start_paused = true)]
         async fn test_the_wait_ends_on_the_matching_update() {
             let handle = Handle::new(0);
-            let mut cache = handle.create_cache().await;
+            let mut cache = handle.cache().await;
             let setter = handle.clone();
             tokio::spawn(async move {
                 for value in [1, 2, 3] {
@@ -790,7 +790,7 @@ mod tests {
             });
 
             assert_eq!(finished(cache.wait_until(|v| *v == 3)).await, Ok(&3));
-            assert_eq!(cache.get_current(), &3);
+            assert_eq!(cache.current(), &3);
         }
 
         /// Every queued value is tested, including one the actor has already
@@ -799,7 +799,7 @@ mod tests {
         #[tokio::test(start_paused = true)]
         async fn test_a_value_the_actor_has_moved_past_still_matches() {
             let handle = Handle::new(0);
-            let mut cache = handle.create_cache().await;
+            let mut cache = handle.cache().await;
 
             handle.set(1).await;
             handle.set(2).await;
@@ -810,7 +810,7 @@ mod tests {
         #[tokio::test(start_paused = true)]
         async fn test_a_dropped_actor_ends_the_wait() {
             let handle = Handle::new(0);
-            let mut cache = handle.create_cache().await;
+            let mut cache = handle.cache().await;
             drop(handle);
 
             assert_eq!(
@@ -821,18 +821,18 @@ mod tests {
     }
 
     #[tokio::test(start_paused = true)]
-    async fn test_create_cache_update_during_construction() {
+    async fn test_cache_update_during_construction() {
         let handle = Handle::new(1);
         let update_handle = handle.clone();
-        // On the current-thread test runtime, this task first runs when create_cache awaits the
+        // On the current-thread test runtime, this task first runs when cache awaits the
         // actor, so the update is broadcast exactly in between its subscribe and get
         let update = tokio::spawn(async move { update_handle.set(2).await });
 
-        let mut cache = handle.create_cache().await;
+        let mut cache = handle.cache().await;
         update.await.unwrap();
 
         // The update must not be lost: it is either part of the seed or still queued
-        assert_eq!(cache.get_newest(), &2);
+        assert_eq!(cache.newest(), &2);
     }
 
     /// A clone is a fresh cache initialized with the original's current
@@ -843,7 +843,7 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn test_clone_is_a_snapshot() {
         let handle = Handle::new(1);
-        let mut cache = handle.create_cache().await;
+        let mut cache = handle.cache().await;
         assert_eq!(cache.recv().await.unwrap(), &1); // Consume first request
 
         handle.set(2).await; // Queued in the original's receiver
@@ -866,7 +866,7 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn test_clone_newest_includes_queued_updates() {
         let handle = Handle::new(1);
-        let mut cache = handle.create_cache().await;
+        let mut cache = handle.cache().await;
         assert_eq!(cache.recv().await.unwrap(), &1); // Consume first request
 
         handle.set(2).await; // Queued in the original's receiver
@@ -875,7 +875,7 @@ mod tests {
         assert_eq!(clone.try_recv().unwrap(), Some(&2));
 
         // Reading counts for the original too, so the update is not served again
-        assert_eq!(cache.get_current(), &2);
+        assert_eq!(cache.current(), &2);
         assert_eq!(cache.try_recv().unwrap(), None);
 
         // Both caches receive what the actor broadcasts from here on
@@ -887,7 +887,7 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn test_recv_waits_for_update() {
         let handle = Handle::new(2);
-        let mut cache = handle.create_cache().await;
+        let mut cache = handle.cache().await;
 
         assert_eq!(cache.recv().await.unwrap(), &2); // First call returns immediately
 
@@ -904,7 +904,7 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn test_recv_fifo_ordering() {
         let handle = Handle::new(0);
-        let mut cache = handle.create_cache().await;
+        let mut cache = handle.cache().await;
 
         assert_eq!(cache.recv().await.unwrap(), &0); // First call
 
@@ -920,7 +920,7 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn test_recv_newest_skips_intermediate() {
         let handle = Handle::new(0);
-        let mut cache = handle.create_cache().await;
+        let mut cache = handle.cache().await;
 
         assert_eq!(cache.recv_newest().await.unwrap(), &0); // First call
 
@@ -935,7 +935,7 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn test_try_recv_returns_none_when_empty() {
         let handle = Handle::new(1);
-        let mut cache = handle.create_cache().await;
+        let mut cache = handle.cache().await;
 
         assert_eq!(cache.try_recv().unwrap(), Some(&1)); // First call
         assert_eq!(cache.try_recv().unwrap(), None); // No updates
@@ -948,7 +948,7 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn test_try_recv_newest_returns_none_when_empty() {
         let handle = Handle::new(1);
-        let mut cache = handle.create_cache().await;
+        let mut cache = handle.cache().await;
 
         handle.set(2).await;
         assert_eq!(cache.try_recv_newest().unwrap(), Some(&2)); // First call
@@ -958,7 +958,7 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn test_try_set_if_changed() {
         let handle = Handle::new(1);
-        let mut cache = handle.create_cache().await;
+        let mut cache = handle.cache().await;
         assert_eq!(cache.try_recv_newest().unwrap(), Some(&1));
         handle.set_if_changed(1).await;
         assert!(cache.try_recv_newest().unwrap().is_none());
@@ -967,53 +967,53 @@ mod tests {
     }
 
     #[tokio::test(start_paused = true)]
-    async fn test_get_current_does_not_sync() {
+    async fn test_current_does_not_sync() {
         let handle = Handle::new(1);
-        let cache = handle.create_cache().await;
+        let cache = handle.cache().await;
 
         handle.set(99).await;
-        assert_eq!(cache.get_current(), &1); // Still the old value
+        assert_eq!(cache.current(), &1); // Still the old value
     }
 
     #[tokio::test(start_paused = true)]
-    async fn test_get_newest_syncs() {
+    async fn test_newest_syncs() {
         let handle = Handle::new(1);
-        let mut cache = handle.create_cache().await;
+        let mut cache = handle.cache().await;
 
         handle.set(2).await;
         handle.set(3).await;
-        assert_eq!(cache.get_newest(), &3);
+        assert_eq!(cache.newest(), &3);
     }
 
-    /// get_newest hands the caller the cache's current value, so a following
+    /// newest hands the caller the cache's current value, so a following
     /// receive must not deliver that same value a second time.
     #[tokio::test(start_paused = true)]
-    async fn test_get_newest_counts_as_the_first_read() {
+    async fn test_newest_counts_as_the_first_read_for_try_recv() {
         let handle = Handle::new(1);
-        let mut cache = handle.create_cache().await;
+        let mut cache = handle.cache().await;
 
-        assert_eq!(cache.get_newest(), &1);
+        assert_eq!(cache.newest(), &1);
 
         assert_eq!(cache.try_recv().unwrap(), None);
     }
 
     #[tokio::test(start_paused = true)]
-    async fn test_get_newest_counts_as_the_first_read_for_newest() {
+    async fn test_newest_counts_as_the_first_read_for_try_recv_newest() {
         let handle = Handle::new(1);
-        let mut cache = handle.create_cache().await;
+        let mut cache = handle.cache().await;
 
-        assert_eq!(cache.get_newest(), &1);
+        assert_eq!(cache.newest(), &1);
 
         assert_eq!(cache.try_recv_newest().unwrap(), None);
     }
 
     /// Updates that arrive after the read are still delivered.
     #[tokio::test(start_paused = true)]
-    async fn test_receive_after_get_newest_yields_later_updates() {
+    async fn test_receive_after_newest_yields_later_updates() {
         let handle = Handle::new(1);
-        let mut cache = handle.create_cache().await;
+        let mut cache = handle.cache().await;
 
-        assert_eq!(cache.get_newest(), &1);
+        assert_eq!(cache.newest(), &1);
 
         handle.set(2).await;
         assert_eq!(cache.try_recv().unwrap(), Some(&2));
@@ -1022,7 +1022,7 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn test_has_updates() {
         let handle = Handle::new(1);
-        let cache = handle.create_cache().await;
+        let cache = handle.cache().await;
 
         assert!(!cache.has_updates());
         handle.set(2).await;
@@ -1030,12 +1030,12 @@ mod tests {
     }
 
     #[tokio::test(start_paused = true)]
-    async fn test_create_cache_from_default() {
+    async fn test_cache_from_default() {
         let handle = Handle::new(42);
-        let mut cache = handle.create_cache_from_default();
+        let mut cache = handle.cache_from_default();
 
         // Starts from default, not the actor's value
-        assert_eq!(cache.get_current(), &0);
+        assert_eq!(cache.current(), &0);
         assert_eq!(cache.try_recv().unwrap(), Some(&0)); // First call returns default
 
         // Only sees actor value after a broadcast
@@ -1046,7 +1046,7 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn test_closed_channel() {
         let handle = Handle::new(1);
-        let mut cache = handle.create_cache().await;
+        let mut cache = handle.cache().await;
         cache.recv().await.unwrap(); // Consume first request
 
         drop(handle);
@@ -1061,7 +1061,7 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn test_last_value_before_close_is_not_lost() {
         let handle = Handle::new(1);
-        let mut cache = handle.create_cache().await;
+        let mut cache = handle.cache().await;
         cache.try_recv_newest().unwrap(); // Consume first request
 
         handle.set(2).await;
@@ -1077,7 +1077,7 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn test_recv_newest_returns_last_value_before_close() {
         let handle = Handle::new(1);
-        let mut cache = handle.create_cache().await;
+        let mut cache = handle.cache().await;
         cache.recv_newest().await.unwrap(); // Consume first request
 
         handle.set(2).await;
@@ -1105,14 +1105,14 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn test_try_recv_reports_lag_and_keeps_the_value() {
         let handle = Handle::new(0);
-        let mut cache = handle.create_cache().await;
+        let mut cache = handle.cache().await;
         cache.try_recv().unwrap(); // Consume first request
 
         overflow(&handle).await;
 
         let err = cache.try_recv().unwrap_err();
         assert!(matches!(err, CacheRecvError::Lagged(n) if n > 0));
-        assert_eq!(cache.get_current(), &0);
+        assert_eq!(cache.current(), &0);
 
         // Reporting the lag repositions the receiver, so the cache keeps working
         assert!(matches!(cache.try_recv(), Ok(Some(_))));
@@ -1122,7 +1122,7 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn test_recv_reports_lag() {
         let handle = Handle::new(0);
-        let mut cache = handle.create_cache().await;
+        let mut cache = handle.cache().await;
         cache.recv().await.unwrap(); // Consume first request
 
         overflow(&handle).await;
@@ -1136,7 +1136,7 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn test_try_recv_newest_recovers_from_lag() {
         let handle = Handle::new(0);
-        let mut cache = handle.create_cache().await;
+        let mut cache = handle.cache().await;
         cache.try_recv_newest().unwrap(); // Consume first request
 
         let last = overflow(&handle).await;
@@ -1147,7 +1147,7 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn test_recv_newest_recovers_from_lag() {
         let handle = Handle::new(0);
-        let mut cache = handle.create_cache().await;
+        let mut cache = handle.cache().await;
         cache.recv_newest().await.unwrap(); // Consume first request
 
         let last = overflow(&handle).await;
@@ -1158,7 +1158,7 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn test_blocking_recv() {
         let handle = Handle::new(1);
-        let mut cache = handle.create_cache().await;
+        let mut cache = handle.cache().await;
         handle.set(2).await;
 
         std::thread::spawn(move || {
@@ -1172,7 +1172,7 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn test_blocking_recv_newest() {
         let handle = Handle::new(1);
-        let mut cache = handle.create_cache().await;
+        let mut cache = handle.cache().await;
         handle.set(2).await;
         handle.set(3).await;
 

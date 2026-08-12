@@ -502,7 +502,7 @@ impl Throttle {
     /// [`Handle::spawn_throttle`](crate::Handle::spawn_throttle) and
     /// [`Cache::spawn_throttle`](crate::Cache::spawn_throttle) take the
     /// receiver without losing updates during setup.
-    pub fn spawn_from_receiver<C, T, F, Fun>(
+    pub fn spawn<C, T, F, Fun>(
         client: C,
         call: Fun,
         frequency: Frequency,
@@ -553,7 +553,7 @@ impl Throttle {
     }
 
     /// The async counterpart of
-    /// [`spawn_from_receiver`](Self::spawn_from_receiver).
+    /// [`spawn`](Self::spawn).
     ///
     /// Each call is awaited before the throttle looks for the next value, so a
     /// callback slower than the [`Frequency`] delays the following send rather
@@ -561,7 +561,7 @@ impl Throttle {
     ///
     /// `call` borrows the client and returns a [`BoxFuture`], built with
     /// [`Box::pin`].
-    pub fn spawn_async_from_receiver<C, T, F, Fun>(
+    pub fn spawn_async<C, T, F, Fun>(
         client: C,
         call: Fun,
         frequency: Frequency,
@@ -1011,7 +1011,7 @@ mod tests {
         #[tokio::test(start_paused = true)]
         async fn test_a_read_handle_can_spawn_one() {
             let handle = Handle::new(1);
-            let read_handle = handle.get_read_handle();
+            let read_handle = handle.read_handle();
             let (writer, mut received) = writer();
 
             let _throttle = read_handle
@@ -1027,7 +1027,7 @@ mod tests {
         #[tokio::test(start_paused = true)]
         async fn test_a_cache_can_spawn_one() {
             let handle = Handle::new(1);
-            let mut cache = handle.create_cache().await;
+            let mut cache = handle.cache().await;
             let (writer, mut received) = writer();
 
             let _throttle = cache.spawn_async_throttle(writer, write, Frequency::OnEvent);
@@ -1043,7 +1043,7 @@ mod tests {
         #[tokio::test(start_paused = true)]
         async fn test_a_cache_update_queued_before_spawning_still_arrives() {
             let handle = Handle::new(1);
-            let mut cache = handle.create_cache().await;
+            let mut cache = handle.cache().await;
             let (writer, mut received) = writer();
 
             handle.set(2).await; // Queued in the cache's receiver, not yet consumed
@@ -1052,7 +1052,7 @@ mod tests {
 
             // The initial send carries the queued update, not the stale snapshot
             assert_eq!(next_sent(&mut received).await, Some(2));
-            assert_eq!(cache.get_current(), &2);
+            assert_eq!(cache.current(), &2);
         }
     }
 
@@ -1246,7 +1246,7 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn test_pending_update_reaches_cache_throttle() {
         let handle = Handle::new(1);
-        let mut cache = handle.create_cache().await;
+        let mut cache = handle.cache().await;
 
         handle.set(2).await; // Queued in the cache's receiver, not yet consumed
 
@@ -1259,13 +1259,13 @@ mod tests {
         assert_eq!(*counter.count.lock().unwrap(), 1);
 
         // Synchronizing counts as receiving: the cache holds the value too
-        assert_eq!(cache.get_current(), &2);
+        assert_eq!(cache.current(), &2);
     }
 
     #[tokio::test(start_paused = true)]
     async fn test_throttle_from_read_handle() {
         let handle = Handle::new(1);
-        let read_handle = handle.get_read_handle();
+        let read_handle = handle.read_handle();
         let counter = CounterClient::new();
 
         read_handle
@@ -1287,7 +1287,7 @@ mod tests {
     async fn test_throttle_from_cache() {
         let handle = Handle::new(1);
         let counter = CounterClient::new();
-        let mut cache = handle.create_cache().await;
+        let mut cache = handle.cache().await;
 
         // Spawn throttle that should only activate once on creation
         cache.spawn_throttle(counter.clone(), CounterClient::call, Frequency::OnEvent);
@@ -1324,7 +1324,7 @@ mod tests {
         let counter = CounterClient::new();
 
         // Spawn throttle
-        Throttle::spawn_from_receiver(
+        Throttle::spawn(
             counter.clone(),
             CounterClient::call,
             Frequency::Interval(Duration::from_millis(100)),
@@ -1364,7 +1364,7 @@ mod tests {
 
         // Spawn throttle
         let receiver = handle.subscribe();
-        Throttle::spawn_from_receiver(
+        Throttle::spawn(
             counter.clone(),
             CounterClient::call,
             Frequency::OnEvent,
@@ -1395,7 +1395,7 @@ mod tests {
 
         // Spawn throttle
         let receiver = handle.subscribe();
-        Throttle::spawn_from_receiver(
+        Throttle::spawn(
             counter.clone(),
             CounterClient::call,
             Frequency::OnEventWhen(Duration::from_millis(timer as u64)),
@@ -1467,7 +1467,7 @@ mod tests {
 
         // Spawn throttle
         let receiver = handle.subscribe();
-        Throttle::spawn_from_receiver(
+        Throttle::spawn(
             counter.clone(),
             CounterClient::call,
             Frequency::OnEventWhen(Duration::from_millis((timer * 0.55) as u64)),
@@ -1501,7 +1501,7 @@ mod tests {
 
         // Spawn throttle
         let receiver = handle.subscribe();
-        Throttle::spawn_from_receiver(
+        Throttle::spawn(
             counter.clone(),
             CounterClient::call,
             Frequency::OnEventWhen(Duration::from_millis((timer * 1.5) as u64)),
@@ -1527,7 +1527,7 @@ mod tests {
         let (tx, rx) = broadcast::channel(1);
         let counter = CounterClient::new();
 
-        Throttle::spawn_from_receiver(
+        Throttle::spawn(
             counter.clone(),
             CounterClient::call,
             Frequency::OnEvent,
