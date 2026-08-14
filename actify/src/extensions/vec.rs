@@ -580,10 +580,10 @@ mod tests {
         handle.dedup().await;
         assert_eq!(handle.get().await, vec![1, 2, 3]);
 
-        handle.reverse().await;
+        handle.sort_by(|a: &i32, b: &i32| b.cmp(a)).await;
         assert_eq!(handle.get().await, vec![3, 2, 1]);
 
-        handle.sort_by(|a: &i32, b: &i32| a.cmp(b)).await;
+        handle.reverse().await;
         assert_eq!(handle.get().await, vec![1, 2, 3]);
     }
 
