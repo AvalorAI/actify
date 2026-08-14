@@ -11,6 +11,14 @@ they record what changed rather than why, and are not exhaustive. 0.8.0 through
 
 ### Added
 
+- `HashSetHandle` gains `len`, `clear`, `contains`, `remove`, `to_vec`, `drain`,
+  `extend`, `retain`, `difference`, `intersection`, `union`, `is_subset` and
+  `is_superset`.
+
+  The set algebra returns `Vec<K>` rather than an iterator, since an iterator
+  borrowing the actor's value cannot leave it.
+
+
 - `VecHandle` gains `len`, `pop`, `clear`, `remove`, `swap_remove`, `insert`,
   `truncate`, `reverse`, `split_off`, `get_index`, `first`, `last`, `contains`,
   `append`, `dedup`, `sort`, `sort_by` and `retain`.
