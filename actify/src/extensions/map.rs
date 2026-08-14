@@ -18,6 +18,22 @@ trait ActorMap<K, V> {
     fn keys(&self) -> Vec<K>;
 
     fn values(&self) -> Vec<V>;
+
+    fn len(&self) -> usize;
+
+    fn contains_key(&self, key: K) -> bool;
+
+    fn drain(&mut self) -> Vec<(K, V)>;
+
+    fn extend(&mut self, items: Vec<(K, V)>);
+
+    fn retain<F>(&mut self, f: F)
+    where
+        F: FnMut(&K, &mut V) -> bool + Send + Sync + 'static;
+
+    fn get_or_insert_with<F>(&mut self, key: K, default: F) -> V
+    where
+        F: FnOnce() -> V + Send + Sync + 'static;
 }
 
 /// Extension methods for `Handle<HashMap<K, V>>`, exposed as [`HashMapHandle`](crate::HashMapHandle).
@@ -174,5 +190,220 @@ where
     /// ```
     fn values(&self) -> Vec<V> {
         self.values().cloned().collect()
+    }
+
+    /// Returns the number of elements in the map.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use actify::{Handle, HashMapHandle};
+    /// # use std::collections::HashMap;
+    /// # #[tokio::main]
+    /// # async fn main() {
+    /// let handle = Handle::new(HashMap::new());
+    /// handle.insert("a", 1).await;
+    /// handle.insert("b", 2).await;
+    /// assert_eq!(handle.len().await, 2);
+    /// # }
+    /// ```
+    fn len(&self) -> usize {
+        self.len()
+    }
+
+    /// Returns `true` if the map contains a value for the specified key.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use actify::{Handle, HashMapHandle};
+    /// # use std::collections::HashMap;
+    /// # #[tokio::main]
+    /// # async fn main() {
+    /// let handle = Handle::new(HashMap::new());
+    /// handle.insert("a", 1).await;
+    /// assert!(handle.contains_key("a").await);
+    /// assert!(!handle.contains_key("b").await);
+    /// # }
+    /// ```
+    fn contains_key(&self, key: K) -> bool {
+        self.contains_key(&key)
+    }
+
+    /// Removes all key-value pairs from the map and returns them as a `Vec`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use actify::{Handle, HashMapHandle};
+    /// # use std::collections::HashMap;
+    /// # #[tokio::main]
+    /// # async fn main() {
+    /// let handle = Handle::new(HashMap::new());
+    /// handle.insert("a", 1).await;
+    /// let items = handle.drain().await;
+    /// assert_eq!(items, vec![("a", 1)]);
+    /// assert!(handle.is_empty().await);
+    /// # }
+    /// ```
+    fn drain(&mut self) -> Vec<(K, V)> {
+        self.drain().collect()
+    }
+
+    /// Extends the map with the contents of the given `Vec` of key-value pairs.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use actify::{Handle, HashMapHandle};
+    /// # use std::collections::HashMap;
+    /// # #[tokio::main]
+    /// # async fn main() {
+    /// let handle = Handle::new(HashMap::new());
+    /// handle.extend(vec![("a", 1), ("b", 2)]).await;
+    /// assert_eq!(handle.len().await, 2);
+    /// # }
+    /// ```
+    fn extend(&mut self, items: Vec<(K, V)>) {
+        <Self as Extend<(K, V)>>::extend(self, items)
+    }
+
+    /// Retains only the elements specified by the predicate.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use actify::{Handle, HashMapHandle};
+    /// # use std::collections::HashMap;
+    /// # #[tokio::main]
+    /// # async fn main() {
+    /// let handle = Handle::new(HashMap::new());
+    /// handle.extend(vec![("a", 1), ("b", 2), ("c", 3)]).await;
+    /// handle.retain(|_k, v| *v > 1).await;
+    /// assert_eq!(handle.len().await, 2);
+    /// # }
+    /// ```
+    fn retain<F>(&mut self, f: F)
+    where
+        F: FnMut(&K, &mut V) -> bool + Send + Sync + 'static,
+    {
+        self.retain(f)
+    }
+
+    /// Returns a clone of the value for the given key. If the key is not present,
+    /// inserts the value computed by `default` and returns a clone of it.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use actify::{Handle, HashMapHandle};
+    /// # use std::collections::HashMap;
+    /// # #[tokio::main]
+    /// # async fn main() {
+    /// let handle = Handle::new(HashMap::<&str, i32>::new());
+    /// let val = handle.get_or_insert_with("a", || 42).await;
+    /// assert_eq!(val, 42);
+    /// let val = handle.get_or_insert_with("a", || 99).await;
+    /// assert_eq!(val, 42);
+    /// # }
+    /// ```
+    fn get_or_insert_with<F>(&mut self, key: K, default: F) -> V
+    where
+        F: FnOnce() -> V + Send + Sync + 'static,
+    {
+        self.entry(key).or_insert_with(default).clone()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::Handle;
+
+    fn map() -> Handle<HashMap<String, i32>> {
+        Handle::new(HashMap::from([("a".to_string(), 1), ("b".to_string(), 2)]))
+    }
+
+    /// Reading the map leaves it untouched. The `insert` afterwards proves the
+    /// subscription is live and the first assertions did not pass by accident.
+    #[tokio::test]
+    async fn test_getters_do_not_broadcast() {
+        let handle = map();
+        let mut rx = handle.subscribe();
+
+        assert_eq!(handle.len().await, 2);
+        assert!(handle.contains_key("a".to_string()).await);
+        assert!(!handle.contains_key("z".to_string()).await);
+        assert!(rx.try_recv().is_err());
+
+        // The actor broadcasts before it replies, so the value is already
+        // queued and a missing broadcast fails here instead of hanging.
+        handle.insert("c".to_string(), 3).await;
+        assert_eq!(rx.try_recv().unwrap().len(), 3);
+    }
+
+    /// Every method taking `&mut self` broadcasts, whether or not it changed
+    /// anything.
+    #[tokio::test]
+    async fn test_every_mutator_broadcasts() {
+        let handle = map();
+        let mut rx = handle.subscribe();
+
+        handle.extend(vec![("c".to_string(), 3)]).await;
+        assert!(rx.try_recv().is_ok(), "extend did not broadcast");
+
+        handle.retain(|_, value: &mut i32| *value > 1).await;
+        assert!(rx.try_recv().is_ok(), "retain did not broadcast");
+
+        handle.get_or_insert_with("d".to_string(), || 4).await;
+        assert!(
+            rx.try_recv().is_ok(),
+            "get_or_insert_with did not broadcast"
+        );
+
+        handle.drain().await;
+        assert!(rx.try_recv().is_ok(), "drain did not broadcast");
+    }
+
+    #[tokio::test]
+    async fn test_drain_returns_every_pair_and_empties_the_map() {
+        let handle = map();
+
+        let mut drained = handle.drain().await;
+        drained.sort();
+
+        assert_eq!(drained, vec![("a".to_string(), 1), ("b".to_string(), 2)]);
+        assert!(handle.is_empty().await);
+    }
+
+    #[tokio::test]
+    async fn test_extend_adds_and_overwrites() {
+        let handle = map();
+
+        handle
+            .extend(vec![("b".to_string(), 20), ("c".to_string(), 3)])
+            .await;
+
+        assert_eq!(handle.len().await, 3);
+        assert_eq!(handle.get_key("b".to_string()).await, Some(20));
+        assert_eq!(handle.get_key("c".to_string()).await, Some(3));
+    }
+
+    #[tokio::test]
+    async fn test_retain_keeps_what_the_predicate_accepts() {
+        let handle = map();
+
+        handle.retain(|_, value: &mut i32| *value > 1).await;
+
+        assert_eq!(handle.keys().await, vec!["b".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn test_get_or_insert_with_only_inserts_when_absent() {
+        let handle = map();
+
+        assert_eq!(handle.get_or_insert_with("a".to_string(), || 99).await, 1);
+        assert_eq!(handle.get_or_insert_with("c".to_string(), || 3).await, 3);
+        assert_eq!(handle.len().await, 3);
     }
 }
