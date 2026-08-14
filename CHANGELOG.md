@@ -11,6 +11,14 @@ they record what changed rather than why, and are not exhaustive. 0.8.0 through
 
 ### Added
 
+- `OptionHandle` gains `unwrap_or`, `unwrap_or_default`, `unwrap_or_else`,
+  `filter` and `map`.
+
+  These take `&self` where `std`'s consume `self`, so they read the actor's value
+  without changing it and do not broadcast. `map` may return a different type,
+  which the actor produces before the value leaves it.
+
+
 - `HashSetHandle` gains `len`, `clear`, `contains`, `remove`, `to_vec`, `drain`,
   `extend`, `retain`, `difference`, `intersection`, `union`, `is_subset` and
   `is_superset`.
