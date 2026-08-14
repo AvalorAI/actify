@@ -11,6 +11,15 @@ they record what changed rather than why, and are not exhaustive. 0.8.0 through
 
 ### Added
 
+- `VecHandle` gains `len`, `pop`, `clear`, `remove`, `swap_remove`, `insert`,
+  `truncate`, `reverse`, `split_off`, `get_index`, `first`, `last`, `contains`,
+  `append`, `dedup`, `sort`, `sort_by` and `retain`.
+
+  `first`, `last` and `get_index` clone what `std` borrows. `get_index` carries
+  its suffix because an inherent `Handle::get` shadows a generated method called
+  `get`.
+
+
 - `HashMapHandle` gains `len`, `contains_key`, `drain`, `extend`, `retain` and
   `get_or_insert_with`. `drain` returns `Vec<(K, V)>` rather than an iterator, and
   `get_or_insert_with` returns a clone of the value, since a reference cannot
