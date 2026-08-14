@@ -373,6 +373,7 @@
 //! - [`HashMapHandle`] for `Handle<HashMap<K, V>>`
 //! - [`HashSetHandle`] for `Handle<HashSet<K>>`
 //! - [`StringHandle`] for `Handle<String>`
+//! - [`VecDequeHandle`] for `Handle<VecDeque<T>>`
 //!
 //! # Views and non-Clone types
 //!
@@ -472,7 +473,7 @@ pub use actify_macros::{actify, broadcast, skip_broadcast};
 pub use cache::{Cache, CacheRecvError};
 pub use extensions::{
     map::HashMapHandle, option::OptionHandle, set::HashSetHandle, string::StringHandle,
-    vec::VecHandle,
+    vec::VecHandle, vecdeque::VecDequeHandle,
 };
 pub use handles::{Handle, ReadHandle, ToView};
 pub use throttle::{BoxFuture, Frequency, Throttle};

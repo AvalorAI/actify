@@ -11,6 +11,15 @@ they record what changed rather than why, and are not exhaustive. 0.8.0 through
 
 ### Added
 
+- `VecDequeHandle` for `Handle<VecDeque<T>>`, with `push_back`, `push_front`,
+  `pop_back`, `pop_front`, `front`, `back`, `get_index`, `len`, `is_empty`,
+  `clear`, `contains`, `drain` and `retain`.
+
+  `front`, `back` and `get_index` clone what `std` would borrow. `get_index`
+  carries its suffix because an inherent `Handle::get` would shadow a generated
+  method called `get`.
+
+
 - `StringHandle` for `Handle<String>`, with `len`, `is_empty`, `clear`,
   `truncate`, `push`, `push_str`, `contains`, `starts_with`, `ends_with`,
   `replace`, `split`, `trim`, `to_lowercase` and `to_uppercase`.
