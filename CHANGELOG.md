@@ -117,6 +117,28 @@ they record what changed rather than why, and are not exhaustive. 0.8.0 through
 
 ### Fixed
 
+- Code that is generic over a generated handle trait can now spawn the call. The
+  traits declared their methods `async fn`, which promises nothing about the
+  returned future, so a caller with `H: MyHandle` writing
+  `tokio::spawn(async move { handle.method().await })` was rejected with "future
+  cannot be sent between threads safely". The methods are now declared
+  `fn method(..) -> impl Future<Output = R> + Send`, which says it.
+
+  Concrete `Handle<T>` calls were never affected, which is why nothing in this
+  workspace hit it.
+
+### Changed
+
+- **Breaking:** the generated handle traits declare their methods
+  `-> impl Future<Output = R> + Send` rather than `async fn`. An `async fn` in an
+  implementation still satisfies them, so only code that implements a generated
+  trait by hand, such as a mock, needs updating.
+
+  The generated implementation now also requires the broadcast type to be
+  `Send + Sync + 'static`. Every handle that can exist already satisfies this,
+  since `Handle::new` requires it.
+
+
 - Generated code no longer breaks when something in scope shares a name with what
   that code refers to. A user type called `Box` next to an `#[actify]` impl made
   the generated body resolve `Box::new` to that type, and a module named `actify`

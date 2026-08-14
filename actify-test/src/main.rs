@@ -159,6 +159,37 @@ mod shadowed_std_names {
     }
 }
 
+/// Code that is generic over a generated trait and spawns the call. This is the
+/// case that fails when the generated trait uses `async fn`, because the caller
+/// cannot then know the returned future is `Send`.
+///
+/// Only the test build reaches it, hence the allowance.
+#[allow(dead_code)]
+mod generic_over_the_trait {
+    use actify::actify;
+
+    #[derive(Clone, Debug)]
+    pub struct Counter {
+        pub value: i32,
+    }
+
+    #[actify]
+    impl Counter {
+        fn value(&self) -> i32 {
+            self.value
+        }
+    }
+
+    pub async fn read_on_another_task<H>(handle: H) -> i32
+    where
+        H: CounterHandle + Send + Sync + 'static,
+    {
+        tokio::spawn(async move { handle.value().await })
+            .await
+            .unwrap()
+    }
+}
+
 /// Generic bounds written inline on the impl block instead of in a where clause
 #[allow(dead_code)]
 #[derive(Clone, Debug)]
@@ -446,6 +477,16 @@ mod tests {
         let handle = Handle::new(ShadowedStdNames { value: 7 });
 
         assert_eq!(handle.value().await, 7);
+    }
+
+    /// A caller generic over the generated trait must be able to spawn the call.
+    #[tokio::test]
+    async fn test_a_generic_caller_can_spawn_the_call() {
+        use crate::generic_over_the_trait::{Counter, read_on_another_task};
+
+        let handle = Handle::new(Counter { value: 7 });
+
+        assert_eq!(read_on_another_task(handle).await, 7);
     }
 
     #[tokio::test]

@@ -34,8 +34,14 @@ pub fn generate_trait_impl(info: &ImplInfo) -> proc_macro2::TokenStream {
     // TypeGenerics renders; the full Generics would emit `T: Clone` there.
     let (_, trait_generics, where_clause) = info.generics.split_for_impl();
 
+    // The trait promises the returned future is Send, and the future holds
+    // `&Handle<T, __V>`, which is Send only if the handle is Sync. Every handle
+    // that can exist already satisfies this: `Handle::new` requires it of the
+    // broadcast type.
     let mut generics_with_broadcast = info.generics.clone();
-    generics_with_broadcast.params.push(syn::parse_quote!(__V));
+    generics_with_broadcast
+        .params
+        .push(syn::parse_quote!(__V: Send + Sync + 'static));
     let (impl_generics, _, _) = generics_with_broadcast.split_for_impl();
 
     let call_prefix = build_call_prefix(info);
@@ -63,11 +69,16 @@ fn method_signature(method: &MethodInfo) -> proc_macro2::TokenStream {
     let arg_types: Vec<_> = method.arg_types.iter().collect();
     let method_generics = &method.method_generics;
     let where_clause = &method.method_generics.where_clause;
-    let return_type = quote_return_type(&method.output_type);
+    // A trait method written `async fn` returns a future the caller knows
+    // nothing about, so code generic over this trait cannot spawn the call. The
+    // desugared form promises `Send`, which is what makes that possible.
+    let output_type = &method.output_type;
 
     quote! {
         #(#attrs)*
-        async fn #ident #method_generics(&self, #(#arg_names: #arg_types),*) #return_type #where_clause;
+        fn #ident #method_generics(&self, #(#arg_names: #arg_types),*)
+            -> impl ::std::future::Future<Output = #output_type> + Send
+        #where_clause;
     }
 }
 
