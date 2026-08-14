@@ -11,6 +11,12 @@ they record what changed rather than why, and are not exhaustive. 0.8.0 through
 
 ### Added
 
+- `HashMapHandle` gains `len`, `contains_key`, `drain`, `extend`, `retain` and
+  `get_or_insert_with`. `drain` returns `Vec<(K, V)>` rather than an iterator, and
+  `get_or_insert_with` returns a clone of the value, since a reference cannot
+  leave the actor.
+
+
 - `VecDequeHandle` for `Handle<VecDeque<T>>`, with `push_back`, `push_front`,
   `pop_back`, `pop_front`, `front`, `back`, `get_index`, `len`, `is_empty`,
   `clear`, `contains`, `drain` and `retain`.
