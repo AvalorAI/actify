@@ -159,34 +159,48 @@ mod shadowed_std_names {
     }
 }
 
-/// Code that is generic over a generated trait and spawns the call. This is the
-/// case that fails when the generated trait uses `async fn`, because the caller
-/// cannot then know the returned future is `Send`.
+/// Why a caller would be generic over a generated trait at all: so that the
+/// same code works with a real actor or with a stand-in, and so it can be moved
+/// onto its own task.
 ///
 /// Only the test build reaches it, hence the allowance.
 #[allow(dead_code)]
 mod generic_over_the_trait {
     use actify::actify;
+    use tokio::task::JoinHandle;
 
     #[derive(Clone, Debug)]
-    pub struct Counter {
-        pub value: i32,
+    pub struct Thermostat {
+        pub celsius: i32,
     }
 
     #[actify]
-    impl Counter {
-        fn value(&self) -> i32 {
-            self.value
+    impl Thermostat {
+        fn reading(&self) -> i32 {
+            self.celsius
         }
     }
 
-    pub async fn read_on_another_task<H>(handle: H) -> i32
+    /// Watches a thermostat from its own task. Taking `H` rather than
+    /// `Handle<Thermostat>` lets a test pass the stub below, and `tokio::spawn`
+    /// requires the future the call returns to be `Send`, which the generated
+    /// trait has to promise for this to compile at all.
+    pub fn spawn_watcher<H>(handle: H) -> JoinHandle<i32>
     where
-        H: CounterHandle + Send + Sync + 'static,
+        H: ThermostatHandle + Send + Sync + 'static,
     {
-        tokio::spawn(async move { handle.value().await })
-            .await
-            .unwrap()
+        tokio::spawn(async move { handle.reading().await })
+    }
+
+    /// A stand-in for the actor, written by hand. It is still written
+    /// `async fn`, which satisfies the trait as long as the future it produces
+    /// is `Send`, so existing stand-ins keep compiling.
+    pub struct FrozenThermostat;
+
+    impl ThermostatHandle for FrozenThermostat {
+        async fn reading(&self) -> i32 {
+            -40
+        }
     }
 }
 
@@ -479,14 +493,17 @@ mod tests {
         assert_eq!(handle.value().await, 7);
     }
 
-    /// A caller generic over the generated trait must be able to spawn the call.
+    /// The same watcher runs against a real actor and against a hand-written
+    /// stand-in, which is the reason for being generic over the trait rather
+    /// than taking a `Handle`.
     #[tokio::test]
     async fn test_a_generic_caller_can_spawn_the_call() {
-        use crate::generic_over_the_trait::{Counter, read_on_another_task};
+        use crate::generic_over_the_trait::{FrozenThermostat, Thermostat, spawn_watcher};
 
-        let handle = Handle::new(Counter { value: 7 });
+        let handle = Handle::new(Thermostat { celsius: 21 });
 
-        assert_eq!(read_on_another_task(handle).await, 7);
+        assert_eq!(spawn_watcher(handle).await.unwrap(), 21);
+        assert_eq!(spawn_watcher(FrozenThermostat).await.unwrap(), -40);
     }
 
     #[tokio::test]

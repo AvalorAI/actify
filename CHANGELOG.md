@@ -130,13 +130,27 @@ they record what changed rather than why, and are not exhaustive. 0.8.0 through
 ### Changed
 
 - **Breaking:** the generated handle traits declare their methods
-  `-> impl Future<Output = R> + Send` rather than `async fn`. An `async fn` in an
-  implementation still satisfies them, so only code that implements a generated
-  trait by hand, such as a mock, needs updating.
+  `-> impl Future<Output = R> + Send` rather than `async fn`.
 
-  The generated implementation now also requires the broadcast type to be
-  `Send + Sync + 'static`. Every handle that can exist already satisfies this,
-  since `Handle::new` requires it.
+  Hand-written implementations, such as test stand-ins, keep compiling: an
+  `async fn` in an implementation satisfies the new signature, as long as the
+  future it produces is `Send`. One that is not, because it holds a non-`Send`
+  value across an await, now fails to compile.
+
+  The generated implementation also bounds the broadcast type
+  `Send + Sync + 'static`, since the future holds a `&Handle<T, V>` and a
+  reference is `Send` only if its referent is `Sync`. This breaks code that is
+  generic over the broadcast type without bounding it:
+
+  ```rust
+  // Compiled before, now needs V: Send + Sync + 'static
+  async fn read<V>(handle: Handle<Counter, V>) -> i32 {
+      handle.value().await
+  }
+  ```
+
+  Calls on a concrete handle are unaffected, because `Handle::new` already
+  requires those bounds of the broadcast type.
 
 
 - Generated code no longer breaks when something in scope shares a name with what

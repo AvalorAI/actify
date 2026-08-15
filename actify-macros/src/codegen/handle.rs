@@ -34,10 +34,10 @@ pub fn generate_trait_impl(info: &ImplInfo) -> proc_macro2::TokenStream {
     // TypeGenerics renders; the full Generics would emit `T: Clone` there.
     let (_, trait_generics, where_clause) = info.generics.split_for_impl();
 
-    // The trait promises the returned future is Send, and the future holds
-    // `&Handle<T, __V>`, which is Send only if the handle is Sync. Every handle
-    // that can exist already satisfies this: `Handle::new` requires it of the
-    // broadcast type.
+    // The future returned by each method holds `&Handle<T, __V>`, and a
+    // reference is Send only if what it points at is Sync, so promising Send
+    // means the broadcast type has to be bounded here. Code generic over that
+    // type must bound it too, which is the one visible cost of the promise.
     let mut generics_with_broadcast = info.generics.clone();
     generics_with_broadcast
         .params
@@ -62,6 +62,14 @@ pub fn generate_trait_impl(info: &ImplInfo) -> proc_macro2::TokenStream {
 
 /// Generate a handle trait method signature.
 /// e.g. `async fn foo(&self, i: i32) -> f64;`
+/// Generate one method signature for the handle trait.
+///
+/// Written `-> impl Future<Output = R> + Send` rather than `async fn`. A trait
+/// method declared `async fn` returns a future whose type the caller cannot
+/// name and about which it is told nothing, so a function generic over this
+/// trait cannot pass the call to `tokio::spawn`: the compiler rejects it with
+/// "future cannot be sent between threads safely". Spelling the return type out
+/// states the `Send` bound the caller needs.
 fn method_signature(method: &MethodInfo) -> proc_macro2::TokenStream {
     let attrs = &method.attributes;
     let ident = &method.ident;
@@ -69,9 +77,6 @@ fn method_signature(method: &MethodInfo) -> proc_macro2::TokenStream {
     let arg_types: Vec<_> = method.arg_types.iter().collect();
     let method_generics = &method.method_generics;
     let where_clause = &method.method_generics.where_clause;
-    // A trait method written `async fn` returns a future the caller knows
-    // nothing about, so code generic over this trait cannot spawn the call. The
-    // desugared form promises `Send`, which is what makes that possible.
     let output_type = &method.output_type;
 
     quote! {
