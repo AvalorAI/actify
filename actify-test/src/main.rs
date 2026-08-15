@@ -214,6 +214,34 @@ mod generic_over_the_trait {
     }
 }
 
+/// Methods the handle should not expose, including one the macro could not
+/// generate for even if it wanted to: `&str` cannot be sent to an actor.
+#[derive(Clone, Debug)]
+struct PartlyExposed {
+    log: String,
+}
+
+#[allow(dead_code)]
+#[actify]
+impl PartlyExposed {
+    fn entries(&self) -> usize {
+        self.log.len()
+    }
+
+    /// Takes a reference, which an actor call cannot, and is only ever called
+    /// from inside the type.
+    #[actify::skip]
+    fn append(&mut self, line: &str) {
+        self.log.push_str(line);
+    }
+
+    /// A helper with no business on the handle.
+    #[actify::skip]
+    fn secret(&self) -> &str {
+        &self.log
+    }
+}
+
 /// Generic bounds written inline on the impl block instead of in a where clause
 #[allow(dead_code)]
 #[derive(Clone, Debug)]
@@ -514,6 +542,20 @@ mod tests {
 
         assert_eq!(read(handle).await, 21);
         assert_eq!(read(FrozenThermostat).await, -40);
+    }
+
+    /// A skipped method stays on the type and off the handle. The exposed one
+    /// beside it shows the block is still actorized.
+    #[tokio::test]
+    async fn test_skipped_methods_stay_off_the_handle() {
+        let mut value = PartlyExposed { log: String::new() };
+        value.append("hello");
+
+        assert_eq!(value.secret(), "hello");
+
+        let handle = Handle::new(value);
+
+        assert_eq!(handle.entries().await, 5);
     }
 
     #[tokio::test]

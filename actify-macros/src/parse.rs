@@ -67,6 +67,25 @@ impl ImplInfo {
         let mut methods = Vec::new();
         for item in &impl_block.items {
             if let ImplItem::Fn(method) = item {
+                // Skipped methods are not parsed at all, so a signature that no
+                // actor call could express is allowed to stay in the block.
+                if find_marker_attribute(&method.attrs, "skip").is_some() {
+                    for name in ["broadcast", "skip_broadcast"] {
+                        if let Some(attr) = find_marker_attribute(&method.attrs, name) {
+                            accumulate(
+                                &mut errors,
+                                Error::new(
+                                    attr.span(),
+                                    format!(
+                                        "#[{name}] is superfluous: #[skip] leaves this method off the handle entirely"
+                                    ),
+                                ),
+                            );
+                        }
+                    }
+                    continue;
+                }
+
                 match MethodInfo::from_impl_method(method, skip_all_broadcasts) {
                     Ok(info) => methods.push(info),
                     Err(error) => accumulate(&mut errors, error),
@@ -278,7 +297,7 @@ fn filter_attributes(attrs: &[Attribute]) -> Vec<Attribute> {
         .collect()
 }
 
-/// Find one of actify's marker attributes (`broadcast`, `skip_broadcast`).
+/// Find one of actify's marker attributes (`broadcast`, `skip_broadcast`, `skip`).
 ///
 /// Only the two spellings actify actually exports are recognised: bare
 /// (`#[broadcast]`, via a `use`) and crate-qualified (`#[actify::broadcast]`).

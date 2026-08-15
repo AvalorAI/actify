@@ -11,6 +11,15 @@ they record what changed rather than why, and are not exhaustive. 0.8.0 through
 
 ### Added
 
+- `#[actify::skip]`, which leaves one method off the generated handle trait. The
+  method stays on the type unchanged.
+
+  A skipped method is not validated either, so a block can hold methods an actor
+  call could never express, such as one taking `&str` or returning a reference
+  into the actor's state. Before this, such a method had to live in a second
+  `impl` block.
+
+
 - `OptionHandle` gains `unwrap_or`, `unwrap_or_default`, `unwrap_or_else`,
   `filter` and `map`.
 

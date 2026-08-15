@@ -1,0 +1,5 @@
+error[E0599]: no method named `hidden` found for struct `actify::Handle<T, V>` in the current scope
+  --> tests/compile_fail/skipped_method_not_on_handle.rs:27:20
+   |
+27 |     let _ = handle.hidden().await;
+   |                    ^^^^^^ method not found in `actify::Handle<MyActor>`

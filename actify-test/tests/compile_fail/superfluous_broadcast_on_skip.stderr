@@ -1,0 +1,11 @@
+error: #[broadcast] is superfluous: #[skip] leaves this method off the handle entirely
+  --> tests/compile_fail/superfluous_broadcast_on_skip.rs:11:5
+   |
+11 |     #[actify::broadcast]
+   |     ^
+
+error: #[skip_broadcast] is superfluous: #[skip] leaves this method off the handle entirely
+  --> tests/compile_fail/superfluous_broadcast_on_skip.rs:15:5
+   |
+15 |     #[actify::skip_broadcast]
+   |     ^

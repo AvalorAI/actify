@@ -205,6 +205,32 @@
 //! - [`Handle::with_mut`]: runs a mutable closure on `&mut T` (broadcasts the change)
 //! - [`Handle::wait_until`]: waits until the broadcast value satisfies a predicate
 //!
+//! # Leaving methods off the handle
+//!
+//! Every method in an `#[actify]` block gets a handle method. Mark one
+//! [`#[actify::skip]`](macro@crate::skip) to leave it out:
+//!
+//! ```
+//! # use actify::actify;
+//! # #[derive(Clone, Debug)]
+//! # struct Store { entries: Vec<String> }
+//! #[actify]
+//! impl Store {
+//!     fn len(&self) -> usize {
+//!         self.entries.len()
+//!     }
+//!
+//!     #[actify::skip]
+//!     fn merge(&mut self, other: &Store) {
+//!         self.entries.extend(other.entries.iter().cloned());
+//!     }
+//! }
+//! ```
+//!
+//! The method stays on the type, unchanged. A skipped method is not checked
+//! either, so it may take a reference or return one, which an actor call cannot
+//! do.
+//!
 //! # Broadcasting
 //!
 //! A method taking `&mut self` broadcasts the updated value to all subscribers
@@ -471,7 +497,7 @@ mod handles;
 mod throttle;
 
 // Reexport for easier reference
-pub use actify_macros::{actify, broadcast, skip_broadcast};
+pub use actify_macros::{actify, broadcast, skip, skip_broadcast};
 pub use cache::{Cache, CacheRecvError};
 pub use extensions::{
     map::HashMapHandle, option::OptionHandle, set::HashSetHandle, string::StringHandle,
