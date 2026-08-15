@@ -159,9 +159,17 @@ mod shadowed_std_names {
     }
 }
 
-/// Why a caller would be generic over a generated trait at all: so that the
-/// same code works with a real actor or with a stand-in, and so it can be moved
-/// onto its own task.
+/// The shape that needs the generated trait to promise a `Send` future: a
+/// caller that is generic over the trait, whose call has to satisfy a `Send`
+/// bound.
+///
+/// Neither half alone needs the promise. A concrete `Handle<Thermostat>` can be
+/// spawned without it, because the compiler can see the future's real type. A
+/// generic caller that never requires `Send` is fine without it too. Only the
+/// combination fails, because there the compiler has nothing to go on but the
+/// trait, and `async fn` in a trait says nothing about the future.
+///
+/// `tokio::spawn` is the usual way to require `Send`, not the only one.
 ///
 /// Only the test build reaches it, hence the allowance.
 #[allow(dead_code)]
@@ -181,10 +189,9 @@ mod generic_over_the_trait {
         }
     }
 
-    /// Watches a thermostat from its own task. Taking `H` rather than
-    /// `Handle<Thermostat>` lets a test pass the stub below, and `tokio::spawn`
-    /// requires the future the call returns to be `Send`, which the generated
-    /// trait has to promise for this to compile at all.
+    /// Watches a thermostat from its own task. It is generic so that a test can
+    /// pass the stand-in below instead of a real actor, and it spawns, which is
+    /// what requires the future to be `Send`.
     pub fn spawn_watcher<H>(handle: H) -> JoinHandle<i32>
     where
         H: ThermostatHandle + Send + Sync + 'static,

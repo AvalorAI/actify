@@ -64,12 +64,14 @@ pub fn generate_trait_impl(info: &ImplInfo) -> proc_macro2::TokenStream {
 /// e.g. `async fn foo(&self, i: i32) -> f64;`
 /// Generate one method signature for the handle trait.
 ///
-/// Written `-> impl Future<Output = R> + Send` rather than `async fn`. A trait
-/// method declared `async fn` returns a future whose type the caller cannot
-/// name and about which it is told nothing, so a function generic over this
-/// trait cannot pass the call to `tokio::spawn`: the compiler rejects it with
-/// "future cannot be sent between threads safely". Spelling the return type out
-/// states the `Send` bound the caller needs.
+/// Written `-> impl Future<Output = R> + Send` rather than `async fn`, because
+/// `async fn` in a trait states no bounds on the future it returns.
+///
+/// That only matters to a caller that is generic over this trait, since a
+/// concrete `Handle<T>` call lets the compiler see the future's real type and
+/// work out for itself that it is `Send`. A generic caller has nothing but the
+/// trait, so requiring `Send` of the call, by spawning it or otherwise, fails
+/// with "future cannot be sent between threads safely".
 fn method_signature(method: &MethodInfo) -> proc_macro2::TokenStream {
     let attrs = &method.attributes;
     let ident = &method.ident;
