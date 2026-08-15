@@ -64,9 +64,11 @@
 //!     }
 //! }
 //!
-//! // Defines the method signatures exposed on the handle
+//! // Defines the method signatures exposed on the handle. The future is
+//! // promised to be Send, so a caller generic over this trait can spawn the
+//! // call; `async fn` in a trait would not say that.
 //! pub trait GreeterHandle {
-//!     async fn say_hi(&self, name: String) -> String;
+//!     fn say_hi(&self, name: String) -> impl std::future::Future<Output = String> + Send;
 //! }
 //!
 //! // Implements the methods: boxes args, sends a job to the actor,

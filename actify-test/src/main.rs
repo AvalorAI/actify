@@ -159,6 +159,61 @@ mod shadowed_std_names {
     }
 }
 
+/// The shape that needs the generated trait to promise a `Send` future: a
+/// caller generic over the trait, whose call has to satisfy a `Send` bound.
+///
+/// Neither half alone needs the promise. A concrete `Handle<Thermostat>` is
+/// fine without it, because the compiler sees the future's real type and works
+/// `Send` out for itself. A generic caller that never requires `Send` is fine
+/// too. Only the combination fails, because there the compiler has nothing but
+/// the trait to go on, and `async fn` in a trait states no bounds.
+///
+/// Only the test build reaches it, hence the allowance.
+#[allow(dead_code)]
+mod generic_over_the_trait {
+    use actify::actify;
+
+    #[derive(Clone, Debug)]
+    pub struct Thermostat {
+        pub celsius: i32,
+    }
+
+    #[actify]
+    impl Thermostat {
+        fn reading(&self) -> i32 {
+            self.celsius
+        }
+    }
+
+    /// Generic so that a test can pass the stand-in below instead of a real
+    /// actor, and requiring the call's future to be `Send`.
+    ///
+    /// The requirement is spelled out rather than reached through
+    /// `tokio::spawn`, which is where it comes from in practice: spawning, or
+    /// anything else that moves the future to another thread, demands `Send`.
+    pub async fn read<H>(handle: H) -> i32
+    where
+        H: ThermostatHandle,
+    {
+        fn require_send<F: Send>(future: F) -> F {
+            future
+        }
+
+        require_send(handle.reading()).await
+    }
+
+    /// A stand-in for the actor, written by hand. It is still written
+    /// `async fn`, which satisfies the trait as long as the future it produces
+    /// is `Send`, so existing stand-ins keep compiling.
+    pub struct FrozenThermostat;
+
+    impl ThermostatHandle for FrozenThermostat {
+        async fn reading(&self) -> i32 {
+            -40
+        }
+    }
+}
+
 /// Generic bounds written inline on the impl block instead of in a where clause
 #[allow(dead_code)]
 #[derive(Clone, Debug)]
@@ -446,6 +501,19 @@ mod tests {
         let handle = Handle::new(ShadowedStdNames { value: 7 });
 
         assert_eq!(handle.value().await, 7);
+    }
+
+    /// The same reader runs against a real actor and against a hand-written
+    /// stand-in, which is why it is generic over the trait rather than taking a
+    /// `Handle`.
+    #[tokio::test]
+    async fn test_a_generic_caller_can_require_a_send_future() {
+        use crate::generic_over_the_trait::{FrozenThermostat, Thermostat, read};
+
+        let handle = Handle::new(Thermostat { celsius: 21 });
+
+        assert_eq!(read(handle).await, 21);
+        assert_eq!(read(FrozenThermostat).await, -40);
     }
 
     #[tokio::test]

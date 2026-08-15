@@ -117,6 +117,44 @@ they record what changed rather than why, and are not exhaustive. 0.8.0 through
 
 ### Fixed
 
+- Code that is generic over a generated handle trait can now spawn the call. The
+  traits declared their methods `async fn`, which promises nothing about the
+  returned future, so a caller with `H: MyHandle` writing
+  `tokio::spawn(async move { handle.method().await })` was rejected with "future
+  cannot be sent between threads safely". The methods are now declared
+  `fn method(..) -> impl Future<Output = R> + Send`, which says it.
+
+  Concrete `Handle<T>` calls were never affected, which is why nothing in this
+  workspace hit it.
+
+### Changed
+
+- **Breaking:** the generated handle traits declare their methods
+  `-> impl Future<Output = R> + Send` rather than `async fn`.
+
+  Hand-written implementations, such as test stand-ins, keep compiling: an
+  `async fn` in an implementation satisfies the new signature, as long as the
+  future it produces is `Send`. One that is not, because it holds an `Rc` or a
+  `RefCell` guard across an await, now fails to compile. Such an implementation
+  was legal before, since nothing in actify constrained a type that is not a
+  `Handle`.
+
+  The generated implementation also bounds the broadcast type
+  `Send + Sync + 'static`, since the future holds a `&Handle<T, V>` and a
+  reference is `Send` only if its referent is `Sync`. This breaks code that is
+  generic over the broadcast type without bounding it:
+
+  ```rust
+  // Compiled before, now needs V: Send + Sync + 'static
+  async fn read<V>(handle: Handle<Counter, V>) -> i32 {
+      handle.value().await
+  }
+  ```
+
+  Calls on a concrete handle are unaffected, because `Handle::new` already
+  requires those bounds of the broadcast type.
+
+
 - Generated code no longer breaks when something in scope shares a name with what
   that code refers to. A user type called `Box` next to an `#[actify]` impl made
   the generated body resolve `Box::new` to that type, and a module named `actify`

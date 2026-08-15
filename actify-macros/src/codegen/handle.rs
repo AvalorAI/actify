@@ -34,8 +34,14 @@ pub fn generate_trait_impl(info: &ImplInfo) -> proc_macro2::TokenStream {
     // TypeGenerics renders; the full Generics would emit `T: Clone` there.
     let (_, trait_generics, where_clause) = info.generics.split_for_impl();
 
+    // The future returned by each method holds `&Handle<T, __V>`, and a
+    // reference is Send only if what it points at is Sync, so promising Send
+    // means the broadcast type has to be bounded here. Code generic over that
+    // type must bound it too, which is the one visible cost of the promise.
     let mut generics_with_broadcast = info.generics.clone();
-    generics_with_broadcast.params.push(syn::parse_quote!(__V));
+    generics_with_broadcast
+        .params
+        .push(syn::parse_quote!(__V: Send + Sync + 'static));
     let (impl_generics, _, _) = generics_with_broadcast.split_for_impl();
 
     let call_prefix = build_call_prefix(info);
@@ -56,6 +62,16 @@ pub fn generate_trait_impl(info: &ImplInfo) -> proc_macro2::TokenStream {
 
 /// Generate a handle trait method signature.
 /// e.g. `async fn foo(&self, i: i32) -> f64;`
+/// Generate one method signature for the handle trait.
+///
+/// Written `-> impl Future<Output = R> + Send` rather than `async fn`, because
+/// `async fn` in a trait states no bounds on the future it returns.
+///
+/// That only matters to a caller that is generic over this trait, since a
+/// concrete `Handle<T>` call lets the compiler see the future's real type and
+/// work out for itself that it is `Send`. A generic caller has nothing but the
+/// trait, so requiring `Send` of the call, by spawning it or otherwise, fails
+/// with "future cannot be sent between threads safely".
 fn method_signature(method: &MethodInfo) -> proc_macro2::TokenStream {
     let attrs = &method.attributes;
     let ident = &method.ident;
@@ -63,11 +79,13 @@ fn method_signature(method: &MethodInfo) -> proc_macro2::TokenStream {
     let arg_types: Vec<_> = method.arg_types.iter().collect();
     let method_generics = &method.method_generics;
     let where_clause = &method.method_generics.where_clause;
-    let return_type = quote_return_type(&method.output_type);
+    let output_type = &method.output_type;
 
     quote! {
         #(#attrs)*
-        async fn #ident #method_generics(&self, #(#arg_names: #arg_types),*) #return_type #where_clause;
+        fn #ident #method_generics(&self, #(#arg_names: #arg_types),*)
+            -> impl ::std::future::Future<Output = #output_type> + Send
+        #where_clause;
     }
 }
 
