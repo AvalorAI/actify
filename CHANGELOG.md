@@ -134,8 +134,10 @@ they record what changed rather than why, and are not exhaustive. 0.8.0 through
 
   Hand-written implementations, such as test stand-ins, keep compiling: an
   `async fn` in an implementation satisfies the new signature, as long as the
-  future it produces is `Send`. One that is not, because it holds a non-`Send`
-  value across an await, now fails to compile.
+  future it produces is `Send`. One that is not, because it holds an `Rc` or a
+  `RefCell` guard across an await, now fails to compile. Such an implementation
+  was legal before, since nothing in actify constrained a type that is not a
+  `Handle`.
 
   The generated implementation also bounds the broadcast type
   `Send + Sync + 'static`, since the future holds a `&Handle<T, V>` and a
