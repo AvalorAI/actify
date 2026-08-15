@@ -207,29 +207,40 @@
 //!
 //! # Leaving methods off the handle
 //!
-//! Every method in an `#[actify]` block gets a handle method. Mark one
-//! [`#[actify::skip]`](macro@crate::skip) to leave it out:
+//! Every method in an `#[actify]` block gets a handle method. For an inherent
+//! impl, the plainest way to keep one off the handle is a second `impl` block,
+//! which needs nothing from actify.
+//!
+//! A trait impl cannot be split that way: Rust requires every method of a trait
+//! in one impl block. Mark the method
+//! [`#[actify::skip]`](macro@crate::skip) instead:
 //!
 //! ```
 //! # use actify::actify;
 //! # #[derive(Clone, Debug)]
-//! # struct Store { entries: Vec<String> }
+//! # struct Ledger { entries: Vec<String> }
+//! trait Merge {
+//!     fn count(&self) -> usize;
+//!
+//!     fn merge(&mut self, other: &Ledger);
+//! }
+//!
 //! #[actify]
-//! impl Store {
-//!     fn len(&self) -> usize {
+//! impl Merge for Ledger {
+//!     fn count(&self) -> usize {
 //!         self.entries.len()
 //!     }
 //!
+//!     // Takes a reference, which an actor call cannot
 //!     #[actify::skip]
-//!     fn merge(&mut self, other: &Store) {
+//!     fn merge(&mut self, other: &Ledger) {
 //!         self.entries.extend(other.entries.iter().cloned());
 //!     }
 //! }
 //! ```
 //!
-//! The method stays on the type, unchanged. A skipped method is not checked
-//! either, so it may take a reference or return one, which an actor call cannot
-//! do.
+//! The method stays on the type, unchanged, and is not checked, so it may take
+//! or return references.
 //!
 //! # Broadcasting
 //!

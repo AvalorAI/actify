@@ -214,31 +214,31 @@ mod generic_over_the_trait {
     }
 }
 
-/// Methods the handle should not expose, including one the macro could not
-/// generate for even if it wanted to: `&str` cannot be sent to an actor.
+/// A trait impl holding one method no actor call can express. Rust requires
+/// every method of a trait in one impl block, so this cannot be split the way an
+/// inherent impl can, and without `#[actify::skip]` the whole block fails.
 #[derive(Clone, Debug)]
-struct PartlyExposed {
-    log: String,
+struct Ledger {
+    entries: Vec<String>,
+}
+
+#[allow(dead_code)]
+trait Merge {
+    fn count(&self) -> usize;
+
+    fn merge(&mut self, other: &Ledger);
 }
 
 #[allow(dead_code)]
 #[actify]
-impl PartlyExposed {
-    fn entries(&self) -> usize {
-        self.log.len()
+impl Merge for Ledger {
+    fn count(&self) -> usize {
+        self.entries.len()
     }
 
-    /// Takes a reference, which an actor call cannot, and is only ever called
-    /// from inside the type.
     #[actify::skip]
-    fn append(&mut self, line: &str) {
-        self.log.push_str(line);
-    }
-
-    /// A helper with no business on the handle.
-    #[actify::skip]
-    fn secret(&self) -> &str {
-        &self.log
+    fn merge(&mut self, other: &Ledger) {
+        self.entries.extend(other.entries.iter().cloned());
     }
 }
 
@@ -544,18 +544,21 @@ mod tests {
         assert_eq!(read(FrozenThermostat).await, -40);
     }
 
-    /// A skipped method stays on the type and off the handle. The exposed one
-    /// beside it shows the block is still actorized.
+    /// The skipped method stays on the type, the other one reaches the handle.
     #[tokio::test]
-    async fn test_skipped_methods_stay_off_the_handle() {
-        let mut value = PartlyExposed { log: String::new() };
-        value.append("hello");
+    async fn test_a_trait_impl_can_hold_a_skipped_method() {
+        let mut ledger = Ledger {
+            entries: vec!["a".to_string()],
+        };
+        ledger.merge(&Ledger {
+            entries: vec!["b".to_string()],
+        });
 
-        assert_eq!(value.secret(), "hello");
+        assert_eq!(ledger.entries.len(), 2);
 
-        let handle = Handle::new(value);
+        let handle = Handle::new(ledger);
 
-        assert_eq!(handle.entries().await, 5);
+        assert_eq!(handle.count().await, 2);
     }
 
     #[tokio::test]
