@@ -160,22 +160,18 @@ mod shadowed_std_names {
 }
 
 /// The shape that needs the generated trait to promise a `Send` future: a
-/// caller that is generic over the trait, whose call has to satisfy a `Send`
-/// bound.
+/// caller generic over the trait, whose call has to satisfy a `Send` bound.
 ///
-/// Neither half alone needs the promise. A concrete `Handle<Thermostat>` can be
-/// spawned without it, because the compiler can see the future's real type. A
-/// generic caller that never requires `Send` is fine without it too. Only the
-/// combination fails, because there the compiler has nothing to go on but the
-/// trait, and `async fn` in a trait says nothing about the future.
-///
-/// `tokio::spawn` is the usual way to require `Send`, not the only one.
+/// Neither half alone needs the promise. A concrete `Handle<Thermostat>` is
+/// fine without it, because the compiler sees the future's real type and works
+/// `Send` out for itself. A generic caller that never requires `Send` is fine
+/// too. Only the combination fails, because there the compiler has nothing but
+/// the trait to go on, and `async fn` in a trait states no bounds.
 ///
 /// Only the test build reaches it, hence the allowance.
 #[allow(dead_code)]
 mod generic_over_the_trait {
     use actify::actify;
-    use tokio::task::JoinHandle;
 
     #[derive(Clone, Debug)]
     pub struct Thermostat {
@@ -189,14 +185,21 @@ mod generic_over_the_trait {
         }
     }
 
-    /// Watches a thermostat from its own task. It is generic so that a test can
-    /// pass the stand-in below instead of a real actor, and it spawns, which is
-    /// what requires the future to be `Send`.
-    pub fn spawn_watcher<H>(handle: H) -> JoinHandle<i32>
+    /// Generic so that a test can pass the stand-in below instead of a real
+    /// actor, and requiring the call's future to be `Send`.
+    ///
+    /// The requirement is spelled out rather than reached through
+    /// `tokio::spawn`, which is where it comes from in practice: spawning, or
+    /// anything else that moves the future to another thread, demands `Send`.
+    pub async fn read<H>(handle: H) -> i32
     where
-        H: ThermostatHandle + Send + Sync + 'static,
+        H: ThermostatHandle,
     {
-        tokio::spawn(async move { handle.reading().await })
+        fn require_send<F: Send>(future: F) -> F {
+            future
+        }
+
+        require_send(handle.reading()).await
     }
 
     /// A stand-in for the actor, written by hand. It is still written
@@ -500,17 +503,17 @@ mod tests {
         assert_eq!(handle.value().await, 7);
     }
 
-    /// The same watcher runs against a real actor and against a hand-written
-    /// stand-in, which is the reason for being generic over the trait rather
-    /// than taking a `Handle`.
+    /// The same reader runs against a real actor and against a hand-written
+    /// stand-in, which is why it is generic over the trait rather than taking a
+    /// `Handle`.
     #[tokio::test]
-    async fn test_a_generic_caller_can_spawn_the_call() {
-        use crate::generic_over_the_trait::{FrozenThermostat, Thermostat, spawn_watcher};
+    async fn test_a_generic_caller_can_require_a_send_future() {
+        use crate::generic_over_the_trait::{FrozenThermostat, Thermostat, read};
 
         let handle = Handle::new(Thermostat { celsius: 21 });
 
-        assert_eq!(spawn_watcher(handle).await.unwrap(), 21);
-        assert_eq!(spawn_watcher(FrozenThermostat).await.unwrap(), -40);
+        assert_eq!(read(handle).await, 21);
+        assert_eq!(read(FrozenThermostat).await, -40);
     }
 
     #[tokio::test]
