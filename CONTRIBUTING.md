@@ -36,7 +36,11 @@ TRYBUILD=overwrite TRYBUILD_TESTS=1 cargo test -p actify-test --test unsupported
 ```
 
 Regenerate with the pinned toolchain, otherwise the committed output will not
-match what CI produces.
+match what CI produces. The pin tracks the version contributors develop on, for
+the same reason: a snapshot that quotes a rustc diagnostic rather than one of
+actify's own `compile_error!` messages can only match one toolchain at a time.
+`skipped_method_not_on_handle.stderr` is such a case, since the absence of a
+generated method can only be shown by rustc's own "no method named" error.
 
 ## Releasing
 
