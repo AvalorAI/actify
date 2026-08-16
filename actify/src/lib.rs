@@ -205,6 +205,43 @@
 //! - [`Handle::with_mut`]: runs a mutable closure on `&mut T` (broadcasts the change)
 //! - [`Handle::wait_until`]: waits until the broadcast value satisfies a predicate
 //!
+//! # Leaving methods off the handle
+//!
+//! Every method in an `#[actify]` block gets a handle method. For an inherent
+//! impl, the plainest way to keep one off the handle is a second `impl` block,
+//! which needs nothing from actify.
+//!
+//! A trait impl cannot be split that way: Rust requires every method of a trait
+//! in one impl block. Mark the method
+//! [`#[actify::skip]`](macro@crate::skip) instead:
+//!
+//! ```
+//! # use actify::actify;
+//! # #[derive(Clone, Debug)]
+//! # struct Ledger { entries: Vec<String> }
+//! trait Merge {
+//!     fn count(&self) -> usize;
+//!
+//!     fn merge(&mut self, other: &Ledger);
+//! }
+//!
+//! #[actify]
+//! impl Merge for Ledger {
+//!     fn count(&self) -> usize {
+//!         self.entries.len()
+//!     }
+//!
+//!     // Takes a reference, which an actor call cannot
+//!     #[actify::skip]
+//!     fn merge(&mut self, other: &Ledger) {
+//!         self.entries.extend(other.entries.iter().cloned());
+//!     }
+//! }
+//! ```
+//!
+//! The method stays on the type, unchanged, and is not checked, so it may take
+//! or return references.
+//!
 //! # Broadcasting
 //!
 //! A method taking `&mut self` broadcasts the updated value to all subscribers
@@ -471,7 +508,7 @@ mod handles;
 mod throttle;
 
 // Reexport for easier reference
-pub use actify_macros::{actify, broadcast, skip_broadcast};
+pub use actify_macros::{actify, broadcast, skip, skip_broadcast};
 pub use cache::{Cache, CacheRecvError};
 pub use extensions::{
     map::HashMapHandle, option::OptionHandle, set::HashSetHandle, string::StringHandle,

@@ -36,6 +36,10 @@ fn compile_fail_tests() {
     t.compile_fail("tests/compile_fail/superfluous_broadcast.rs");
     t.compile_fail("tests/compile_fail/unnecessary_block_broadcast.rs");
 
+    // Skipped methods
+    t.compile_fail("tests/compile_fail/skipped_method_not_on_handle.rs");
+    t.compile_fail("tests/compile_fail/superfluous_broadcast_on_skip.rs");
+
     // Invalid custom name
     t.compile_fail("tests/compile_fail/invalid_custom_name.rs");
 

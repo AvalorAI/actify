@@ -41,6 +41,28 @@ pub fn broadcast(_args: TokenStream, input: TokenStream) -> TokenStream {
     input
 }
 
+/// Leaves one method off the generated handle trait.
+///
+/// ```ignore
+/// #[actify]
+/// impl Store {
+///     fn len(&self) -> usize { self.entries.len() }
+///
+///     #[actify::skip]
+///     fn merge(&mut self, other: &Store) { .. }
+/// }
+/// ```
+///
+/// The method stays on the type and is unchanged. Use it for helpers that have
+/// no business on a handle, and for methods an actor call cannot express, such
+/// as ones taking a reference.
+///
+/// Expands to nothing: `#[actify]` reads it and strips it from the output.
+#[proc_macro_attribute]
+pub fn skip(_args: TokenStream, input: TokenStream) -> TokenStream {
+    input
+}
+
 /// Parsed arguments from `#[actify(...)]`.
 struct ActifyArgs {
     skip_broadcast: bool,

@@ -11,6 +11,16 @@ they record what changed rather than why, and are not exhaustive. 0.8.0 through
 
 ### Added
 
+- `#[actify::skip]`, which leaves one method off the generated handle trait. The
+  method stays on the type unchanged and is not validated, so it may take or
+  return references, which an actor call cannot.
+
+  For an inherent impl a second `impl` block does the same job and needs nothing
+  from actify. This is for trait impls, which Rust requires to hold every method
+  of the trait in one block: before this, one unactorizable method meant the
+  whole trait impl could not be actorized.
+
+
 - `OptionHandle` gains `unwrap_or`, `unwrap_or_default`, `unwrap_or_else`,
   `filter` and `map`.
 

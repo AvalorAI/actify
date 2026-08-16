@@ -18,8 +18,10 @@ concurrency:
 env:
   # The toolchain used to generate the trybuild .stderr files. Compiler error
   # output changes between rustc releases, so the trybuild job pins this
-  # version. To regenerate the .stderr files, see CONTRIBUTING.md.
-  TRYBUILD_TOOLCHAIN: "1.87.0"
+  # version. Keep it at the version contributors develop on, or snapshots that
+  # quote a rustc diagnostic cannot match both CI and a local run. To regenerate
+  # the .stderr files, see CONTRIBUTING.md.
+  TRYBUILD_TOOLCHAIN: "1.97.1"
 
 jobs:
   fmt:

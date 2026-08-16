@@ -214,6 +214,34 @@ mod generic_over_the_trait {
     }
 }
 
+/// A trait impl holding one method no actor call can express. Rust requires
+/// every method of a trait in one impl block, so this cannot be split the way an
+/// inherent impl can, and without `#[actify::skip]` the whole block fails.
+#[derive(Clone, Debug)]
+struct Ledger {
+    entries: Vec<String>,
+}
+
+#[allow(dead_code)]
+trait Merge {
+    fn count(&self) -> usize;
+
+    fn merge(&mut self, other: &Ledger);
+}
+
+#[allow(dead_code)]
+#[actify]
+impl Merge for Ledger {
+    fn count(&self) -> usize {
+        self.entries.len()
+    }
+
+    #[actify::skip]
+    fn merge(&mut self, other: &Ledger) {
+        self.entries.extend(other.entries.iter().cloned());
+    }
+}
+
 /// Generic bounds written inline on the impl block instead of in a where clause
 #[allow(dead_code)]
 #[derive(Clone, Debug)]
@@ -514,6 +542,23 @@ mod tests {
 
         assert_eq!(read(handle).await, 21);
         assert_eq!(read(FrozenThermostat).await, -40);
+    }
+
+    /// The skipped method stays on the type, the other one reaches the handle.
+    #[tokio::test]
+    async fn test_a_trait_impl_can_hold_a_skipped_method() {
+        let mut ledger = Ledger {
+            entries: vec!["a".to_string()],
+        };
+        ledger.merge(&Ledger {
+            entries: vec!["b".to_string()],
+        });
+
+        assert_eq!(ledger.entries.len(), 2);
+
+        let handle = Handle::new(ledger);
+
+        assert_eq!(handle.count().await, 2);
     }
 
     #[tokio::test]
