@@ -11,6 +11,13 @@ they record what changed rather than why, and are not exhaustive. 0.8.0 through
 
 ### Added
 
+- `VecHandle` gains `retain_mut`, `swap` and `resize`.
+
+  `retain_mut` filters and edits in one pass, where `retain` can only filter.
+  `resize` is the only one of the three that can both grow and shrink the vector;
+  `truncate` shrinks alone.
+
+
 - `HashMapHandle` gains `modify` and `remove_entry`.
 
   `modify(key, f)` applies `f` to the value stored under `key` and reports whether

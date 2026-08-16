@@ -58,6 +58,14 @@ trait ActorVec<T> {
     fn sort_by<F>(&mut self, compare: F)
     where
         F: FnMut(&T, &T) -> Ordering + Send + Sync + 'static;
+
+    fn retain_mut<F>(&mut self, f: F)
+    where
+        F: FnMut(&mut T) -> bool + Send + Sync + 'static;
+
+    fn swap(&mut self, a: usize, b: usize);
+
+    fn resize(&mut self, new_len: usize, value: T);
 }
 
 /// Extension methods for `Handle<Vec<T>>`, exposed as [`VecHandle`](crate::VecHandle).
@@ -458,6 +466,68 @@ where
     {
         self.as_mut_slice().sort_by(compare)
     }
+
+    /// Keeps only the elements the predicate accepts, and lets it change the ones
+    /// it keeps.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use actify::{Handle, VecHandle};
+    /// # #[tokio::main]
+    /// # async fn main() {
+    /// let handle = Handle::new(vec![1, 2, 3, 4]);
+    /// handle.retain_mut(|x| { *x *= 10; *x > 20 }).await;
+    /// assert_eq!(handle.get().await, vec![30, 40]);
+    /// # }
+    /// ```
+    fn retain_mut<F>(&mut self, f: F)
+    where
+        F: FnMut(&mut T) -> bool + Send + Sync + 'static,
+    {
+        self.retain_mut(f)
+    }
+
+    /// Swaps the elements at the two given indices.
+    ///
+    /// # Panics
+    ///
+    /// Panics if either index is out of bounds.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use actify::{Handle, VecHandle};
+    /// # #[tokio::main]
+    /// # async fn main() {
+    /// let handle = Handle::new(vec![1, 2, 3]);
+    /// handle.swap(0, 2).await;
+    /// assert_eq!(handle.get().await, vec![3, 2, 1]);
+    /// # }
+    /// ```
+    fn swap(&mut self, a: usize, b: usize) {
+        self.as_mut_slice().swap(a, b)
+    }
+
+    /// Resizes the vector to the given length, dropping the surplus or filling
+    /// the shortfall with clones of `value`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use actify::{Handle, VecHandle};
+    /// # #[tokio::main]
+    /// # async fn main() {
+    /// let handle = Handle::new(vec![1, 2]);
+    /// handle.resize(4, 9).await;
+    /// assert_eq!(handle.get().await, vec![1, 2, 9, 9]);
+    /// handle.resize(1, 0).await;
+    /// assert_eq!(handle.get().await, vec![1]);
+    /// # }
+    /// ```
+    fn resize(&mut self, new_len: usize, value: T) {
+        self.resize(new_len, value)
+    }
 }
 
 #[cfg(test)]
@@ -537,5 +607,34 @@ mod tests {
 
         handle.clear().await;
         assert!(handle.is_empty().await);
+    }
+
+    /// The predicate changes every element it sees, so a `retain` in disguise
+    /// would leave the kept values untouched and fail here.
+    #[tokio::test]
+    async fn test_retain_mut_can_change_what_it_keeps() {
+        let handle = Handle::new(vec![1, 2, 3, 4]);
+
+        handle
+            .retain_mut(|value: &mut i32| {
+                *value *= 10;
+                *value > 20
+            })
+            .await;
+        assert_eq!(handle.get().await, vec![30, 40]);
+    }
+
+    #[tokio::test]
+    async fn test_swap_and_resize_change_order_and_length() {
+        let handle = Handle::new(vec![1, 2, 3]);
+
+        handle.swap(0, 2).await;
+        assert_eq!(handle.get().await, vec![3, 2, 1]);
+
+        handle.resize(5, 9).await;
+        assert_eq!(handle.get().await, vec![3, 2, 1, 9, 9]);
+
+        handle.resize(2, 0).await;
+        assert_eq!(handle.get().await, vec![3, 2]);
     }
 }
