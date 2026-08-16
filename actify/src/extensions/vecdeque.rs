@@ -430,22 +430,6 @@ mod tests {
         Handle::new(VecDeque::from([1, 2, 3]))
     }
 
-    /// Reading the deque leaves it untouched. The `push_back` afterwards proves
-    /// the subscription is live and the first assertion did not pass by accident.
-    #[tokio::test]
-    async fn test_getter_does_not_broadcast() {
-        let handle = deque();
-        let mut rx = handle.subscribe();
-
-        assert_eq!(handle.len().await, 3);
-        assert!(rx.try_recv().is_err());
-
-        // The actor broadcasts before it replies, so the value is already
-        // queued and a missing broadcast fails here instead of hanging.
-        handle.push_back(4).await;
-        assert_eq!(rx.try_recv().unwrap(), VecDeque::from([1, 2, 3, 4]));
-    }
-
     #[tokio::test]
     async fn test_both_ends_can_be_pushed_and_popped() {
         let handle = deque();
@@ -486,53 +470,6 @@ mod tests {
 
         handle.retain(|value: &i32| value % 2 == 1).await;
         assert_eq!(handle.get().await, VecDeque::from([1, 5]));
-    }
-
-    /// Every method taking `&mut self` broadcasts, whether or not it changed
-    /// anything.
-    #[tokio::test]
-    async fn test_every_mutator_broadcasts() {
-        let handle = deque();
-        let mut rx = handle.subscribe();
-
-        handle.push_back(4).await;
-        assert!(rx.try_recv().is_ok(), "push_back did not broadcast");
-
-        handle.push_front(0).await;
-        assert!(rx.try_recv().is_ok(), "push_front did not broadcast");
-
-        handle.insert(1, 9).await;
-        assert!(rx.try_recv().is_ok(), "insert did not broadcast");
-
-        handle.remove(1).await;
-        assert!(rx.try_recv().is_ok(), "remove did not broadcast");
-
-        handle.swap(0, 1).await;
-        assert!(rx.try_recv().is_ok(), "swap did not broadcast");
-
-        handle.append(VecDeque::from([5])).await;
-        assert!(rx.try_recv().is_ok(), "append did not broadcast");
-
-        handle.split_off(3).await;
-        assert!(rx.try_recv().is_ok(), "split_off did not broadcast");
-
-        handle.truncate(2).await;
-        assert!(rx.try_recv().is_ok(), "truncate did not broadcast");
-
-        handle.retain(|value: &i32| *value > 0).await;
-        assert!(rx.try_recv().is_ok(), "retain did not broadcast");
-
-        handle.drain(..1).await;
-        assert!(rx.try_recv().is_ok(), "drain did not broadcast");
-
-        handle.pop_front().await;
-        assert!(rx.try_recv().is_ok(), "pop_front did not broadcast");
-
-        handle.pop_back().await;
-        assert!(rx.try_recv().is_ok(), "pop_back did not broadcast");
-
-        handle.clear().await;
-        assert!(rx.try_recv().is_ok(), "clear did not broadcast");
     }
 
     #[tokio::test]

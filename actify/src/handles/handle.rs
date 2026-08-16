@@ -1227,10 +1227,10 @@ mod tests {
         let mut rx = handle.subscribe();
 
         handle.set_value(100).await;
-        assert_eq!(rx.recv().await.unwrap(), 100);
+        assert_eq!(rx.try_recv().unwrap(), 100);
 
         handle.set(NonCloneActor { value: 45 }).await;
-        assert_eq!(rx.recv().await.unwrap(), 45);
+        assert_eq!(rx.try_recv().unwrap(), 45);
     }
 
     #[derive(Clone, Debug, PartialEq)]
@@ -1257,7 +1257,7 @@ mod tests {
         assert!(rx.try_recv().is_err());
 
         handle.set_value(100).await;
-        assert_eq!(rx.recv().await.unwrap(), 100);
+        assert_eq!(rx.try_recv().unwrap(), 100);
     }
 
     #[tokio::test]
@@ -1296,7 +1296,7 @@ mod tests {
         };
         handle.set(updated.clone()).await;
 
-        assert_eq!(rx.recv().await.unwrap(), 4);
+        assert_eq!(rx.try_recv().unwrap(), 4);
         assert_eq!(handle.get().await, 4);
         assert_eq!(handle.with(|state| state.clone()).await, updated);
     }

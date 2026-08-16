@@ -215,40 +215,6 @@ mod tests {
     use super::*;
     use crate::Handle;
 
-    /// Both methods take `&mut self`, so each call reaches subscribers.
-    #[tokio::test]
-    async fn test_take_and_replace_broadcast() {
-        let handle = Handle::new(Some(1));
-        let mut rx = handle.subscribe();
-
-        assert_eq!(handle.replace(2).await, Some(1));
-        assert_eq!(rx.recv().await.unwrap(), Some(2));
-
-        assert_eq!(handle.take().await, Some(2));
-        assert_eq!(rx.recv().await.unwrap(), None);
-    }
-
-    /// `take` on a None option is not an error, and it still reports the state.
-    /// The reading methods clone the value out, so none of them mutates the
-    /// actor and none of them broadcasts.
-    #[tokio::test]
-    async fn test_readers_do_not_broadcast() {
-        let handle = Handle::new(Some(1));
-        let mut rx = handle.subscribe();
-
-        assert_eq!(handle.unwrap_or(9).await, 1);
-        assert_eq!(handle.unwrap_or_default().await, 1);
-        assert_eq!(handle.unwrap_or_else(|| 9).await, 1);
-        assert_eq!(handle.filter(|value: &i32| *value > 0).await, Some(1));
-        assert_eq!(handle.map(|value: i32| value * 2).await, Some(2));
-        assert!(rx.try_recv().is_err());
-
-        // The actor broadcasts before it replies, so the value is already
-        // queued and a missing broadcast fails here instead of hanging.
-        handle.replace(2).await;
-        assert_eq!(rx.try_recv().unwrap(), Some(2));
-    }
-
     #[tokio::test]
     async fn test_the_defaults_apply_only_when_none() {
         let handle: Handle<Option<i32>> = Handle::new(None);

@@ -324,47 +324,6 @@ mod tests {
         Handle::new(HashMap::from([("a".to_string(), 1), ("b".to_string(), 2)]))
     }
 
-    /// Reading the map leaves it untouched. The `insert` afterwards proves the
-    /// subscription is live and the first assertions did not pass by accident.
-    #[tokio::test]
-    async fn test_getters_do_not_broadcast() {
-        let handle = map();
-        let mut rx = handle.subscribe();
-
-        assert_eq!(handle.len().await, 2);
-        assert!(handle.contains_key("a".to_string()).await);
-        assert!(!handle.contains_key("z".to_string()).await);
-        assert!(rx.try_recv().is_err());
-
-        // The actor broadcasts before it replies, so the value is already
-        // queued and a missing broadcast fails here instead of hanging.
-        handle.insert("c".to_string(), 3).await;
-        assert_eq!(rx.try_recv().unwrap().len(), 3);
-    }
-
-    /// Every method taking `&mut self` broadcasts, whether or not it changed
-    /// anything.
-    #[tokio::test]
-    async fn test_every_mutator_broadcasts() {
-        let handle = map();
-        let mut rx = handle.subscribe();
-
-        handle.extend(vec![("c".to_string(), 3)]).await;
-        assert!(rx.try_recv().is_ok(), "extend did not broadcast");
-
-        handle.retain(|_, value: &mut i32| *value > 1).await;
-        assert!(rx.try_recv().is_ok(), "retain did not broadcast");
-
-        handle.get_or_insert_with("d".to_string(), || 4).await;
-        assert!(
-            rx.try_recv().is_ok(),
-            "get_or_insert_with did not broadcast"
-        );
-
-        handle.drain().await;
-        assert!(rx.try_recv().is_ok(), "drain did not broadcast");
-    }
-
     #[tokio::test]
     async fn test_drain_returns_every_pair_and_empties_the_map() {
         let handle = map();

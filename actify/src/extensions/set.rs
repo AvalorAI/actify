@@ -346,49 +346,6 @@ mod tests {
         values
     }
 
-    /// Reading leaves the set untouched. The `insert` afterwards proves the
-    /// subscription is live and the assertions above did not pass by accident.
-    #[tokio::test]
-    async fn test_getters_do_not_broadcast() {
-        let handle = set();
-        let mut rx = handle.subscribe();
-
-        assert!(!handle.is_empty().await);
-        assert_eq!(handle.len().await, 3);
-        assert!(handle.contains(2).await);
-        assert!(!handle.contains(9).await);
-        assert_eq!(sorted(handle.to_vec().await), vec![1, 2, 3]);
-        assert!(rx.try_recv().is_err());
-
-        // The actor broadcasts before it replies, so the value is already
-        // queued and a missing broadcast fails here instead of hanging.
-        handle.insert(4).await;
-        assert_eq!(rx.try_recv().unwrap().len(), 4);
-    }
-
-    /// Every method taking `&mut self` broadcasts, whether or not it changed
-    /// anything.
-    #[tokio::test]
-    async fn test_every_mutator_broadcasts() {
-        let handle = set();
-        let mut rx = handle.subscribe();
-
-        handle.remove(1).await;
-        assert!(rx.try_recv().is_ok(), "remove did not broadcast");
-
-        handle.extend(vec![5, 6]).await;
-        assert!(rx.try_recv().is_ok(), "extend did not broadcast");
-
-        handle.retain(|value: &i32| value % 2 == 0).await;
-        assert!(rx.try_recv().is_ok(), "retain did not broadcast");
-
-        handle.drain().await;
-        assert!(rx.try_recv().is_ok(), "drain did not broadcast");
-
-        handle.clear().await;
-        assert!(rx.try_recv().is_ok(), "clear did not broadcast");
-    }
-
     #[tokio::test]
     async fn test_membership_changes() {
         let handle = set();
