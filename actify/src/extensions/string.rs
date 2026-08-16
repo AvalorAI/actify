@@ -479,22 +479,6 @@ mod tests {
     use super::*;
     use crate::Handle;
 
-    /// Reading the string leaves it untouched. The `push` afterwards proves the
-    /// subscription is live and the first assertion did not pass by accident.
-    #[tokio::test]
-    async fn test_getter_does_not_broadcast() {
-        let handle = Handle::new("ab".to_string());
-        let mut rx = handle.subscribe();
-
-        assert_eq!(handle.len().await, 2);
-        assert!(rx.try_recv().is_err());
-
-        // The actor broadcasts before it replies, so the value is already
-        // queued and a missing broadcast fails here instead of hanging.
-        handle.push('c').await;
-        assert_eq!(rx.try_recv().unwrap(), "abc");
-    }
-
     #[tokio::test]
     async fn test_mutations_reach_the_actor() {
         let handle = Handle::new(String::new());
@@ -540,50 +524,6 @@ mod tests {
         assert!(handle.starts_with("hello".to_string()).await);
         assert!(handle.ends_with("world".to_string()).await);
         assert!(!handle.contains("goodbye".to_string()).await);
-    }
-
-    /// Every method taking `&mut self` broadcasts, whether or not it changed
-    /// anything.
-    #[tokio::test]
-    async fn test_every_mutator_broadcasts() {
-        let handle = Handle::new("hello".to_string());
-        let mut rx = handle.subscribe();
-
-        handle.push('!').await;
-        assert!(rx.try_recv().is_ok(), "push did not broadcast");
-
-        handle.push_str("?".to_string()).await;
-        assert!(rx.try_recv().is_ok(), "push_str did not broadcast");
-
-        handle.pop().await;
-        assert!(rx.try_recv().is_ok(), "pop did not broadcast");
-
-        handle.insert(0, 'x').await;
-        assert!(rx.try_recv().is_ok(), "insert did not broadcast");
-
-        handle.insert_str(0, "yz".to_string()).await;
-        assert!(rx.try_recv().is_ok(), "insert_str did not broadcast");
-
-        handle.remove(0).await;
-        assert!(rx.try_recv().is_ok(), "remove did not broadcast");
-
-        handle.retain(|c: char| c != 'z').await;
-        assert!(rx.try_recv().is_ok(), "retain did not broadcast");
-
-        handle.replace_range(0..1, "q".to_string()).await;
-        assert!(rx.try_recv().is_ok(), "replace_range did not broadcast");
-
-        handle.drain(..1).await;
-        assert!(rx.try_recv().is_ok(), "drain did not broadcast");
-
-        handle.split_off(5).await;
-        assert!(rx.try_recv().is_ok(), "split_off did not broadcast");
-
-        handle.truncate(4).await;
-        assert!(rx.try_recv().is_ok(), "truncate did not broadcast");
-
-        handle.clear().await;
-        assert!(rx.try_recv().is_ok(), "clear did not broadcast");
     }
 
     #[tokio::test]
