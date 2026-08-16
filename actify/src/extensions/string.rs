@@ -1,4 +1,5 @@
 use actify_macros::actify;
+use core::ops::RangeBounds;
 
 /// An extension trait for `String` actors, made available on the [`Handle`](crate::Handle)
 /// as [`StringHandle`](crate::StringHandle).
@@ -30,6 +31,28 @@ trait ActorString {
     fn ends_with(&self, pat: String) -> bool;
 
     fn split(&self, pat: String) -> Vec<String>;
+
+    fn pop(&mut self) -> Option<char>;
+
+    fn remove(&mut self, idx: usize) -> char;
+
+    fn insert(&mut self, idx: usize, ch: char);
+
+    fn insert_str(&mut self, idx: usize, string: String);
+
+    fn retain<F>(&mut self, f: F)
+    where
+        F: FnMut(char) -> bool + Send + Sync + 'static;
+
+    fn drain<R>(&mut self, range: R) -> String
+    where
+        R: RangeBounds<usize> + Send + Sync + 'static;
+
+    fn split_off(&mut self, at: usize) -> String;
+
+    fn replace_range<R>(&mut self, range: R, replace_with: String)
+    where
+        R: RangeBounds<usize> + Send + Sync + 'static;
 }
 
 /// Extension methods for `Handle<String>`, exposed as [`StringHandle`](crate::StringHandle).
@@ -269,6 +292,186 @@ impl ActorString for String {
     fn split(&self, pat: String) -> Vec<String> {
         self.as_str().split(&*pat).map(String::from).collect()
     }
+
+    /// Removes the last character and returns it, or `None` if the string is empty.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use actify::{Handle, StringHandle};
+    /// # #[tokio::main]
+    /// # async fn main() {
+    /// let handle = Handle::new("hi".to_string());
+    /// assert_eq!(handle.pop().await, Some('i'));
+    /// assert_eq!(handle.get().await, "h");
+    /// # }
+    /// ```
+    fn pop(&mut self) -> Option<char> {
+        self.pop()
+    }
+
+    /// Removes the character at the given byte position and returns it, shifting
+    /// every later character to the left.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `idx` is at or beyond the end of the string, or if it does not
+    /// lie on a char boundary.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use actify::{Handle, StringHandle};
+    /// # #[tokio::main]
+    /// # async fn main() {
+    /// let handle = Handle::new("abc".to_string());
+    /// assert_eq!(handle.remove(1).await, 'b');
+    /// assert_eq!(handle.get().await, "ac");
+    /// # }
+    /// ```
+    fn remove(&mut self, idx: usize) -> char {
+        self.remove(idx)
+    }
+
+    /// Inserts a character at the given byte position, shifting every later
+    /// character to the right.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `idx` is beyond the end of the string, or if it does not lie on
+    /// a char boundary.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use actify::{Handle, StringHandle};
+    /// # #[tokio::main]
+    /// # async fn main() {
+    /// let handle = Handle::new("ac".to_string());
+    /// handle.insert(1, 'b').await;
+    /// assert_eq!(handle.get().await, "abc");
+    /// # }
+    /// ```
+    fn insert(&mut self, idx: usize, ch: char) {
+        self.insert(idx, ch)
+    }
+
+    /// Inserts a string at the given byte position, shifting every later
+    /// character to the right.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `idx` is beyond the end of the string, or if it does not lie on
+    /// a char boundary.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use actify::{Handle, StringHandle};
+    /// # #[tokio::main]
+    /// # async fn main() {
+    /// let handle = Handle::new("ad".to_string());
+    /// handle.insert_str(1, "bc".to_string()).await;
+    /// assert_eq!(handle.get().await, "abcd");
+    /// # }
+    /// ```
+    fn insert_str(&mut self, idx: usize, string: String) {
+        self.insert_str(idx, &string)
+    }
+
+    /// Keeps only the characters the predicate accepts, in order.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use actify::{Handle, StringHandle};
+    /// # #[tokio::main]
+    /// # async fn main() {
+    /// let handle = Handle::new("a1b2".to_string());
+    /// handle.retain(|c| c.is_alphabetic()).await;
+    /// assert_eq!(handle.get().await, "ab");
+    /// # }
+    /// ```
+    fn retain<F>(&mut self, f: F)
+    where
+        F: FnMut(char) -> bool + Send + Sync + 'static,
+    {
+        self.retain(f)
+    }
+
+    /// Removes the given byte range from the string and returns it as a new `String`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the range is out of bounds, or if either end does not lie on a
+    /// char boundary.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use actify::{Handle, StringHandle};
+    /// # #[tokio::main]
+    /// # async fn main() {
+    /// let handle = Handle::new("hello world".to_string());
+    /// assert_eq!(handle.drain(..6).await, "hello ");
+    /// assert_eq!(handle.get().await, "world");
+    /// # }
+    /// ```
+    fn drain<R>(&mut self, range: R) -> String
+    where
+        R: RangeBounds<usize> + Send + Sync + 'static,
+    {
+        self.drain(range).collect()
+    }
+
+    /// Splits the string in two at the given byte position, leaving the actor with
+    /// the first part and returning the second.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `at` is beyond the end of the string, or if it does not lie on a
+    /// char boundary.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use actify::{Handle, StringHandle};
+    /// # #[tokio::main]
+    /// # async fn main() {
+    /// let handle = Handle::new("hello world".to_string());
+    /// assert_eq!(handle.split_off(5).await, " world");
+    /// assert_eq!(handle.get().await, "hello");
+    /// # }
+    /// ```
+    fn split_off(&mut self, at: usize) -> String {
+        self.split_off(at)
+    }
+
+    /// Replaces the given byte range with another string, which may have a
+    /// different length.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the range is out of bounds, or if either end does not lie on a
+    /// char boundary.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use actify::{Handle, StringHandle};
+    /// # #[tokio::main]
+    /// # async fn main() {
+    /// let handle = Handle::new("hello world".to_string());
+    /// handle.replace_range(0..5, "goodbye".to_string()).await;
+    /// assert_eq!(handle.get().await, "goodbye world");
+    /// # }
+    /// ```
+    fn replace_range<R>(&mut self, range: R, replace_with: String)
+    where
+        R: RangeBounds<usize> + Send + Sync + 'static,
+    {
+        self.replace_range(range, &replace_with)
+    }
 }
 
 #[cfg(test)]
@@ -337,5 +540,87 @@ mod tests {
         assert!(handle.starts_with("hello".to_string()).await);
         assert!(handle.ends_with("world".to_string()).await);
         assert!(!handle.contains("goodbye".to_string()).await);
+    }
+
+    /// Every method taking `&mut self` broadcasts, whether or not it changed
+    /// anything.
+    #[tokio::test]
+    async fn test_every_mutator_broadcasts() {
+        let handle = Handle::new("hello".to_string());
+        let mut rx = handle.subscribe();
+
+        handle.push('!').await;
+        assert!(rx.try_recv().is_ok(), "push did not broadcast");
+
+        handle.push_str("?".to_string()).await;
+        assert!(rx.try_recv().is_ok(), "push_str did not broadcast");
+
+        handle.pop().await;
+        assert!(rx.try_recv().is_ok(), "pop did not broadcast");
+
+        handle.insert(0, 'x').await;
+        assert!(rx.try_recv().is_ok(), "insert did not broadcast");
+
+        handle.insert_str(0, "yz".to_string()).await;
+        assert!(rx.try_recv().is_ok(), "insert_str did not broadcast");
+
+        handle.remove(0).await;
+        assert!(rx.try_recv().is_ok(), "remove did not broadcast");
+
+        handle.retain(|c: char| c != 'z').await;
+        assert!(rx.try_recv().is_ok(), "retain did not broadcast");
+
+        handle.replace_range(0..1, "q".to_string()).await;
+        assert!(rx.try_recv().is_ok(), "replace_range did not broadcast");
+
+        handle.drain(..1).await;
+        assert!(rx.try_recv().is_ok(), "drain did not broadcast");
+
+        handle.split_off(5).await;
+        assert!(rx.try_recv().is_ok(), "split_off did not broadcast");
+
+        handle.truncate(4).await;
+        assert!(rx.try_recv().is_ok(), "truncate did not broadcast");
+
+        handle.clear().await;
+        assert!(rx.try_recv().is_ok(), "clear did not broadcast");
+    }
+
+    #[tokio::test]
+    async fn test_removals_return_what_they_removed() {
+        let handle = Handle::new("hello world".to_string());
+
+        assert_eq!(handle.pop().await, Some('d'));
+        assert_eq!(handle.remove(1).await, 'e');
+        assert_eq!(handle.drain(..4).await, "hllo");
+        assert_eq!(handle.get().await, " worl");
+
+        assert_eq!(handle.split_off(1).await, "worl");
+        assert_eq!(handle.get().await, " ");
+
+        let empty = Handle::new(String::new());
+        assert_eq!(empty.pop().await, None);
+    }
+
+    #[tokio::test]
+    async fn test_insertions_land_at_the_given_index() {
+        let handle = Handle::new("ad".to_string());
+
+        handle.insert(1, 'c').await;
+        assert_eq!(handle.get().await, "acd");
+
+        handle.insert_str(1, "b".to_string()).await;
+        assert_eq!(handle.get().await, "abcd");
+
+        handle.replace_range(1..3, "xyz".to_string()).await;
+        assert_eq!(handle.get().await, "axyzd");
+    }
+
+    #[tokio::test]
+    async fn test_retain_keeps_what_the_predicate_accepts() {
+        let handle = Handle::new("a1b2c3".to_string());
+
+        handle.retain(|c: char| c.is_ascii_digit()).await;
+        assert_eq!(handle.get().await, "123");
     }
 }
