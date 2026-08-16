@@ -139,6 +139,19 @@ they record what changed rather than why, and are not exhaustive. 0.8.0 through
 
 ### Changed
 
+- **Breaking:** actify asks tokio for `macros`, `rt`, `sync` and `time` instead of
+  `full`. Those four are what its own code uses: `sync` for the channels, `rt` for
+  `tokio::spawn` and `AbortHandle`, `time` for the throttle interval, and `macros`
+  for the two `tokio::select!` sites. On Windows this takes a dependent's tree from
+  22 crates to 11, dropping `bytes`, `mio`, `socket2`, `parking_lot`, `lock_api`,
+  `parking_lot_core`, `scopeguard`, `smallvec`, `cfg-if`, `windows-sys` and
+  `windows-link`.
+
+  Cargo unions features across a dependency graph, so code that used `tokio::fs`,
+  `tokio::net` or another module without asking for it in its own manifest was
+  relying on actify to enable it, and must now name the feature itself.
+
+
 - **Breaking:** the generated handle traits declare their methods
   `-> impl Future<Output = R> + Send` rather than `async fn`.
 
@@ -172,7 +185,6 @@ they record what changed rather than why, and are not exhaustive. 0.8.0 through
   standard library types by absolute path (`::std::boxed::Box`) and reaches the
   crate as `::actify`, neither of which a local item can shadow.
 
-### Changed
 
 - **Breaking:** `Handle::send_job` is renamed to `Handle::__send_job`, and `Actor`
   moves from the crate root to `actify::__private`. Both were `#[doc(hidden)]`
