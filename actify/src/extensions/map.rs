@@ -34,6 +34,12 @@ trait ActorMap<K, V> {
     fn get_or_insert_with<F>(&mut self, key: K, default: F) -> V
     where
         F: FnOnce() -> V + Send + Sync + 'static;
+
+    fn remove_entry(&mut self, key: K) -> Option<(K, V)>;
+
+    fn modify<F>(&mut self, key: K, f: F) -> bool
+    where
+        F: FnOnce(&mut V) + Send + Sync + 'static;
 }
 
 /// Extension methods for `Handle<HashMap<K, V>>`, exposed as [`HashMapHandle`](crate::HashMapHandle).
@@ -313,6 +319,60 @@ where
     {
         self.entry(key).or_insert_with(default).clone()
     }
+
+    /// Removes the entry for `key` and returns both halves of it, or `None` if the
+    /// map holds no such key.
+    ///
+    /// Where [`remove`](crate::HashMapHandle::remove) returns the value alone, this also hands
+    /// back the key the map was storing, which can carry more than the key looked
+    /// up with.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use actify::{Handle, HashMapHandle};
+    /// # use std::collections::HashMap;
+    /// # #[tokio::main]
+    /// # async fn main() {
+    /// let handle = Handle::new(HashMap::from([("a", 1)]));
+    /// assert_eq!(handle.remove_entry("a").await, Some(("a", 1)));
+    /// assert_eq!(handle.remove_entry("a").await, None);
+    /// # }
+    /// ```
+    fn remove_entry(&mut self, key: K) -> Option<(K, V)> {
+        self.remove_entry(&key)
+    }
+
+    /// Applies `f` to the value stored under `key`, and returns whether there was
+    /// one to apply it to.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use actify::{Handle, HashMapHandle};
+    /// # use std::collections::HashMap;
+    /// # #[tokio::main]
+    /// # async fn main() {
+    /// let handle = Handle::new(HashMap::from([("a", 1)]));
+    ///
+    /// assert!(handle.modify("a", |v| *v += 10).await);
+    /// assert_eq!(handle.get_key("a").await, Some(11));
+    ///
+    /// assert!(!handle.modify("b", |v| *v += 10).await);
+    /// # }
+    /// ```
+    fn modify<F>(&mut self, key: K, f: F) -> bool
+    where
+        F: FnOnce(&mut V) + Send + Sync + 'static,
+    {
+        match self.get_mut(&key) {
+            Some(value) => {
+                f(value);
+                true
+            }
+            None => false,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -364,5 +424,67 @@ mod tests {
         assert_eq!(handle.get_or_insert_with("a".to_string(), || 99).await, 1);
         assert_eq!(handle.get_or_insert_with("c".to_string(), || 3).await, 3);
         assert_eq!(handle.len().await, 3);
+    }
+    /// `Eq` and `Hash` read only the id, so two keys can be equal while carrying
+    /// different labels. Without that, nothing shows which key `remove_entry`
+    /// hands back.
+    #[derive(Clone, Debug)]
+    struct Tagged {
+        id: i32,
+        label: &'static str,
+    }
+
+    impl PartialEq for Tagged {
+        fn eq(&self, other: &Self) -> bool {
+            self.id == other.id
+        }
+    }
+
+    impl Eq for Tagged {}
+
+    impl Hash for Tagged {
+        fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+            self.id.hash(state);
+        }
+    }
+
+    #[tokio::test]
+    async fn test_remove_entry_returns_the_stored_key() {
+        let stored = Tagged {
+            id: 1,
+            label: "stored",
+        };
+        let lookup = Tagged {
+            id: 1,
+            label: "lookup",
+        };
+        let handle = Handle::new(HashMap::from([(stored, 7)]));
+
+        let (key, value) = handle.remove_entry(lookup.clone()).await.unwrap();
+        assert_eq!(key.label, "stored");
+        assert_eq!(value, 7);
+        assert!(handle.is_empty().await);
+
+        assert!(handle.remove_entry(lookup).await.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_modify_changes_an_existing_value_and_inserts_nothing() {
+        let handle = map();
+
+        assert!(
+            handle
+                .modify("a".to_string(), |value: &mut i32| *value += 10)
+                .await
+        );
+        assert_eq!(handle.get_key("a".to_string()).await, Some(11));
+        assert_eq!(handle.get_key("b".to_string()).await, Some(2));
+
+        assert!(
+            !handle
+                .modify("z".to_string(), |value: &mut i32| *value += 10)
+                .await
+        );
+        assert_eq!(handle.len().await, 2);
     }
 }
