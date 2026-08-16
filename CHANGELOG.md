@@ -11,6 +11,18 @@ they record what changed rather than why, and are not exhaustive. 0.8.0 through
 
 ### Added
 
+- `StringHandle` gains `pop`, `remove`, `insert`, `insert_str`, `retain`, `drain`,
+  `split_off` and `replace_range`.
+
+  These are the mutating half of `String`. The handle could push, truncate and
+  clear, so every other edit meant reading the whole string out, changing it, and
+  writing it back, which a second caller can interleave with. The reading half was
+  already there, which is what made the gap easy to miss.
+
+  Each one panics where `String` panics, on a byte index that is out of bounds or
+  not on a char boundary.
+
+
 - `#[actify::skip]`, which leaves one method off the generated handle trait. The
   method stays on the type unchanged and is not validated, so it may take or
   return references, which an actor call cannot.
