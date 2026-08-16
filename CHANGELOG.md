@@ -11,6 +11,14 @@ they record what changed rather than why, and are not exhaustive. 0.8.0 through
 
 ### Added
 
+- `VecDequeHandle` gains `insert`, `remove`, `swap`, `truncate`, `append` and
+  `split_off`, closing the gap with `VecHandle`, which had all six.
+
+  `remove` returns `Option<T>` rather than panicking on a bad index, because that
+  is what `VecDeque::remove` does. `VecHandle::remove` panics, because that is
+  what `Vec::remove` does.
+
+
 - `StringHandle` gains `pop`, `remove`, `insert`, `insert_str`, `retain`, `drain`,
   `split_off` and `replace_range`.
 

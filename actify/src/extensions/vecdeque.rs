@@ -36,6 +36,18 @@ trait ActorVecDeque<T> {
     fn retain<F>(&mut self, f: F)
     where
         F: FnMut(&T) -> bool + Send + Sync + 'static;
+
+    fn insert(&mut self, index: usize, value: T);
+
+    fn remove(&mut self, index: usize) -> Option<T>;
+
+    fn swap(&mut self, i: usize, j: usize);
+
+    fn truncate(&mut self, len: usize);
+
+    fn append(&mut self, other: VecDeque<T>);
+
+    fn split_off(&mut self, at: usize) -> VecDeque<T>;
 }
 
 /// Extension methods for `Handle<VecDeque<T>>`, exposed as [`VecDequeHandle`](crate::VecDequeHandle).
@@ -284,6 +296,129 @@ where
     {
         self.retain(f)
     }
+
+    /// Inserts an element at `index`, shifting every later element towards the back.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `index` is greater than the length of the deque.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use actify::{Handle, VecDequeHandle};
+    /// # use std::collections::VecDeque;
+    /// # #[tokio::main]
+    /// # async fn main() {
+    /// let handle = Handle::new(VecDeque::from([1, 3]));
+    /// handle.insert(1, 2).await;
+    /// assert_eq!(handle.get().await, VecDeque::from([1, 2, 3]));
+    /// # }
+    /// ```
+    fn insert(&mut self, index: usize, value: T) {
+        self.insert(index, value)
+    }
+
+    /// Removes and returns the element at `index`, or `None` if the index is out
+    /// of bounds.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use actify::{Handle, VecDequeHandle};
+    /// # use std::collections::VecDeque;
+    /// # #[tokio::main]
+    /// # async fn main() {
+    /// let handle = Handle::new(VecDeque::from([1, 2, 3]));
+    /// assert_eq!(handle.remove(1).await, Some(2));
+    /// assert_eq!(handle.remove(9).await, None);
+    /// assert_eq!(handle.get().await, VecDeque::from([1, 3]));
+    /// # }
+    /// ```
+    fn remove(&mut self, index: usize) -> Option<T> {
+        self.remove(index)
+    }
+
+    /// Swaps the elements at the two given indices.
+    ///
+    /// # Panics
+    ///
+    /// Panics if either index is out of bounds.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use actify::{Handle, VecDequeHandle};
+    /// # use std::collections::VecDeque;
+    /// # #[tokio::main]
+    /// # async fn main() {
+    /// let handle = Handle::new(VecDeque::from([1, 2, 3]));
+    /// handle.swap(0, 2).await;
+    /// assert_eq!(handle.get().await, VecDeque::from([3, 2, 1]));
+    /// # }
+    /// ```
+    fn swap(&mut self, i: usize, j: usize) {
+        self.swap(i, j)
+    }
+
+    /// Shortens the deque to the given length, dropping the elements past it.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use actify::{Handle, VecDequeHandle};
+    /// # use std::collections::VecDeque;
+    /// # #[tokio::main]
+    /// # async fn main() {
+    /// let handle = Handle::new(VecDeque::from([1, 2, 3]));
+    /// handle.truncate(1).await;
+    /// assert_eq!(handle.get().await, VecDeque::from([1]));
+    /// # }
+    /// ```
+    fn truncate(&mut self, len: usize) {
+        self.truncate(len)
+    }
+
+    /// Moves every element of `other` to the back of the deque.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use actify::{Handle, VecDequeHandle};
+    /// # use std::collections::VecDeque;
+    /// # #[tokio::main]
+    /// # async fn main() {
+    /// let handle = Handle::new(VecDeque::from([1, 2]));
+    /// handle.append(VecDeque::from([3, 4])).await;
+    /// assert_eq!(handle.get().await, VecDeque::from([1, 2, 3, 4]));
+    /// # }
+    /// ```
+    fn append(&mut self, other: VecDeque<T>) {
+        self.extend(other)
+    }
+
+    /// Splits the deque in two at `at`, leaving the actor with the front part and
+    /// returning the back part.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `at` is greater than the length of the deque.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use actify::{Handle, VecDequeHandle};
+    /// # use std::collections::VecDeque;
+    /// # #[tokio::main]
+    /// # async fn main() {
+    /// let handle = Handle::new(VecDeque::from([1, 2, 3]));
+    /// assert_eq!(handle.split_off(1).await, VecDeque::from([2, 3]));
+    /// assert_eq!(handle.get().await, VecDeque::from([1]));
+    /// # }
+    /// ```
+    fn split_off(&mut self, at: usize) -> VecDeque<T> {
+        self.split_off(at)
+    }
 }
 
 #[cfg(test)]
@@ -351,5 +486,82 @@ mod tests {
 
         handle.retain(|value: &i32| value % 2 == 1).await;
         assert_eq!(handle.get().await, VecDeque::from([1, 5]));
+    }
+
+    /// Every method taking `&mut self` broadcasts, whether or not it changed
+    /// anything.
+    #[tokio::test]
+    async fn test_every_mutator_broadcasts() {
+        let handle = deque();
+        let mut rx = handle.subscribe();
+
+        handle.push_back(4).await;
+        assert!(rx.try_recv().is_ok(), "push_back did not broadcast");
+
+        handle.push_front(0).await;
+        assert!(rx.try_recv().is_ok(), "push_front did not broadcast");
+
+        handle.insert(1, 9).await;
+        assert!(rx.try_recv().is_ok(), "insert did not broadcast");
+
+        handle.remove(1).await;
+        assert!(rx.try_recv().is_ok(), "remove did not broadcast");
+
+        handle.swap(0, 1).await;
+        assert!(rx.try_recv().is_ok(), "swap did not broadcast");
+
+        handle.append(VecDeque::from([5])).await;
+        assert!(rx.try_recv().is_ok(), "append did not broadcast");
+
+        handle.split_off(3).await;
+        assert!(rx.try_recv().is_ok(), "split_off did not broadcast");
+
+        handle.truncate(2).await;
+        assert!(rx.try_recv().is_ok(), "truncate did not broadcast");
+
+        handle.retain(|value: &i32| *value > 0).await;
+        assert!(rx.try_recv().is_ok(), "retain did not broadcast");
+
+        handle.drain(..1).await;
+        assert!(rx.try_recv().is_ok(), "drain did not broadcast");
+
+        handle.pop_front().await;
+        assert!(rx.try_recv().is_ok(), "pop_front did not broadcast");
+
+        handle.pop_back().await;
+        assert!(rx.try_recv().is_ok(), "pop_back did not broadcast");
+
+        handle.clear().await;
+        assert!(rx.try_recv().is_ok(), "clear did not broadcast");
+    }
+
+    #[tokio::test]
+    async fn test_positions_move_the_right_element() {
+        let handle = deque();
+
+        handle.insert(1, 9).await;
+        assert_eq!(handle.get().await, VecDeque::from([1, 9, 2, 3]));
+
+        assert_eq!(handle.remove(2).await, Some(2));
+        assert_eq!(handle.get().await, VecDeque::from([1, 9, 3]));
+
+        handle.swap(0, 1).await;
+        assert_eq!(handle.get().await, VecDeque::from([9, 1, 3]));
+
+        assert_eq!(handle.remove(9).await, None);
+    }
+
+    #[tokio::test]
+    async fn test_the_deque_can_be_grown_and_cut() {
+        let handle = deque();
+
+        handle.append(VecDeque::from([4, 5])).await;
+        assert_eq!(handle.get().await, VecDeque::from([1, 2, 3, 4, 5]));
+
+        assert_eq!(handle.split_off(2).await, VecDeque::from([3, 4, 5]));
+        assert_eq!(handle.get().await, VecDeque::from([1, 2]));
+
+        handle.truncate(1).await;
+        assert_eq!(handle.get().await, VecDeque::from([1]));
     }
 }
