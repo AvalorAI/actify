@@ -10,12 +10,17 @@ documentation = "https://docs.rs/actify/latest/actify/"
 readme = "../README.md"
 
 [dependencies]
-tokio = { version = "1.44.1", features = ["full"] }
+tokio = { version = "1.44.1", default-features = false, features = [
+    "macros",
+    "rt",
+    "sync",
+    "time",
+] }
 log = "0.4"
 actify-macros = { path = "../actify-macros", version = "0.5.0" }
 
 [dev-dependencies]
-tokio = { version = "1.44.1", features = ["test-util"] }
+tokio = { version = "1.44.1", features = ["rt-multi-thread", "test-util"] }
 
 [features]
 default = []
