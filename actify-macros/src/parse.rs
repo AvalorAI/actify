@@ -66,30 +66,22 @@ impl ImplInfo {
         let mut errors = None;
         let mut methods = Vec::new();
         for item in &impl_block.items {
-            if let ImplItem::Fn(method) = item {
-                // Skipped methods are not parsed at all, so a signature that no
-                // actor call could express is allowed to stay in the block.
-                if find_marker_attribute(&method.attrs, "skip").is_some() {
-                    for name in ["broadcast", "skip_broadcast"] {
-                        if let Some(attr) = find_marker_attribute(&method.attrs, name) {
-                            accumulate(
-                                &mut errors,
-                                Error::new(
-                                    attr.span(),
-                                    format!(
-                                        "#[{name}] is superfluous: #[skip] leaves this method off the handle entirely"
-                                    ),
-                                ),
-                            );
-                        }
-                    }
-                    continue;
-                }
+            let ImplItem::Fn(method) = item else {
+                continue;
+            };
 
-                match MethodInfo::from_impl_method(method, skip_all_broadcasts) {
-                    Ok(info) => methods.push(info),
-                    Err(error) => accumulate(&mut errors, error),
+            // Skipped methods are not parsed at all, so a signature that no
+            // actor call could express is allowed to stay in the block.
+            if find_marker_attribute(&method.attrs, "skip").is_some() {
+                if let Some(error) = broadcast_attributes_on_skipped(method) {
+                    accumulate(&mut errors, error);
                 }
+                continue;
+            }
+
+            match MethodInfo::from_impl_method(method, skip_all_broadcasts) {
+                Ok(info) => methods.push(info),
+                Err(error) => accumulate(&mut errors, error),
             }
         }
 
@@ -108,6 +100,25 @@ impl ImplInfo {
             original_impl: impl_block.clone(),
         })
     }
+}
+
+/// Report `#[broadcast]` and `#[skip_broadcast]` on a skipped method.
+///
+/// Both decide whether a generated method broadcasts, and a skipped method has
+/// none, so either is a mistake worth naming rather than ignoring.
+fn broadcast_attributes_on_skipped(method: &ImplItemFn) -> Option<Error> {
+    let mut errors = None;
+
+    for name in ["broadcast", "skip_broadcast"] {
+        let Some(attr) = find_marker_attribute(&method.attrs, name) else {
+            continue;
+        };
+        let message =
+            format!("#[{name}] is superfluous: #[skip] leaves this method off the handle entirely");
+        accumulate(&mut errors, Error::new(attr.span(), message));
+    }
+
+    errors
 }
 
 /// Intermediate representation for a single method within the impl block.
