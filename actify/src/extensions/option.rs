@@ -27,6 +27,14 @@ trait ActorOption<T> {
     where
         F: FnOnce(T) -> U + Send + Sync + 'static,
         U: Send + Sync + 'static;
+
+    fn take_if<F>(&mut self, predicate: F) -> Option<T>
+    where
+        F: FnOnce(&mut T) -> bool + Send + Sync + 'static;
+
+    fn get_or_insert_with<F>(&mut self, f: F) -> T
+    where
+        F: FnOnce() -> T + Send + Sync + 'static;
 }
 
 /// An implementation of the ActorOption extension trait for the standard [`Option`].
@@ -208,6 +216,52 @@ where
     {
         self.clone().map(f)
     }
+
+    /// Takes the value out and returns it if the predicate accepts it, and leaves
+    /// the option alone otherwise.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use actify::{Handle, OptionHandle};
+    /// # #[tokio::main]
+    /// # async fn main() {
+    /// let handle = Handle::new(Some(2));
+    /// assert_eq!(handle.take_if(|v| *v == 9).await, None);
+    /// assert_eq!(handle.get().await, Some(2));
+    ///
+    /// assert_eq!(handle.take_if(|v| *v == 2).await, Some(2));
+    /// assert_eq!(handle.get().await, None);
+    /// # }
+    /// ```
+    fn take_if<F>(&mut self, predicate: F) -> Option<T>
+    where
+        F: FnOnce(&mut T) -> bool + Send + Sync + 'static,
+    {
+        self.take_if(predicate)
+    }
+
+    /// Returns the contained value, inserting the result of `f` first if there is
+    /// none.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use actify::{Handle, OptionHandle};
+    /// # #[tokio::main]
+    /// # async fn main() {
+    /// let handle = Handle::new(None);
+    /// assert_eq!(handle.get_or_insert_with(|| 2).await, 2);
+    /// assert_eq!(handle.get_or_insert_with(|| 9).await, 2);
+    /// assert_eq!(handle.get().await, Some(2));
+    /// # }
+    /// ```
+    fn get_or_insert_with<F>(&mut self, f: F) -> T
+    where
+        F: FnOnce() -> T + Send + Sync + 'static,
+    {
+        self.get_or_insert_with(f).clone()
+    }
 }
 
 #[cfg(test)]
@@ -256,5 +310,26 @@ mod tests {
 
         assert_eq!(handle.take().await, None);
         assert!(handle.is_none().await);
+    }
+    #[tokio::test]
+    async fn test_take_if_only_takes_what_the_predicate_accepts() {
+        let handle = Handle::new(Some(2));
+
+        assert_eq!(handle.take_if(|value: &mut i32| *value == 9).await, None);
+        assert_eq!(handle.get().await, Some(2));
+
+        assert_eq!(handle.take_if(|value: &mut i32| *value == 2).await, Some(2));
+        assert_eq!(handle.get().await, None);
+
+        assert_eq!(handle.take_if(|_: &mut i32| true).await, None);
+    }
+
+    #[tokio::test]
+    async fn test_get_or_insert_with_only_inserts_when_none() {
+        let handle: Handle<Option<i32>> = Handle::new(None);
+
+        assert_eq!(handle.get_or_insert_with(|| 2).await, 2);
+        assert_eq!(handle.get_or_insert_with(|| 9).await, 2);
+        assert_eq!(handle.get().await, Some(2));
     }
 }

@@ -36,6 +36,10 @@ trait ActorSet<K> {
     fn is_subset(&self, other: HashSet<K>) -> bool;
 
     fn is_superset(&self, other: HashSet<K>) -> bool;
+
+    fn take(&mut self, value: K) -> Option<K>;
+
+    fn replace(&mut self, value: K) -> Option<K>;
 }
 
 /// Extension methods for `Handle<HashSet<K>>`, exposed as [`HashSetHandle`](crate::HashSetHandle).
@@ -330,6 +334,53 @@ where
     fn is_superset(&self, other: HashSet<K>) -> bool {
         self.is_superset(&other)
     }
+
+    /// Removes the stored element equal to `value` and returns it, or `None` if
+    /// the set does not hold one.
+    ///
+    /// Where [`remove`](crate::HashSetHandle::remove) reports only whether something was
+    /// there, this hands back what the set was holding, which can carry more than
+    /// the value looked up with.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use actify::{Handle, HashSetHandle};
+    /// # use std::collections::HashSet;
+    /// # #[tokio::main]
+    /// # async fn main() {
+    /// let handle = Handle::new(HashSet::from([1, 2]));
+    /// assert_eq!(handle.take(1).await, Some(1));
+    /// assert_eq!(handle.take(1).await, None);
+    /// assert_eq!(handle.len().await, 1);
+    /// # }
+    /// ```
+    fn take(&mut self, value: K) -> Option<K> {
+        self.take(&value)
+    }
+
+    /// Inserts `value` and returns the element it displaced, or `None` if the set
+    /// held no equal element.
+    ///
+    /// Where [`insert`](crate::HashSetHandle::insert) keeps the stored element when an equal
+    /// one is already there, this swaps the new one in.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use actify::{Handle, HashSetHandle};
+    /// # use std::collections::HashSet;
+    /// # #[tokio::main]
+    /// # async fn main() {
+    /// let handle = Handle::new(HashSet::from([1]));
+    /// assert_eq!(handle.replace(1).await, Some(1));
+    /// assert_eq!(handle.replace(2).await, None);
+    /// assert_eq!(handle.len().await, 2);
+    /// # }
+    /// ```
+    fn replace(&mut self, value: K) -> Option<K> {
+        self.replace(value)
+    }
 }
 
 #[cfg(test)]
@@ -384,5 +435,65 @@ mod tests {
         let subset = HashSet::from([1, 2]);
         assert!(handle.is_superset(subset.clone()).await);
         assert!(!handle.is_subset(subset).await);
+    }
+    /// `Eq` and `Hash` read only the id, so two elements can be equal while
+    /// carrying different labels. Without that, nothing tells `take` from
+    /// `remove` or `replace` from `insert`.
+    #[derive(Clone, Debug)]
+    struct Tagged {
+        id: i32,
+        label: &'static str,
+    }
+
+    impl PartialEq for Tagged {
+        fn eq(&self, other: &Self) -> bool {
+            self.id == other.id
+        }
+    }
+
+    impl Eq for Tagged {}
+
+    impl Hash for Tagged {
+        fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+            self.id.hash(state);
+        }
+    }
+
+    #[tokio::test]
+    async fn test_take_and_replace_act_on_the_stored_element() {
+        let stored = Tagged {
+            id: 1,
+            label: "stored",
+        };
+        let lookup = Tagged {
+            id: 1,
+            label: "lookup",
+        };
+        let handle = Handle::new(HashSet::from([stored.clone()]));
+
+        handle.insert(lookup.clone()).await;
+        assert_eq!(
+            handle.to_vec().await[0].label,
+            "stored",
+            "insert keeps the element already there"
+        );
+
+        let displaced = handle.replace(lookup.clone()).await;
+        assert_eq!(displaced.unwrap().label, "stored");
+        assert_eq!(
+            handle.to_vec().await[0].label,
+            "lookup",
+            "replace swaps the new element in"
+        );
+
+        let taken = handle.take(stored).await;
+        assert_eq!(
+            taken.unwrap().label,
+            "lookup",
+            "take returns what was stored"
+        );
+        assert!(handle.is_empty().await);
+
+        assert!(handle.take(lookup).await.is_none());
     }
 }

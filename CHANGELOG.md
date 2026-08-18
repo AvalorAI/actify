@@ -11,6 +11,24 @@ they record what changed rather than why, and are not exhaustive. 0.8.0 through
 
 ### Added
 
+- `HashMapHandle` gains `modify` and `remove_entry`.
+
+  `modify(key, f)` applies `f` to the value stored under `key` and reports whether
+  there was one, which is `entry(key).and_modify(f)` reached from a handle. It
+  inserts nothing when the key is absent. `remove_entry` returns the stored key
+  alongside the value, where `remove` returns the value alone.
+
+
+- `HashSetHandle` gains `take` and `replace`, and `OptionHandle` gains `take_if`
+  and `get_or_insert_with`.
+
+  `take` and `replace` act on the element the set is holding, which `remove` and
+  `insert` cannot reach: `remove` reports only whether something was there, and
+  `insert` keeps the stored element when an equal one arrives. `take_if` removes
+  the value only when the predicate accepts it. `OptionHandle::get_or_insert_with`
+  matches the `HashMapHandle` method of the same name.
+
+
 - `VecDequeHandle` gains `insert`, `remove`, `swap`, `truncate`, `append` and
   `split_off`, closing the gap with `VecHandle`, which had all six.
 
