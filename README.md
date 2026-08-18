@@ -94,3 +94,5 @@ async fn main() {
 ```
 
 For full API documentation, see [docs.rs](https://docs.rs/actify/latest/actify/).
+
+Upgrading from 0.8 to 0.9? See [MIGRATING.md](MIGRATING.md).
