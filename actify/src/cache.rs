@@ -562,14 +562,14 @@ where
             match self.rx.blocking_recv() {
                 Ok(val) => {
                     self.inner = val;
-                    if self.rx.is_empty() {
-                        return Ok(&self.inner);
-                    }
+                    break;
                 }
                 Err(RecvError::Closed) => return Err(CacheRecvError::Closed),
                 Err(RecvError::Lagged(nr)) => log_lag::<V>(nr),
             }
         }
+        _ = self.drain_to_newest();
+        Ok(&self.inner)
     }
 
     /// Waits until the cached value satisfies `predicate` and returns it.
@@ -1179,6 +1179,45 @@ mod tests {
         std::thread::spawn(move || {
             // First call drains to newest
             assert_eq!(cache.blocking_recv_newest().unwrap(), &3);
+        })
+        .join()
+        .unwrap();
+    }
+
+    /// The first call returns through `newest`, so only a later one reaches the
+    /// receive loop.
+    #[tokio::test(start_paused = true)]
+    async fn test_blocking_recv_newest_drains_after_the_first_call() {
+        let handle = Handle::new(1);
+        let mut cache = handle.cache().await;
+        cache.blocking_recv_newest().unwrap(); // Consume first request
+
+        handle.set(2).await;
+        handle.set(3).await;
+
+        std::thread::spawn(move || {
+            assert_eq!(cache.blocking_recv_newest().unwrap(), &3);
+        })
+        .join()
+        .unwrap();
+    }
+
+    /// The same guarantee as `test_recv_newest_returns_last_value_before_close`,
+    /// for the blocking variant.
+    #[tokio::test(start_paused = true)]
+    async fn test_blocking_recv_newest_returns_last_value_before_close() {
+        let handle = Handle::new(1);
+        let mut cache = handle.cache().await;
+        cache.blocking_recv_newest().unwrap(); // Consume first request
+
+        handle.set(2).await;
+        drop(handle);
+        sleep(Duration::from_millis(10)).await; // Let the actor task exit
+
+        std::thread::spawn(move || {
+            assert_eq!(cache.blocking_recv_newest().unwrap(), &2);
+            // Only once the queue is drained does the closed channel surface
+            assert_eq!(cache.blocking_recv_newest(), Err(CacheRecvError::Closed));
         })
         .join()
         .unwrap();

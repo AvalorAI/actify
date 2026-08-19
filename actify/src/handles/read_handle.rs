@@ -22,7 +22,13 @@ impl<T, V> Clone for ReadHandle<T, V> {
 
 impl<T, V> Debug for ReadHandle<T, V> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "ReadHandle<{}>", type_name::<T>())
+        let actor = type_name::<T>();
+        let view = type_name::<V>();
+        if actor == view {
+            write!(f, "ReadHandle<{actor}>")
+        } else {
+            write!(f, "ReadHandle<{actor}, {view}>")
+        }
     }
 }
 
@@ -232,5 +238,26 @@ mod tests {
 
         handle.set(2).await;
         assert_eq!(read_handle.get().await, 2);
+    }
+
+    #[derive(Clone, Debug)]
+    struct Counted(Vec<u8>);
+
+    impl crate::ToView<usize> for Counted {
+        fn to_view(&self) -> usize {
+            self.0.len()
+        }
+    }
+
+    #[tokio::test]
+    async fn test_debug_names_the_view_only_when_it_differs() {
+        let plain: Handle<i32> = Handle::new(1);
+        assert_eq!(format!("{:?}", plain.read_handle()), "ReadHandle<i32>");
+
+        let viewed: Handle<Counted, usize> = Handle::new(Counted(vec![1, 2]));
+        assert_eq!(
+            format!("{:?}", viewed.read_handle()),
+            format!("ReadHandle<{}, usize>", type_name::<Counted>())
+        );
     }
 }
