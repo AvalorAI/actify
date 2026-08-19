@@ -1,26 +1,23 @@
 [package]
 name = "actify"
 version = "0.8.3"
-edition = "2024"
-rust-version = "1.85"
 description = "An intuitive actor model with minimal boilerplate"
-license = "MIT"
-repository = "https://github.com/AvalorAI/actify"
 documentation = "https://docs.rs/actify/latest/actify/"
 readme = "../README.md"
+keywords = ["actor", "async", "tokio", "concurrency", "macro"]
+categories = ["asynchronous", "concurrency"]
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
 
 [dependencies]
-tokio = { version = "1.44.1", default-features = false, features = [
-    "macros",
-    "rt",
-    "sync",
-    "time",
-] }
-log = "0.4"
-actify-macros = { path = "../actify-macros", version = "0.5.0" }
+tokio = { workspace = true, features = ["macros", "rt", "sync", "time"] }
+log.workspace = true
+actify-macros.workspace = true
 
 [dev-dependencies]
-tokio = { version = "1.44.1", features = ["rt-multi-thread", "test-util"] }
+tokio = { workspace = true, features = ["rt-multi-thread", "test-util"] }
 
 [features]
 default = []

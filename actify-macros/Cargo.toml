@@ -1,16 +1,20 @@
 [package]
 name = "actify-macros"
 version = "0.5.0"
-edition = "2024"
-rust-version = "1.85"
 description = "Actify's procedural macros"
-license = "MIT"
-repository = "https://github.com/AvalorAI/actify"
+documentation = "https://docs.rs/actify-macros/latest/actify_macros/"
+readme = "README.md"
+keywords = ["actor", "async", "macro", "proc-macro", "tokio"]
+categories = ["asynchronous", "development-tools::procedural-macro-helpers"]
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
 
 [dependencies]
-quote = "1.0"
-syn = { version = "2.0", features = ["full"] }
-proc-macro2 = "1.0"
+proc-macro2.workspace = true
+quote.workspace = true
+syn.workspace = true
 
 [lib]
 proc-macro = true

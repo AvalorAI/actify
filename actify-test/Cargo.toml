@@ -1,23 +1,24 @@
 [package]
 name = "actify-test"
 version = "0.1.0"
-edition = "2024"
 description = "Actify testing crate"
-repository = "https://github.com/AvalorAI/actify"
 publish = false
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
 
 [dependencies]
 actify = { path = "../actify", features = ["profiler"] }
-env_logger = "0.11"
-log = "0.4"
-tokio = { version = "1.15", features = ["full"] }
-tracing = "0.1"
+env_logger.workspace = true
+log.workspace = true
+tokio = { workspace = true, features = ["full"] }
+tracing.workspace = true
 
 [dev-dependencies]
-trybuild = "1"
+trybuild.workspace = true
 # trybuild builds the compile-fail cases in a generated crate that takes its
 # tokio features from this section, not from [dependencies].
-tokio = { version = "1.15", features = ["rt-multi-thread", "test-util"] }
+tokio = { workspace = true, features = ["rt-multi-thread", "test-util"] }
 
 [features]
 default = []
