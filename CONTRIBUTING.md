@@ -21,6 +21,27 @@ covers the default build.
 Documentation is checked twice because feature-gated items cannot be linked from
 text that is always compiled.
 
+The MSRV is declared in three places that must agree: `rust-version` in
+`[workspace.package]`, the `MSRV` variable in `ci.yml`, and the line above.
+
+## Pinned actions
+
+Every action in `ci.yml` and `release.yml` is pinned to a commit SHA, with the
+ref it came from in a trailing comment. A tag can be moved to a different commit,
+so a tag is not a pin.
+
+To move one, resolve the ref and replace both the SHA and the comment:
+
+```sh
+gh api repos/actions/checkout/git/ref/tags/v5 --jq '.object.sha'
+gh api repos/dtolnay/rust-toolchain/branches/master --jq '.commit.sha'
+```
+
+`dtolnay/rust-toolchain` takes its default toolchain from the branch the ref
+points at, so pinning by SHA would hide which toolchain a job installs. The two
+jobs that do not want plain stable use the `master` SHA and pass `toolchain`
+explicitly, from `MSRV` and `TRYBUILD_TOOLCHAIN`.
+
 ## Compile-fail snapshots
 
 `actify-test/tests/compile_fail/` holds trybuild cases with committed `.stderr`
