@@ -16,7 +16,7 @@ repository = "https://github.com/AvalorAI/actify"
 [workspace.dependencies]
 # actify requires the exact macro version it was built against: generated code
 # reaches into actify::__private, which carries no stability promise.
-actify-macros = { path = "actify-macros", version = "=0.5.0" }
+actify-macros = { path = "actify-macros", version = "=0.6.0" }
 env_logger = "0.11"
 log = "0.4"
 proc-macro2 = "1.0"
