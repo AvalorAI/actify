@@ -107,7 +107,13 @@ impl<T, V> Clone for Handle<T, V> {
 
 impl<T, V> Debug for Handle<T, V> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "Handle<{}>", type_name::<T>())
+        let actor = type_name::<T>();
+        let view = type_name::<V>();
+        if actor == view {
+            write!(f, "Handle<{actor}>")
+        } else {
+            write!(f, "Handle<{actor}, {view}>")
+        }
     }
 }
 
@@ -1277,6 +1283,23 @@ mod tests {
         // Read-only operation through with_mut still broadcasts
         let _len = handle.with_mut(|v| v.len()).await;
         assert!(rx.try_recv().is_ok());
+    }
+
+    /// `Handle<BigState, usize>` and `Handle<BigState>` used to print the same
+    /// thing, so the view a handle exposes was invisible in a log line.
+    #[tokio::test]
+    async fn test_debug_names_the_view_only_when_it_differs() {
+        let plain: Handle<i32> = Handle::new(1);
+        assert_eq!(format!("{plain:?}"), "Handle<i32>");
+
+        let viewed: Handle<BigState, usize> = Handle::new(BigState {
+            data: vec![1],
+            count: 1,
+        });
+        assert_eq!(
+            format!("{viewed:?}"),
+            format!("Handle<{}, usize>", type_name::<BigState>())
+        );
     }
 
     #[tokio::test]

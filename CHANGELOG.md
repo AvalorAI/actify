@@ -188,6 +188,13 @@ and behave differently.
 
 ### Changed
 
+- `Handle` and `ReadHandle` name the view in their `Debug` output when it differs
+  from the actor type: `Handle<BigState, usize>` rather than `Handle<BigState>`.
+  A handle with an explicit view used to print the same thing as one without, so
+  a log line could not tell them apart. Handles whose view is the actor type,
+  which is every `Clone` actor by default, print exactly as before.
+
+
 - actify pins `actify-macros` to an exact version rather than a caret range.
   Generated code reaches into `actify::__private`, which carries no stability
   promise, so the two crates only work as the pair they were built as.
@@ -398,6 +405,11 @@ and behave differently.
   anything from nothing to a full interval.
 
 ### Internal
+
+- `Cache::blocking_recv_newest` drains through `drain_to_newest`, as its async
+  twin already did, rather than hand-rolling the same loop. Its receive path was
+  unreachable from the existing tests, since the first call returns through
+  `newest`; two tests now cover it.
 
 - A 2.1MB slide deck is no longer in the repository. It sat outside both crate
   directories, so it never reached crates.io; this only shrinks a clone.
