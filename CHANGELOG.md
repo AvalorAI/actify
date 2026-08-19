@@ -181,6 +181,11 @@ and behave differently.
 
 ### Changed
 
+- actify pins `actify-macros` to an exact version rather than a caret range.
+  Generated code reaches into `actify::__private`, which carries no stability
+  promise, so the two crates only work as the pair they were built as.
+
+
 - **Breaking:** actify asks tokio for `macros`, `rt`, `sync` and `time` instead of
   `full`. Those four are what its own code uses: `sync` for the channels, `rt` for
   `tokio::spawn` and `AbortHandle`, `time` for the throttle interval, and `macros`
