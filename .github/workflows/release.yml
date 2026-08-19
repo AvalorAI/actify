@@ -32,8 +32,11 @@ jobs:
             echo "::error::tag ${GITHUB_REF_NAME} does not match actify version ${actify}"
             exit 1
           fi
-          if [ "${req#^}" != "$macros" ]; then
-            echo "::error::actify requires actify-macros ${req}, workspace has ${macros}"
+          # The requirement is an exact pin, not a range: generated code reaches
+          # into actify::__private, which carries no stability promise. Asserting
+          # the exact form also catches a pin loosened back to a caret range.
+          if [ "$req" != "=$macros" ]; then
+            echo "::error::actify requires actify-macros ${req}, expected =${macros}"
             exit 1
           fi
 
