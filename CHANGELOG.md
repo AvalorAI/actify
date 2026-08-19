@@ -9,6 +9,10 @@ they record what changed rather than why, and are not exhaustive. 0.8.0 through
 
 ## [Unreleased]
 
+This release is breaking. [MIGRATING.md](MIGRATING.md) walks through the
+changes call site by call site, starting with the four that compile cleanly
+and behave differently.
+
 ### Added
 
 - `HashMapHandle` gains `modify` and `remove_entry`.
