@@ -1,6 +1,6 @@
 [package]
 name = "actify"
-version = "0.8.3"
+version = "0.9.0"
 description = "An intuitive actor model with minimal boilerplate"
 documentation = "https://docs.rs/actify/latest/actify/"
 readme = "../README.md"

@@ -9,6 +9,8 @@ they record what changed rather than why, and are not exhaustive. 0.8.0 through
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-08-19
+
 This release is breaking. [MIGRATING.md](MIGRATING.md) walks through the
 changes call site by call site, starting with the four that compile cleanly
 and behave differently.
@@ -550,6 +552,7 @@ drift; the dependency is now declared by path and version together.
 
 - Removed unnecessary mutability.
 
+[0.9.0]: https://github.com/AvalorAI/actify/compare/v0.8.3...v0.9.0
 [0.8.3]: https://github.com/AvalorAI/actify/compare/0.7.3...v0.8.3
 [0.7.3]: https://github.com/AvalorAI/actify/compare/0.7.2...0.7.3
 [0.7.2]: https://github.com/AvalorAI/actify/compare/0.7.0...0.7.2
