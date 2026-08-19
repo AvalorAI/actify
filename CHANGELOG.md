@@ -392,6 +392,9 @@ and behave differently.
 
 ### Internal
 
+- A 2.1MB slide deck is no longer in the repository. It sat outside both crate
+  directories, so it never reached crates.io; this only shrinks a clone.
+
 - The throttle loop's interval, receiver and event bookkeeping moved into a
   private `ThrottleState`, which made the lagging-receiver path testable. It had
   never been executed by a test.
