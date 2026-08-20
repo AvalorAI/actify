@@ -107,7 +107,13 @@ where
         self.is_empty()
     }
 
-    /// Removes the complete range from the vector in bulk, and returns it as a new vector
+    /// Removes the specified range from the vector and returns the removed
+    /// items as a new `Vec`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the start of the range is greater than the end, or if the end
+    /// is greater than the length of the vector.
     ///
     /// # Examples
     ///

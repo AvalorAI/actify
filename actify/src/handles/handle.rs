@@ -79,8 +79,8 @@ where
 
 /// A clonable handle that can be used to remotely execute a closure on the corresponding [`Actor`].
 ///
-/// Handles are the primary way to interact with actors. Clone them freely to share
-/// access across tasks. For read-only access, see [`ReadHandle`]. For local
+/// Handles are the primary way to interact with actors. Cloning a handle shares
+/// access to the same actor across tasks. For read-only access, see [`ReadHandle`]. For local
 /// synchronization, see [`Cache`]. For rate-limited updates, see [`Throttle`].
 ///
 /// The second type parameter `V` is the view the handle exposes: what
@@ -614,8 +614,8 @@ impl<T: Send + Sync + 'static, V> Handle<T, V> {
     /// Runs a read-only closure on the actor's value and returns the result.
     /// Does not broadcast.
     ///
-    /// This is useful for reading parts of the actor state without cloning
-    /// the entire value, and works with non-Clone types.
+    /// This reads parts of the actor state without cloning the entire value,
+    /// and works with non-Clone types.
     ///
     /// # Examples
     ///
@@ -625,7 +625,6 @@ impl<T: Send + Sync + 'static, V> Handle<T, V> {
     /// # async fn main() {
     /// let handle = Handle::new(vec![1, 2, 3]);
     ///
-    /// // Extract just what you need, without cloning the whole Vec
     /// let len = handle.with(|v| v.len()).await;
     /// assert_eq!(len, 3);
     ///
@@ -649,12 +648,12 @@ impl<T: Send + Sync + 'static, V> Handle<T, V> {
 
     /// Runs a closure on the actor's value mutably and returns the result.
     ///
-    /// This is useful for atomic read-modify-return operations without
-    /// defining a dedicated `#[actify]` method.
+    /// This performs an atomic read-modify-return without a dedicated
+    /// `#[actify]` method.
     ///
-    /// **Note:** This always broadcasts after the closure returns, even if
-    /// the closure did not actually mutate anything. Use [`Handle::with`]
-    /// for read-only access that does not broadcast.
+    /// This always broadcasts after the closure returns, even if the closure
+    /// did not mutate anything; [`Handle::with`] is the read-only counterpart
+    /// and does not broadcast.
     ///
     /// # Examples
     ///
@@ -955,8 +954,6 @@ mod tests {
         }
     }
 
-    /// Deriving the broadcast value inside the actor means the actor value
-    /// itself is never cloned, so these work on actor types that are not Clone.
     mod broadcast_derivation {
         use super::*;
         use crate::Frequency;
@@ -1034,8 +1031,6 @@ mod tests {
         }
     }
 
-    /// `V` is what a handle exposes: reads return it, and the actor type stays
-    /// private behind `with`.
     mod views {
         use super::*;
 
@@ -1280,7 +1275,6 @@ mod tests {
         let handle = Handle::new(vec![1, 2, 3]);
         let mut rx = handle.subscribe();
 
-        // Read-only operation through with_mut still broadcasts
         let _len = handle.with_mut(|v| v.len()).await;
         assert!(rx.try_recv().is_ok());
     }

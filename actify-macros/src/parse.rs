@@ -266,7 +266,7 @@ fn get_impl_type_ident(impl_type: &Type) -> syn::Result<Ident> {
 }
 
 /// Built-in compiler attributes that are safe to propagate onto generated trait
-/// signatures and handle impl methods.  Everything else (proc-macro attributes
+/// signatures and handle impl methods. Everything else (proc-macro attributes
 /// like `#[instrument]`, actify-specific attributes like `#[skip_broadcast]`)
 /// is stripped so it only appears on the original impl method where it belongs.
 const PROPAGATED_ATTRIBUTES: &[&str] = &[
@@ -296,10 +296,11 @@ fn is_propagated_attribute(attr: &Attribute) -> bool {
 
 /// Keep only whitelisted built-in attributes for generated code.
 ///
-/// Proc-macro attributes (e.g. `#[instrument]`) and actify-specific attributes
-/// (e.g. `#[skip_broadcast]`) are stripped. The former transforms
-/// function bodies and are semantically wrong on generated plumbing code, the
-/// latter because they are consumed during parsing.
+/// A proc-macro attribute like `#[instrument]` rewrites the function it is
+/// placed on, which is meant for the user's method and not for a generated
+/// method that forwards a call to it. An actify attribute like
+/// `#[skip_broadcast]` has already done its work during parsing. Both are
+/// stripped and remain only on the original impl method.
 fn filter_attributes(attrs: &[Attribute]) -> Vec<Attribute> {
     attrs
         .iter()
@@ -559,8 +560,6 @@ mod tests {
         assert!(find_marker_attribute(&attrs, "skip_broadcast").is_some());
     }
 
-    /// Another crate's attribute must not be mistaken for one of actify's, or
-    /// the user is told their own attribute is a superfluous actify one.
     #[test]
     fn marker_attributes_of_other_crates_are_ignored() {
         let attrs: Vec<Attribute> = vec![attr(parse_quote!(#[other_crate::broadcast]))];
@@ -573,7 +572,6 @@ mod tests {
         assert!(find_marker_attribute(&attrs, "skip_broadcast").is_none());
     }
 
-    /// `skip_broadcast` must not register as `broadcast`.
     #[test]
     fn marker_attribute_names_do_not_overlap() {
         let attrs: Vec<Attribute> = vec![attr(parse_quote!(#[skip_broadcast]))];

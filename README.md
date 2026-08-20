@@ -2,7 +2,7 @@
 
 Actify is a pre-1.0 crate used in production. The API may still change between minor versions.
 
-Sharing (mutable) state across async tasks in Rust usually means juggling mutexes and channels, and a lot of boilerplate like hand-writen message enums. Actify gives you a typed, async [actor model](https://en.wikipedia.org/wiki/Actor_model) built on [Tokio](https://tokio.rs) for any struct. Just add `#[actify]` to an `impl` block and call your methods through a clonable [`Handle`].
+Sharing (mutable) state across async tasks in Rust usually means juggling mutexes and channels, and a lot of boilerplate like hand-written message enums. Actify gives you a typed, async [actor model](https://en.wikipedia.org/wiki/Actor_model) built on [Tokio](https://tokio.rs) for any struct. Just add `#[actify]` to an `impl` block and call your methods through a clonable [`Handle`].
 
 [![Crates.io][crates-badge]][crates-url]
 [![License][mit-badge]][mit-url]
@@ -31,10 +31,11 @@ By generating the boilerplate code for you, a few key benefits are provided:
 - No need to manually define message structs or enums!
 - Built-in methods like `get()`, `set()`, `set_if_changed()`, and `subscribe()` even without using the macro.
 - Automatic broadcasting to subscribers from methods taking `&mut self`, with `#[actify::broadcast]` and `#[actify::skip_broadcast]` overrides.
+- Methods that cannot be actified can stay in the impl block with `#[actify::skip]`.
 - Local synchronization through `Cache`, with `recv`, `recv_newest`, and non-blocking variants.
 - Rate-limited updates through `Throttle` with configurable `Frequency`.
 - Generic type parameters supported in both actor types and method arguments.
-- Extension traits for common types: `Vec`, `Option`, `HashMap`, `HashSet`.
+- Extension traits for common types: `Vec`, `VecDeque`, `String`, `Option`, `HashMap`, `HashSet`.
 
 ## Example
 

@@ -1,7 +1,7 @@
 //! Procedural macros for the [actify](https://docs.rs/actify) crate.
 //!
-//! Depend on `actify` rather than this crate: everything here is re-exported
-//! from there, and the generated code refers to `actify`'s types.
+//! Everything here is re-exported from `actify`, and the generated code refers
+//! to `actify`'s types, so the macros only work alongside that crate.
 #![warn(missing_docs)]
 
 mod codegen;
@@ -53,9 +53,8 @@ pub fn broadcast(_args: TokenStream, input: TokenStream) -> TokenStream {
 /// }
 /// ```
 ///
-/// The method stays on the type and is unchanged. Use it for helpers that have
-/// no business on a handle, and for methods an actor call cannot express, such
-/// as ones taking a reference.
+/// The method stays on the type and is unchanged. It is not validated, so it
+/// may take or return references, which an actor call cannot express.
 ///
 /// Expands to nothing: `#[actify]` reads it and strips it from the output.
 #[proc_macro_attribute]
@@ -119,9 +118,9 @@ fn report(error: syn::Error, impl_block: &syn::ItemImpl) -> TokenStream {
     .into()
 }
 
-/// The actify macro expands an impl block of a rust struct to support usage in an actor model.
-/// Effectively, this macro allows to remotely call an actor method through a handle.
-/// By using traits, the methods on the handle have the same signatures, so that type checking is enforced
+/// Expands an impl block so its methods can be called remotely through a handle.
+/// The generated handle trait keeps the method signatures, so arguments and
+/// return values stay typed.
 #[proc_macro_attribute]
 pub fn actify(attr: TokenStream, item: TokenStream) -> TokenStream {
     let mut impl_block = syn::parse_macro_input!(item as syn::ItemImpl);
