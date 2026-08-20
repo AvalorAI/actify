@@ -36,8 +36,8 @@ pub fn generate_trait_impl(info: &ImplInfo) -> proc_macro2::TokenStream {
 
     // The future returned by each method holds `&Handle<T, __V>`, and a
     // reference is Send only if what it points at is Sync, so promising Send
-    // means the broadcast type has to be bounded here. Code generic over that
-    // type must bound it too, which is the one visible cost of the promise.
+    // means the broadcast type has to be bounded here, and code generic over
+    // that type must bound it too.
     let mut generics_with_broadcast = info.generics.clone();
     generics_with_broadcast
         .params
@@ -60,18 +60,11 @@ pub fn generate_trait_impl(info: &ImplInfo) -> proc_macro2::TokenStream {
     }
 }
 
-/// Generate a handle trait method signature.
-/// e.g. `async fn foo(&self, i: i32) -> f64;`
-/// Generate one method signature for the handle trait.
+/// Generate one method signature for the handle trait,
+/// e.g. `fn foo(&self, i: i32) -> impl Future<Output = f64> + Send;`.
 ///
-/// Written `-> impl Future<Output = R> + Send` rather than `async fn`, because
-/// `async fn` in a trait states no bounds on the future it returns.
-///
-/// That only matters to a caller that is generic over this trait, since a
-/// concrete `Handle<T>` call lets the compiler see the future's real type and
-/// work out for itself that it is `Send`. A generic caller has nothing but the
-/// trait, so requiring `Send` of the call, by spawning it or otherwise, fails
-/// with "future cannot be sent between threads safely".
+/// The `Send` promise is what lets a caller that is generic over this trait
+/// spawn the call.
 fn method_signature(method: &MethodInfo) -> proc_macro2::TokenStream {
     let attrs = &method.attributes;
     let ident = &method.ident;

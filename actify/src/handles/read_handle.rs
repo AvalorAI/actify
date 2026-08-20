@@ -84,7 +84,6 @@ impl<T: Send + Sync + 'static, V> ReadHandle<T, V> {
     /// });
     /// let read_handle = handle.read_handle();
     ///
-    /// // Read parts of the value without cloning the whole thing
     /// let count = read_handle.with(|inv| inv.items.len()).await;
     /// assert_eq!(count, 2);
     ///

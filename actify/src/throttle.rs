@@ -974,8 +974,6 @@ mod tests {
             assert_eq!(next_sent(&mut received).await, Some(2));
         }
 
-        /// The closure needs no type annotations, so the borrow does not have to
-        /// be spelled out at every call site.
         #[tokio::test(start_paused = true)]
         async fn test_the_callback_needs_no_type_annotations() {
             let handle = Handle::new(1);
@@ -1043,9 +1041,6 @@ mod tests {
         }
     }
 
-    /// What each [`Frequency`] does when every call takes a full period, so
-    /// updates arrive faster than they can be sent. The unit tests above drive
-    /// `ThrottleState` directly; these go through a spawned throttle.
     mod slow_calls {
         use super::*;
 
@@ -1199,7 +1194,6 @@ mod tests {
         let handle = Handle::new(1);
         let counter = CounterClient::new();
 
-        // Spawn throttle that should only activate once on creation
         handle
             .spawn_throttle(counter.clone(), CounterClient::call, Frequency::OnEvent)
             .await;
@@ -1259,7 +1253,6 @@ mod tests {
         let counter = CounterClient::new();
         let mut cache = handle.cache().await;
 
-        // Spawn throttle that should only activate once on creation
         cache.spawn_throttle(counter.clone(), CounterClient::call, Frequency::OnEvent);
         sleep(Duration::from_millis(200)).await;
 
@@ -1293,7 +1286,6 @@ mod tests {
 
         let counter = CounterClient::new();
 
-        // Spawn throttle
         Throttle::spawn(
             counter.clone(),
             CounterClient::call,
@@ -1329,10 +1321,8 @@ mod tests {
         let mut interval = time::interval(Duration::from_millis(timer as u64));
         interval.tick().await; // Completed immediately
 
-        // Start counter
         let counter = CounterClient::new();
 
-        // Spawn throttle
         let receiver = handle.subscribe();
         Throttle::spawn(
             counter.clone(),
@@ -1360,10 +1350,8 @@ mod tests {
         let mut interval = time::interval(Duration::from_millis(timer as u64));
         interval.tick().await; // Completed immediately
 
-        // Start counter
         let counter = CounterClient::new();
 
-        // Spawn throttle
         let receiver = handle.subscribe();
         Throttle::spawn(
             counter.clone(),
@@ -1373,7 +1361,7 @@ mod tests {
             None,
         );
 
-        // Many updates are triggered in quick succesion
+        // Many updates are triggered in quick succession
         for i in 0..10 {
             handle.set(i).await;
             sleep(Duration::from_millis((timer / 10.) as u64)).await;
@@ -1391,16 +1379,12 @@ mod tests {
 
     #[tokio::test(start_paused = true)]
     async fn test_interval() {
-        // The interval passed to the throttle used to send the value each time
-
         let timer = 200.;
         let mut interval = time::interval(Duration::from_millis(timer as u64));
         interval.tick().await; // Completed immediately
 
-        // Start counter
         let counter = CounterClient::new();
 
-        // Spawn throttle
         let _throttle = Throttle::spawn_interval(
             counter.clone(),
             CounterClient::call,
@@ -1432,10 +1416,8 @@ mod tests {
         let mut interval = time::interval(Duration::from_millis(timer as u64));
         interval.tick().await; // Completed immediately
 
-        // Start counter
         let counter = CounterClient::new();
 
-        // Spawn throttle
         let receiver = handle.subscribe();
         Throttle::spawn(
             counter.clone(),
@@ -1466,10 +1448,8 @@ mod tests {
         let mut interval = time::interval(Duration::from_millis(timer as u64));
         interval.tick().await; // Completed immediately
 
-        // Start counter
         let counter = CounterClient::new();
 
-        // Spawn throttle
         let receiver = handle.subscribe();
         Throttle::spawn(
             counter.clone(),

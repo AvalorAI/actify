@@ -262,6 +262,11 @@ where
 
     /// Removes the specified range from the deque and returns the removed items as a `Vec`.
     ///
+    /// # Panics
+    ///
+    /// Panics if the start of the range is greater than the end, or if the end
+    /// is greater than the length of the deque.
+    ///
     /// # Examples
     ///
     /// ```

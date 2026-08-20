@@ -5,7 +5,7 @@
 //! Actify is a pre-1.0 crate used in production. The API may still change between minor versions.
 //!
 //! Sharing (mutable) state across async tasks in Rust usually means juggling mutexes and channels,
-//! and a lot of boilerplate like hand-writen message enums. Actify gives you a typed, async
+//! and a lot of boilerplate like hand-written message enums. Actify gives you a typed, async
 //! actor model built on [Tokio][tokio] for any struct. Just add `#[actify]` to an `impl` block and call your methods
 //! through a clonable [`Handle`].
 //!
@@ -103,7 +103,7 @@
 //! ```
 //!
 //! ## Async functions in impl blocks
-//! Async function are fully supported, and work as you would expect:
+//! Async functions are fully supported, and work as you would expect:
 //! ```
 //! # use actify::{Handle, actify};
 //! # use std::fmt::Debug;
@@ -208,8 +208,8 @@
 //! # Leaving methods off the handle
 //!
 //! Every method in an `#[actify]` block gets a handle method. For an inherent
-//! impl, the plainest way to keep one off the handle is a second `impl` block,
-//! which needs nothing from actify.
+//! impl, a second `impl` block keeps a method off the handle and needs nothing
+//! from actify.
 //!
 //! A trait impl cannot be split that way: Rust requires every method of a trait
 //! in one impl block. Mark the method
@@ -398,9 +398,9 @@
 //!
 //! Spawning a throttle returns a [`Throttle`] handle. Dropping it leaves the
 //! throttle running, so a throttle attached to an actor can be spawned and
-//! forgotten: it stops when the actor does. [`Throttle::spawn_interval`] has no
-//! actor attached and runs until [`Throttle::abort`] or the runtime shuts down,
-//! which is why it is the one spawn that must not have its handle discarded.
+//! forgotten: it stops when the actor does. [`Throttle::spawn_interval`] and
+//! [`Throttle::spawn_async_interval`] have no actor attached and run until
+//! [`Throttle::abort`] or the runtime shuts down, so both are `#[must_use]`.
 //!
 //! # Extension traits
 //!
@@ -520,8 +520,8 @@ pub use throttle::{BoxFuture, Frequency, Throttle};
 /// The crate's own items that the [`actify`](macro@crate::actify) macro needs in
 /// generated code. Standard library types are named by absolute path instead.
 ///
-/// Not part of the public API. Anything here may change in a patch release, and
-/// nothing outside generated code should name it.
+/// Not part of the public API. Anything here may change in a patch release;
+/// only generated code names it.
 #[doc(hidden)]
 pub mod __private {
     pub use crate::actor::Actor;

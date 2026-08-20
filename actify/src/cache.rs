@@ -734,9 +734,6 @@ mod tests {
     use crate::Handle;
     use tokio::time::{Duration, sleep};
 
-    /// One error type covers the whole receive family. The `_newest` methods
-    /// never lag, which their docs state, but they no longer need a type of
-    /// their own to say so.
     #[tokio::test(start_paused = true)]
     async fn test_every_receive_reports_the_same_error_type() {
         let handle = Handle::new(0);

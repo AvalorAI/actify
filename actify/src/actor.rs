@@ -74,7 +74,7 @@ impl<T> Actor<T> {
 /// A single call on an actor, sent from a handle and run once by [`serve`].
 ///
 /// The lifetime is bound with `for<'a>` because the returned future borrows the
-/// actor it was handed, which `futures::BoxFuture` used to elide.
+/// actor it was handed.
 pub(crate) type ActorMethod<T> = Box<
     dyn for<'a> FnOnce(&'a mut Actor<T>, Box<dyn Any + Send>) -> BoxFuture<'a, Box<dyn Any + Send>>
         + Send,
