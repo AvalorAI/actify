@@ -5,7 +5,7 @@ use std::hash::Hash;
 /// An extension trait for `HashMap<K, V>` actors, made available on the [`Handle`](crate::Handle)
 /// as [`HashMapHandle`](crate::HashMapHandle).
 trait ActorMap<K, V> {
-    fn get_key(&self, key: K) -> Option<V>;
+    fn get_value(&self, key: K) -> Option<V>;
 
     fn insert(&mut self, key: K, val: V) -> Option<V>;
 
@@ -49,9 +49,8 @@ where
     K: Clone + Eq + Hash + Send + Sync + 'static,
     V: Clone + Send + Sync + 'static,
 {
-    /// Returns a clone of the value corresponding to the key if it exists
-    /// It is equivalent to the Hashmap get(), but the method name is changed
-    /// to avoid conflicts with the get() method of the actor in general
+    /// Returns a clone of the value for the given key, or `None` if it is absent.
+    /// Named `get_value` to avoid conflict with [`Handle::get`](crate::Handle::get).
     ///
     /// # Examples
     ///
@@ -62,11 +61,11 @@ where
     /// # async fn main() {
     /// let handle = Handle::new(HashMap::new());
     /// handle.insert("test", 10).await;
-    /// let res = handle.get_key("test").await;
+    /// let res = handle.get_value("test").await;
     /// assert_eq!(res, Some(10));
     /// # }
     /// ```
-    fn get_key(&self, key: K) -> Option<V> {
+    fn get_value(&self, key: K) -> Option<V> {
         self.get(&key).cloned()
     }
 
@@ -356,7 +355,7 @@ where
     /// let handle = Handle::new(HashMap::from([("a", 1)]));
     ///
     /// assert!(handle.modify("a", |v| *v += 10).await);
-    /// assert_eq!(handle.get_key("a").await, Some(11));
+    /// assert_eq!(handle.get_value("a").await, Some(11));
     ///
     /// assert!(!handle.modify("b", |v| *v += 10).await);
     /// # }
@@ -404,8 +403,8 @@ mod tests {
             .await;
 
         assert_eq!(handle.len().await, 3);
-        assert_eq!(handle.get_key("b".to_string()).await, Some(20));
-        assert_eq!(handle.get_key("c".to_string()).await, Some(3));
+        assert_eq!(handle.get_value("b".to_string()).await, Some(20));
+        assert_eq!(handle.get_value("c".to_string()).await, Some(3));
     }
 
     #[tokio::test]
@@ -477,8 +476,8 @@ mod tests {
                 .modify("a".to_string(), |value: &mut i32| *value += 10)
                 .await
         );
-        assert_eq!(handle.get_key("a".to_string()).await, Some(11));
-        assert_eq!(handle.get_key("b".to_string()).await, Some(2));
+        assert_eq!(handle.get_value("a".to_string()).await, Some(11));
+        assert_eq!(handle.get_value("b".to_string()).await, Some(2));
 
         assert!(
             !handle
