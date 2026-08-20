@@ -45,7 +45,7 @@ trait ActorVecDeque<T> {
 
     fn truncate(&mut self, len: usize);
 
-    fn append(&mut self, other: VecDeque<T>);
+    fn extend(&mut self, items: VecDeque<T>);
 
     fn split_off(&mut self, at: usize) -> VecDeque<T>;
 }
@@ -379,7 +379,7 @@ where
         self.truncate(len)
     }
 
-    /// Moves every element of `other` to the back of the deque.
+    /// Extends the back of the deque with the contents of the given `VecDeque`.
     ///
     /// # Examples
     ///
@@ -389,12 +389,12 @@ where
     /// # #[tokio::main]
     /// # async fn main() {
     /// let handle = Handle::new(VecDeque::from([1, 2]));
-    /// handle.append(VecDeque::from([3, 4])).await;
+    /// handle.extend(VecDeque::from([3, 4])).await;
     /// assert_eq!(handle.get().await, VecDeque::from([1, 2, 3, 4]));
     /// # }
     /// ```
-    fn append(&mut self, other: VecDeque<T>) {
-        self.extend(other)
+    fn extend(&mut self, items: VecDeque<T>) {
+        <Self as Extend<T>>::extend(self, items)
     }
 
     /// Splits the deque in two at `at`, leaving the actor with the front part and
@@ -492,7 +492,7 @@ mod tests {
     async fn test_the_deque_can_be_grown_and_cut() {
         let handle = deque();
 
-        handle.append(VecDeque::from([4, 5])).await;
+        handle.extend(VecDeque::from([4, 5])).await;
         assert_eq!(handle.get().await, VecDeque::from([1, 2, 3, 4, 5]));
 
         assert_eq!(handle.split_off(2).await, VecDeque::from([3, 4, 5]));

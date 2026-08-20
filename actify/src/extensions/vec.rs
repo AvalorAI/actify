@@ -41,7 +41,7 @@ trait ActorVec<T> {
     where
         T: PartialEq;
 
-    fn append(&mut self, other: Vec<T>);
+    fn extend(&mut self, items: Vec<T>);
 
     fn dedup(&mut self)
     where
@@ -370,7 +370,7 @@ where
         self.as_slice().contains(&value)
     }
 
-    /// Moves all the elements of `other` into the vector, leaving `other` empty.
+    /// Extends the vector with the contents of the given `Vec`.
     ///
     /// # Examples
     ///
@@ -379,12 +379,12 @@ where
     /// # #[tokio::main]
     /// # async fn main() {
     /// let handle = Handle::new(vec![1, 2]);
-    /// handle.append(vec![3, 4]).await;
+    /// handle.extend(vec![3, 4]).await;
     /// assert_eq!(handle.get().await, vec![1, 2, 3, 4]);
     /// # }
     /// ```
-    fn append(&mut self, other: Vec<T>) {
-        self.extend(other)
+    fn extend(&mut self, items: Vec<T>) {
+        <Self as Extend<T>>::extend(self, items)
     }
 
     /// Removes consecutive duplicate elements.
@@ -559,7 +559,7 @@ mod tests {
         assert_eq!(handle.remove(0).await, 1);
         assert_eq!(handle.get().await, vec![2, 3]);
 
-        handle.append(vec![4, 5]).await;
+        handle.extend(vec![4, 5]).await;
         // swap_remove moves the last element into the freed slot, which is what
         // distinguishes it from remove
         assert_eq!(handle.swap_remove(0).await, 2);
@@ -590,13 +590,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_insert_append_retain_and_truncate() {
+    async fn test_insert_extend_retain_and_truncate() {
         let handle = Handle::new(vec![1, 2]);
 
         handle.insert(1, 9).await;
         assert_eq!(handle.get().await, vec![1, 9, 2]);
 
-        handle.append(vec![3, 4]).await;
+        handle.extend(vec![3, 4]).await;
         assert_eq!(handle.get().await, vec![1, 9, 2, 3, 4]);
 
         handle.retain(|value: &i32| *value < 4).await;
