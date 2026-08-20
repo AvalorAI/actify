@@ -73,8 +73,8 @@ differently, each detailed in its own entry:
 
   For an inherent impl a second `impl` block does the same job and needs nothing
   from actify. This is for trait impls, which Rust requires to hold every method
-  of the trait in one block: before this, one unactorizable method meant the
-  whole trait impl could not be actorized.
+  of the trait in one block: before this, one unactifiable method meant the
+  whole trait impl could not be actified.
 
 
 - `OptionHandle` gains `unwrap_or`, `unwrap_or_default`, `unwrap_or_else`,
