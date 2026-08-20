@@ -9,9 +9,15 @@ they record what changed rather than why, and are not exhaustive. 0.8.0 through
 
 ## [Unreleased]
 
-This release is breaking. [MIGRATING.md](MIGRATING.md) walks through the
-changes call site by call site, starting with the four that compile cleanly
-and behave differently.
+This release is breaking. Most of it is renames the compiler will point at,
+recorded in the table under Changed. Four changes compile cleanly and behave
+differently, each detailed in its own entry:
+
+- Methods taking `&self` no longer broadcast.
+- `Handle::get` returns the actor's view rather than the actor type.
+- Cloning a `Cache` yields a fresh cache.
+- Throttle spawns return a `Throttle`, and dropping it leaves the throttle
+  running.
 
 ### Added
 
@@ -40,8 +46,9 @@ and behave differently.
   matches the `HashMapHandle` method of the same name.
 
 
-- `VecDequeHandle` gains `insert`, `remove`, `swap`, `truncate`, `append` and
-  `split_off`, closing the gap with `VecHandle`, which had all six.
+- `VecDequeHandle` gains `insert`, `remove`, `swap`, `truncate`, `extend`,
+  `split_off`, `retain_mut` and `resize`, closing the gap with `VecHandle`,
+  which had all eight.
 
   `remove` returns `Option<T>` rather than panicking on a bad index, because that
   is what `VecDeque::remove` does. `VecHandle::remove` panics, because that is
@@ -88,7 +95,7 @@ and behave differently.
 
 - `VecHandle` gains `len`, `pop`, `clear`, `remove`, `swap_remove`, `insert`,
   `truncate`, `reverse`, `split_off`, `get_index`, `first`, `last`, `contains`,
-  `append`, `dedup`, `sort`, `sort_by` and `retain`.
+  `extend`, `dedup`, `sort`, `sort_by` and `retain`.
 
   `first`, `last` and `get_index` clone what `std` borrows. `get_index` carries
   its suffix because an inherent `Handle::get` shadows a generated method called
@@ -127,7 +134,7 @@ and behave differently.
   cloning it, so both caches start from the newest broadcast value. A plain
   clone leaves those updates with the original.
 - Async throttle callbacks: `Handle::spawn_async_throttle`,
-  `Cache::spawn_async_throttle`, `Throttle::spawn_async_from_receiver` and
+  `Cache::spawn_async_throttle`, `Throttle::spawn_async` and
   `Throttle::spawn_async_interval`. Each call is awaited before the throttle
   looks for the next value, so a slow callback delays the following send rather
   than running alongside it.
@@ -149,42 +156,13 @@ and behave differently.
   The predicate takes the broadcast type, which the actor produces without
   cloning itself, so waiting works on non-Clone actor types. `Handle::wait_until`
   panics if the actor stops while it waits, as the other handle methods do;
-  `Cache::wait_until` returns `CacheRecvNewestError::Closed`.
+  `Cache::wait_until` returns `CacheRecvError::Closed`.
 - `ReadHandle::spawn_throttle` and `ReadHandle::spawn_async_throttle`, so a
   throttle can be spawned from a read-only view of an actor. Both behave as
   their `Handle` counterparts.
 - `Throttle::abort` and `Throttle::is_finished`. A throttle spawned by
   `Throttle::spawn_interval` has no actor attached, so before this nothing could
   stop it short of shutting down the runtime.
-
-### Removed
-
-- **Breaking:** `Handle::new_throttled`. It was `Handle::new` followed by a
-  throttle spawn, and it stopped composing once spawn functions began returning a
-  `Throttle`: it would have had to hand back a tuple. Its one property worth
-  keeping is that it needs no `await`, and the replacement does not either:
-
-  ```rust
-  let init = value.to_view();
-  let handle = Handle::new(value);
-  let throttle = Throttle::spawn(client, call, freq, handle.subscribe(), Some(init));
-  ```
-
-  Nothing can broadcast between `new` and `subscribe`, because no other handle to
-  that actor exists yet. Note that the initial value is now passed explicitly, so
-  it is on the caller to pass the value the actor was created with.
-
-### Fixed
-
-- Code that is generic over a generated handle trait can now spawn the call. The
-  traits declared their methods `async fn`, which promises nothing about the
-  returned future, so a caller with `H: MyHandle` writing
-  `tokio::spawn(async move { handle.method().await })` was rejected with "future
-  cannot be sent between threads safely". The methods are now declared
-  `fn method(..) -> impl Future<Output = R> + Send`, which says it.
-
-  Concrete `Handle<T>` calls were never affected, which is why nothing in this
-  workspace hit it.
 
 ### Changed
 
@@ -214,7 +192,12 @@ and behave differently.
 
 
 - **Breaking:** the generated handle traits declare their methods
-  `-> impl Future<Output = R> + Send` rather than `async fn`.
+  `fn method(..) -> impl Future<Output = R> + Send` rather than `async fn`, so
+  code that is generic over a handle trait can spawn the call. `async fn`
+  promises nothing about the returned future, so a caller with `H: MyHandle`
+  writing `tokio::spawn(async move { handle.method().await })` was rejected with
+  "future cannot be sent between threads safely". Concrete `Handle<T>` calls
+  were never affected.
 
   Hand-written implementations, such as test stand-ins, keep compiling: an
   `async fn` in an implementation satisfies the new signature, as long as the
@@ -252,7 +235,6 @@ and behave differently.
   already and exist only for generated code to reach. The names now say so, and
   the module gives that contract one place to live rather than leaving it spread
   across a hidden root export and a hidden method.
-
 
 
 - **Breaking:** the `Throttled` trait is gone. A throttle callback's argument type
@@ -299,7 +281,8 @@ and behave differently.
 - **Breaking:** `CacheRecvNewestError` is gone. Every receive on a `Cache`
   returns `CacheRecvError`. The methods that skip to the newest value never
   return `Lagged`, which each of them documents, so a caller of those gains a
-  match arm that cannot be reached. Matching stays exhaustive.
+  match arm that cannot be reached. Matching stays exhaustive: `CacheRecvError`
+  is not `#[non_exhaustive]`.
 
 - The `thiserror` dependency is dropped. `CacheRecvError` implements `Display`
   and `Error` by hand, with the same messages: `Cache channel closed` and
@@ -355,7 +338,8 @@ and behave differently.
 - **Breaking:** methods taking `&self` no longer broadcast. Broadcasting follows
   the receiver: `&mut self` broadcasts, `&self` does not. Previously every
   method broadcast regardless of receiver, so read-only calls woke every
-  subscriber, cache and throttle.
+  subscriber, cache and throttle. Extension getters such as `VecHandle::is_empty`
+  and `HashMapHandle::keys` follow the receiver rule and stop broadcasting too.
 
   This changes runtime behaviour without breaking compilation. A `&self` method
   that relied on broadcasting keeps compiling and stops broadcasting. Add
@@ -364,6 +348,41 @@ and behave differently.
   `#[actify::skip_broadcast]` now applies only to `&mut self` methods, and
   `#[actify::broadcast]` only to `&self` methods. Applying either where it has
   no effect is a compile error naming the reason.
+
+
+- **Breaking:** throttle callbacks take any `Fn(&C, F) + Send + 'static` instead
+  of a `fn(&C, F)` pointer, so a closure holding captured state is accepted.
+  Method references and non-capturing closures still coerce, so existing call
+  sites are unchanged. Affects `Throttle::spawn`, `Throttle::spawn_interval`,
+  `Handle::spawn_throttle` and `Cache::spawn_throttle`. Code naming the old type
+  explicitly, such as a struct field of type `fn(&C, F)`, needs the new
+  parameter.
+- **Breaking:** `Throttle` is now a handle to a running throttle rather than a
+  generic configuration struct, so `Throttle<C, T, F>` becomes `Throttle`. Its
+  spawn functions keep their names and arguments and gained the generics, so
+  call sites are unchanged apart from the return value.
+- **Breaking:** `Throttle::spawn`, `Throttle::spawn_interval`,
+  `Handle::spawn_throttle` and `Cache::spawn_throttle` return a `Throttle`
+  instead of `()`. Dropping it leaves the throttle running. `spawn_interval` and
+  `spawn_async_interval` are `#[must_use]`, since nothing else can stop those
+  tasks.
+
+### Removed
+
+- **Breaking:** `Handle::new_throttled`. It was `Handle::new` followed by a
+  throttle spawn, and it stopped composing once spawn functions began returning a
+  `Throttle`: it would have had to hand back a tuple. Its one property worth
+  keeping is that it needs no `await`, and the replacement does not either:
+
+  ```rust
+  let init = value.to_view();
+  let handle = Handle::new(value);
+  let throttle = Throttle::spawn(client, call, freq, handle.subscribe(), Some(init));
+  ```
+
+  Nothing can broadcast between `new` and `subscribe`, because no other handle to
+  that actor exists yet. Note that the initial value is now passed explicitly, so
+  it is on the caller to pass the value the actor was created with.
 
 ### Fixed
 
@@ -376,25 +395,6 @@ and behave differently.
   that was current when the tick came due. An overdue tick can win the race
   against values already queued, and it previously sent the older value while a
   newer one sat unread in the channel.
-
-- Extension getters such as `VecHandle::is_empty` and `HashMapHandle::keys` no
-  longer broadcast.
-
-- **Breaking:** throttle callbacks take any `Fn(&C, F) + Send + 'static` instead
-  of a `fn(&C, F)` pointer, so a closure holding captured state is accepted.
-  Method references and non-capturing closures still coerce, so existing call
-  sites are unchanged. Affects `Throttle::spawn_from_receiver`,
-  `Throttle::spawn_interval`, `Handle::spawn_throttle`, `Handle::new_throttled`
-  and `Cache::spawn_throttle`. Code naming the old type explicitly, such as a
-  struct field of type `fn(&C, F)`, needs the new parameter.
-- **Breaking:** `Throttle` is now a handle to a running throttle rather than a
-  generic configuration struct, so `Throttle<C, T, F>` becomes `Throttle`. Its
-  spawn functions keep their names and arguments and gained the generics, so
-  call sites are unchanged apart from the return value.
-- **Breaking:** `Throttle::spawn_from_receiver`, `Throttle::spawn_interval`,
-  `Handle::spawn_throttle` and `Cache::spawn_throttle` return a `Throttle`
-  instead of `()`. Dropping it leaves the throttle running. `spawn_interval` is
-  `#[must_use]`, since nothing else can stop that task.
 
 ### Documentation
 
@@ -419,6 +419,14 @@ and behave differently.
   never been executed by a test.
 - `test_exit_on_shutdown` asserted `0 == 0`, because the throttle it built had
   no initial value and so never fired.
+- Both crates inherit their shared package metadata from `[workspace.package]`,
+  and the workspace uses resolver 3.
+- Every CI action is pinned to a commit SHA.
+- The release workflow asserts the exact form of the `actify-macros`
+  requirement, `=<version>`, rather than comparing with the operator stripped.
+  The stripped comparison rejected the exact pin introduced alongside it, and
+  the workflow only runs on a tag, so no CI run before the tag push would have
+  shown it.
 
 ## [0.8.3] - 2026-08-08
 
@@ -562,6 +570,7 @@ drift; the dependency is now declared by path and version together.
 
 - Removed unnecessary mutability.
 
+[Unreleased]: https://github.com/AvalorAI/actify/compare/v0.8.3...HEAD
 [0.8.3]: https://github.com/AvalorAI/actify/compare/0.7.3...v0.8.3
 [0.7.3]: https://github.com/AvalorAI/actify/compare/0.7.2...0.7.3
 [0.7.2]: https://github.com/AvalorAI/actify/compare/0.7.0...0.7.2
