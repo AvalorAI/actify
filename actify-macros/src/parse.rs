@@ -296,10 +296,11 @@ fn is_propagated_attribute(attr: &Attribute) -> bool {
 
 /// Keep only whitelisted built-in attributes for generated code.
 ///
-/// Proc-macro attributes (e.g. `#[instrument]`) and actify-specific attributes
-/// (e.g. `#[skip_broadcast]`) are stripped. The former transform function
-/// bodies and are semantically wrong on generated plumbing code; the latter
-/// are consumed during parsing.
+/// A proc-macro attribute like `#[instrument]` rewrites the function it is
+/// placed on, which is meant for the user's method and not for a generated
+/// method that forwards a call to it. An actify attribute like
+/// `#[skip_broadcast]` has already done its work during parsing. Both are
+/// stripped and remain only on the original impl method.
 fn filter_attributes(attrs: &[Attribute]) -> Vec<Attribute> {
     attrs
         .iter()
