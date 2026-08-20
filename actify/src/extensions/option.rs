@@ -1,5 +1,7 @@
 use actify_macros::actify;
 
+/// An extension trait for `Option<T>` actors, made available on the [`Handle`](crate::Handle)
+/// as [`OptionHandle`](crate::OptionHandle).
 trait ActorOption<T> {
     fn is_some(&self) -> bool;
 
@@ -37,12 +39,7 @@ trait ActorOption<T> {
         F: FnOnce() -> T + Send + Sync + 'static;
 }
 
-/// An implementation of the ActorOption extension trait for the standard [`Option`].
-/// This extension trait is made available on the [`Handle`](crate::Handle) through the actify macro
-/// as [`OptionHandle`](crate::OptionHandle).
-/// Within the actor these methods are invoked, which in turn just extend the functionality provided by the std library.
-///
-/// [`Option`]: https://doc.rust-lang.org/std/option/enum.Option.html
+/// Extension methods for `Handle<Option<T>>`, exposed as [`OptionHandle`](crate::OptionHandle).
 #[actify]
 impl<T> ActorOption<T> for Option<T>
 where
@@ -196,8 +193,6 @@ where
     /// Maps an `Option<T>` to `Option<U>` by applying a function to a contained value
     /// (if `Some`) or returns `None` (if `None`).
     ///
-    /// This is a read-only transform and does not mutate the actor state.
-    ///
     /// # Examples
     ///
     /// ```
@@ -311,6 +306,7 @@ mod tests {
         assert_eq!(handle.take().await, None);
         assert!(handle.is_none().await);
     }
+
     #[tokio::test]
     async fn test_take_if_only_takes_what_the_predicate_accepts() {
         let handle = Handle::new(Some(2));
