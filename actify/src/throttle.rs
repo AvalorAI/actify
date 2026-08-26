@@ -319,9 +319,10 @@ fn drain_available<V: Clone>(
                 received = true;
             }
             Err(TryRecvError::Lagged(nr)) => {
-                log::debug!(
-                    "Throttle of type {} lagged {nr} messages",
-                    std::any::type_name::<V>()
+                tracing::debug!(
+                    actor_type = std::any::type_name::<V>(),
+                    messages = nr,
+                    "Throttle lagged"
                 );
             }
             // A closed channel is reported by the next receive in the loop.
@@ -338,16 +339,17 @@ fn store<V>(current: &mut Option<V>, received: Result<V, RecvError>) -> Wake {
             Wake::Value
         }
         Err(RecvError::Closed) => {
-            log::debug!(
-                "Attached actor of type {} closed - exiting throttle",
-                std::any::type_name::<V>()
+            tracing::debug!(
+                actor_type = std::any::type_name::<V>(),
+                "Attached actor closed - exiting throttle"
             );
             Wake::Closed
         }
         Err(RecvError::Lagged(nr)) => {
-            log::debug!(
-                "Throttle of type {} lagged {nr} messages",
-                std::any::type_name::<V>()
+            tracing::debug!(
+                actor_type = std::any::type_name::<V>(),
+                messages = nr,
+                "Throttle lagged"
             );
             Wake::Lagged
         }

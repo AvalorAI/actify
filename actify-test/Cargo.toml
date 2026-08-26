@@ -9,10 +9,8 @@ repository.workspace = true
 
 [dependencies]
 actify = { path = "../actify", features = ["profiler"] }
-env_logger.workspace = true
-log.workspace = true
 tokio = { workspace = true, features = ["full"] }
-tracing.workspace = true
+tracing = { workspace = true, features = ["std", "attributes"] }
 
 [dev-dependencies]
 trybuild.workspace = true

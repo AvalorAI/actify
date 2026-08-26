@@ -3,6 +3,7 @@ use std::fmt::{self, Debug};
 use std::future::Future;
 use std::pin::Pin;
 use tokio::sync::{mpsc, oneshot, watch};
+use tracing::Instrument;
 
 /// A boxed future, as returned by an actor method.
 pub(crate) type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
@@ -117,7 +118,21 @@ impl Drop for ExitGuard {
     }
 }
 
-pub(crate) async fn serve<T: Send + Sync + 'static>(
+/// Serves jobs inside an `actor` span that carries the actor type, so that
+/// instrumentation in actor methods nests under the actor task.
+///
+/// The span is created before the future is spawned, which parents it to
+/// whatever span is current where the handle is created.
+pub(crate) fn serve<T: Send + Sync + 'static>(
+    rx: mpsc::Receiver<Job<T>>,
+    actor: Actor<T>,
+    exit_tx: watch::Sender<ExitState>,
+) -> impl Future<Output = ()> {
+    let span = tracing::info_span!("actor", actor_type = type_name::<T>());
+    run(rx, actor, exit_tx).instrument(span)
+}
+
+async fn run<T: Send + Sync + 'static>(
     mut rx: mpsc::Receiver<Job<T>>,
     mut actor: Actor<T>,
     exit_tx: watch::Sender<ExitState>,
@@ -126,11 +141,39 @@ pub(crate) async fn serve<T: Send + Sync + 'static>(
     while let Some(job) = rx.recv().await {
         let res = (job.call)(&mut actor, job.args).await;
         if job.respond_to.send(res).is_err() {
-            log::debug!(
-                "Actor of type {} failed to respond as the receiver is dropped",
-                type_name::<T>()
+            tracing::debug!(
+                actor_type = type_name::<T>(),
+                "Actor failed to respond as the receiver is dropped"
             );
         }
     }
-    log::debug!("Actor of type {} terminated", type_name::<T>());
+    tracing::debug!(actor_type = type_name::<T>(), "Actor terminated");
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::Handle;
+    use crate::test_support;
+
+    #[tokio::test]
+    async fn test_actor_methods_run_inside_the_actor_span() {
+        let (_guard, events) = test_support::capture();
+
+        let handle = Handle::new(7);
+        handle
+            .with(|_| tracing::info!("emitted by an actor method"))
+            .await;
+
+        let events = events.lock().unwrap();
+        let event = events
+            .iter()
+            .find(|event| event.message == "emitted by an actor method")
+            .expect("the event is captured");
+        let span = event.span.as_ref().expect("the event carries a span");
+        assert_eq!(span.name, "actor");
+        assert_eq!(
+            span.fields.get("actor_type").map(String::as_str),
+            Some(std::any::type_name::<i32>())
+        );
+    }
 }

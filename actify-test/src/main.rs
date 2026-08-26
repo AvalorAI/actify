@@ -839,13 +839,6 @@ mod tests {
         assert_eq!(rx.try_recv().unwrap(), 1);
     }
 
-    #[allow(dead_code)]
-    pub fn load_logger() {
-        env_logger::Builder::new()
-            .filter(None, log::LevelFilter::Info)
-            .init();
-    }
-
     /// Returns whether a future is still pending once nothing else can make
     /// progress.
     ///
