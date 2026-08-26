@@ -86,8 +86,8 @@ differently, each detailed in its own entry:
 
 
 - `HashSetHandle` gains `len`, `clear`, `contains`, `remove`, `to_vec`, `drain`,
-  `extend`, `retain`, `difference`, `intersection`, `union`, `is_subset` and
-  `is_superset`.
+  `extend`, `retain`, `difference`, `intersection`, `union`, `is_subset`,
+  `is_superset` and `is_disjoint`.
 
   The set algebra returns `Vec<K>` rather than an iterator, since an iterator
   borrowing the actor's value cannot leave it.

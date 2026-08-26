@@ -969,7 +969,7 @@ mod tests {
             assert_eq!(cache.current(), &1);
         }
 
-        #[tokio::test]
+        #[tokio::test(start_paused = true)]
         async fn test_a_non_clone_actor_can_spawn_a_throttle() {
             let handle: Handle<NonCloneActor, i32> = Handle::new(NonCloneActor { value: 1 });
             let seen = Arc::new(Mutex::new(Vec::new()));

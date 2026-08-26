@@ -1,4 +1,4 @@
-//! This workspace is used to test the functionalities of actify as would any user that imports the library
+//! Tests actify as any user that imports the library would.
 
 use actify::{Handle, ToView, actify};
 use std::{collections::HashMap, fmt::Debug, sync::Mutex};
@@ -390,9 +390,11 @@ impl AttributeTestActor {
     }
 }
 
-/// Tests that impl-block-level #[cfg] propagates to all generated traits and impls.
-/// Without this, the handle trait impl and actor trait/impl would exist on the
-/// wrong platform, referencing a trait that doesn't exist.
+/// Two impl blocks for the same type, each behind a #[cfg(target_os)]. The
+/// macro must put the same #[cfg] on everything it generates from a block:
+/// compiling on Windows removes the Linux impl block, and generated code
+/// without the gate would survive that, defining the handle trait twice and
+/// forwarding to a method that was compiled out.
 #[derive(Clone, Debug)]
 struct CfgImplActor;
 
@@ -476,7 +478,7 @@ impl InstrumentedActor {
         self.value = new_value;
     }
 
-    /// Doc + instrument combined — doc should propagate, instrument should not.
+    /// Doc + instrument combined: doc propagates, instrument does not.
     #[tracing::instrument(skip_all)]
     async fn async_get(&self) -> i32 {
         self.value
@@ -565,11 +567,11 @@ mod tests {
     async fn test_custom_trait_name() {
         let handle = Handle::new(SomeStruct { inner_bool: false });
 
-        // UFCS — verifies the generated trait names are correct
+        // UFCS reaches each generated trait by its name
         SomeStructHandle::set_true(&handle).await;
         assert!(SomeStructGetters::get_inner(&handle).await);
 
-        // Method-call syntax — verifies both traits resolve without ambiguity
+        // Method-call syntax resolves without ambiguity between the two traits
         handle.set_false().await;
         assert!(!handle.get_inner().await);
     }
@@ -610,32 +612,32 @@ mod tests {
     async fn test_attribute_propagation() {
         let handle = Handle::new(AttributeTestActor);
 
-        // #[doc] — just needs to compile (docs propagated to handle trait)
+        // #[doc] is propagated to the handle trait; the call only needs to compile
         assert_eq!(handle.with_doc(5).await, 5);
 
-        // #[allow(unused_variables)] — no warning despite unused x
+        // #[allow(unused_variables)]: no warning despite the unused x
         assert_eq!(handle.with_allow(99).await, 42);
 
-        // #[deprecated] — propagated to handle trait, suppressed here
+        // #[deprecated] is propagated to the handle trait and suppressed here
         #[allow(deprecated)]
         let result = handle.with_deprecated(10).await;
         assert_eq!(result, 10);
 
-        // #[must_use] — propagated to handle trait, but has no effect on async fns
-        // (Rust's #[must_use] on async fn warns about the unused Future, not the
-        // resolved value, and .await always "uses" the Future.)
+        // #[must_use] is propagated to the handle trait, but has no effect on
+        // async fns: on those it warns about the unused Future, not the resolved
+        // value, and .await always "uses" the Future
         assert_eq!(handle.with_must_use(5).await, 6);
 
-        // #[cfg_attr(test, allow(unused_variables))] — conditional attribute
+        // #[cfg_attr(test, allow(unused_variables))]: no warning despite the unused x
         assert_eq!(handle.with_cfg_attr(99).await, 42);
 
-        // #[cfg] — OS-specific method, only one variant compiles
+        // #[cfg]: only the variant for this OS compiles
         #[cfg(target_os = "linux")]
         assert_eq!(handle.some_os_specific_method().await, 1.);
         #[cfg(target_os = "windows")]
         assert_eq!(handle.some_os_specific_method().await, 2.);
 
-        // #[cfg] on impl block — all generated traits/impls must be gated
+        // #[cfg] on the impl block gates all generated traits and impls
         let cfg_handle = Handle::new(CfgImplActor);
         #[cfg(target_os = "linux")]
         assert_eq!(cfg_handle.platform_value().await, "linux");
@@ -844,7 +846,6 @@ mod tests {
             .init();
     }
 
-    /// Helper to get current number of alive tasks in the runtime
     /// Returns whether a future is still pending once nothing else can make
     /// progress.
     ///
@@ -895,7 +896,6 @@ mod tests {
         alive_tasks()
     }
 
-    /// Helper struct for throttle testing
     #[derive(Debug, Clone)]
     struct TestClient {
         count: Arc<Mutex<i32>>,
@@ -931,10 +931,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_handle_task_cleanup() {
-        // Record baseline task count
         let baseline = alive_tasks();
 
-        // Creating a Handle spawns a Listener task
         let handle = Handle::new(42);
 
         let with_handle = await_alive_tasks(baseline + 1).await;
@@ -945,7 +943,6 @@ mod tests {
             with_handle
         );
 
-        // Drop the handle - this should cause the Listener task to exit
         drop(handle);
 
         let after_drop = await_alive_tasks(baseline).await;
@@ -958,15 +955,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_handle_clone_task_cleanup() {
-        // Record baseline task count
         let baseline = alive_tasks();
 
-        // Creating a Handle spawns a Listener task
         let handle = Handle::new(42);
         let handle_clone = handle.clone();
 
         let with_handles = await_alive_tasks(baseline + 1).await;
-        // Only one task should be spawned regardless of clones
         assert_eq!(
             with_handles,
             baseline + 1,
@@ -975,7 +969,6 @@ mod tests {
             with_handles
         );
 
-        // Dropping one clone shouldn't affect the task
         drop(handle);
 
         let after_first_drop = settled_alive_tasks().await;
@@ -987,7 +980,6 @@ mod tests {
             after_first_drop
         );
 
-        // Dropping the last clone should cause the task to exit
         drop(handle_clone);
 
         let after_all_drop = await_alive_tasks(baseline).await;
@@ -1000,16 +992,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_throttle_spawn_task_cleanup() {
-        // Record baseline task count
         let baseline = alive_tasks();
 
-        // Create a Handle (spawns 1 task)
         let handle = Handle::new(1);
 
         let with_handle = await_alive_tasks(baseline + 1).await;
         assert_eq!(with_handle, baseline + 1, "Expected one task for Handle");
 
-        // Spawn a throttle from the handle's receiver (spawns another task)
         let client = TestClient::new();
         let receiver = handle.subscribe();
         Throttle::spawn(
@@ -1029,9 +1018,8 @@ mod tests {
             with_throttle
         );
 
-        // Dropping the handle should cause both tasks to exit:
-        // - The Handle's Listener task exits because the channel closes
-        // - The Throttle task exits because the broadcast receiver closes
+        // The actor task exits because its channel closes, and the throttle
+        // task because its broadcast receiver closes
         drop(handle);
 
         let after_drop = await_alive_tasks(baseline).await;
@@ -1086,7 +1074,6 @@ mod tests {
     async fn test_multiple_handles_task_cleanup() {
         let baseline = alive_tasks();
 
-        // Create multiple independent handles
         let handle1 = Handle::new(1);
         let handle2 = Handle::new("test");
         let handle3 = Handle::new(1.5f64);
@@ -1098,7 +1085,6 @@ mod tests {
             "Expected three tasks for three Handles"
         );
 
-        // Drop them one by one and verify cleanup
         drop(handle1);
         assert_eq!(await_alive_tasks(baseline + 2).await, baseline + 2);
 
@@ -1131,7 +1117,6 @@ mod tests {
             "The actor should stay alive while a ReadHandle exists"
         );
 
-        // The actor still serves reads through the remaining ReadHandle
         assert_eq!(read_handle.get().await, 1);
 
         drop(read_handle);
@@ -1152,7 +1137,6 @@ mod tests {
         let with_handle = await_alive_tasks(baseline + 1).await;
         assert_eq!(with_handle, baseline + 1, "Expected one task for Handle");
 
-        // Creating a cache should NOT spawn additional tasks
         let _cache = handle.cache().await;
 
         let with_cache = settled_alive_tasks().await;
@@ -1162,7 +1146,6 @@ mod tests {
             "Cache should not spawn additional tasks"
         );
 
-        // Creating more caches still shouldn't spawn tasks
         let _cache2 = handle.cache().await;
         let _cache3 = handle.cache_from_default();
 
@@ -1184,7 +1167,6 @@ mod tests {
         let with_handle = await_alive_tasks(baseline + 1).await;
         assert_eq!(with_handle, baseline + 1, "Expected one task for Handle");
 
-        // Spawning a throttle from cache spawns a new task
         let client = TestClient::new();
         cache.spawn_throttle(client.clone(), TestClient::call, Frequency::OnEvent);
 
@@ -1195,7 +1177,6 @@ mod tests {
             "Expected two tasks: Handle + Throttle"
         );
 
-        // Dropping the cache doesn't affect tasks (it doesn't own them)
         drop(cache);
 
         let after_cache_drop = settled_alive_tasks().await;
@@ -1205,7 +1186,6 @@ mod tests {
             "Dropping cache should not affect tasks"
         );
 
-        // Dropping the handle should cause both tasks to exit
         drop(handle);
 
         let after_handle_drop = await_alive_tasks(baseline).await;

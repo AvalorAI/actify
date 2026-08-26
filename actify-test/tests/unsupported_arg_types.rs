@@ -4,13 +4,21 @@
 /// will suddenly compile when it shouldn't.
 #[test]
 fn compile_fail_tests() {
-    // The .stderr files match the exact diagnostics of one rustc version. On CI,
-    // only the dedicated trybuild job (pinned to that version) runs these tests;
-    // the regular test matrix on unpinned stable skips them. Locally they always
-    // run. See CONTRIBUTING.md for how to regenerate the .stderr files.
-    if std::env::var_os("CI").is_some() && std::env::var_os("TRYBUILD_TESTS").is_none() {
-        eprintln!("skipping trybuild tests: CI is set and TRYBUILD_TESTS is not");
-        return;
+    // The .stderr files match the exact diagnostics of one rustc version, so
+    // every CI job must choose: the trybuild job, pinned to that version, sets
+    // TRYBUILD_TESTS=1 and runs these; the test matrix on unpinned stable sets
+    // TRYBUILD_TESTS=0. An unset variable on CI fails rather than skips, so the
+    // suite cannot go dark through a lost job or variable. Locally the tests
+    // always run. See CONTRIBUTING.md for how to regenerate the .stderr files.
+    if std::env::var_os("CI").is_some() {
+        match std::env::var("TRYBUILD_TESTS").as_deref() {
+            Ok("1") => {}
+            Ok("0") => {
+                eprintln!("skipping trybuild tests: TRYBUILD_TESTS=0");
+                return;
+            }
+            _ => panic!("CI is set but TRYBUILD_TESTS is not: set 1 to run or 0 to skip"),
+        }
     }
 
     let t = trybuild::TestCases::new();
