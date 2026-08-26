@@ -26,6 +26,27 @@ where
     /// Items are owned, so each one costs the clone [`get`](crate::Handle::get)
     /// pays. To keep reading borrowed values through the cache as well, stream
     /// a clone: [`clone_newest`](Self::clone_newest) starts it synchronized.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use actify::Handle;
+    /// # use tokio_stream::StreamExt;
+    /// # #[tokio::main]
+    /// # async fn main() {
+    /// let handle = Handle::new(1);
+    /// let mut stream = handle.cache().await.into_stream_newest();
+    ///
+    /// assert_eq!(stream.next().await, Some(1)); // The current value, immediately
+    ///
+    /// handle.set(2).await;
+    /// handle.set(3).await;
+    /// assert_eq!(stream.next().await, Some(3)); // The newest: the 2 is skipped
+    ///
+    /// drop(handle);
+    /// assert_eq!(stream.next().await, None); // The actor is gone
+    /// # }
+    /// ```
     pub fn into_stream_newest(self) -> CacheStream<V> {
         let (first, rx) = self.into_parts();
         CacheStream {
@@ -49,6 +70,73 @@ where
 /// [`Throttle`](crate::Throttle) instead: it is spawned, forwards updates on
 /// its own, and stops with the actor. This stream is the composable
 /// counterpart for a task that is already consuming values.
+///
+/// # Examples
+///
+/// Reacting only to actual changes: the filter keeps the previous value, so
+/// the loop body no longer has to. [`set_if_changed`](crate::Handle::set_if_changed)
+/// suppresses unchanged broadcasts at the sender; a filter like this one is
+/// for consumers that care about part of the value, or cannot rely on every
+/// sender checking:
+///
+/// ```
+/// # use actify::Handle;
+/// # use tokio_stream::StreamExt;
+/// # #[tokio::main]
+/// # async fn main() {
+/// let handle = Handle::new(0);
+/// let mut prev = None;
+/// let mut changes = handle
+///     .cache()
+///     .await
+///     .into_stream_newest()
+///     .filter(move |value: &i32| {
+///         let changed = prev.as_ref() != Some(value);
+///         if changed {
+///             prev = Some(value.clone());
+///         }
+///         changed
+///     });
+///
+/// assert_eq!(changes.next().await, Some(0)); // The initial value
+///
+/// let setter = handle.clone();
+/// tokio::spawn(async move {
+///     setter.set(0).await; // A broadcast that changes nothing
+///     setter.set(7).await;
+/// });
+///
+/// assert_eq!(changes.next().await, Some(7)); // The unchanged 0 never surfaces
+/// # }
+/// ```
+///
+/// The newest value, at most once per interval, paced in the consumer's own
+/// task rather than by a spawned [`Throttle`](crate::Throttle):
+///
+/// ```
+/// # use actify::Handle;
+/// # use std::time::Duration;
+/// # use tokio_stream::StreamExt;
+/// # #[tokio::main]
+/// # async fn main() {
+/// let handle = Handle::new(0);
+/// let throttled = handle
+///     .cache()
+///     .await
+///     .into_stream_newest()
+///     .throttle(Duration::from_millis(50));
+/// tokio::pin!(throttled); // The throttle holds its timer, so it is pinned
+///
+/// assert_eq!(throttled.next().await, Some(0)); // The first item is immediate
+///
+/// handle.set(1).await;
+/// handle.set(2).await;
+/// assert_eq!(throttled.next().await, Some(2)); // One interval later: the newest
+///
+/// drop(handle);
+/// assert_eq!(throttled.next().await, None);
+/// # }
+/// ```
 pub struct CacheStream<V> {
     /// The value carried from a cache whose first read was not yet claimed,
     /// delivered before anything received from the channel.
