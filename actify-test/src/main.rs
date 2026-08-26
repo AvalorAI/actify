@@ -390,8 +390,11 @@ impl AttributeTestActor {
     }
 }
 
-/// Impl-block-level #[cfg] must propagate to everything the macro generates,
-/// or generated code would exist on a platform its impl block is gated off.
+/// Two impl blocks for the same type, each behind a #[cfg(target_os)]. The
+/// macro must put the same #[cfg] on everything it generates from a block:
+/// compiling on Windows removes the Linux impl block, and generated code
+/// without the gate would survive that, defining the handle trait twice and
+/// forwarding to a method that was compiled out.
 #[derive(Clone, Debug)]
 struct CfgImplActor;
 
