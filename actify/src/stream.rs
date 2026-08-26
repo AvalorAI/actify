@@ -315,6 +315,19 @@ mod tests {
         assert_unpin::<CacheStream<NotUnpin>>();
     }
 
+    /// NotUnpin has no Debug impl, so this formatting compiles only while the
+    /// manual impl stays free of a V: Debug bound.
+    #[test]
+    fn test_debug_needs_no_debug_bound_on_the_value() {
+        let stream = CacheStream {
+            first: Some(NotUnpin {
+                _pinned: PhantomPinned,
+            }),
+            inner: Inner::Done,
+        };
+        assert_eq!(format!("{stream:?}"), "CacheStream");
+    }
+
     #[tokio::test(start_paused = true)]
     async fn test_the_first_poll_yields_the_cached_value_immediately() {
         let handle = Handle::new(1);
@@ -466,6 +479,9 @@ mod tests {
         assert!(!stream.is_terminated());
 
         assert_eq!(finished(stream.next()).await, Some(1)); // First item
+        // The first value is consumed and the stream is waiting: not terminated
+        assert!(!stream.is_terminated());
+
         drop(handle);
         sleep(Duration::from_millis(10)).await; // Let the actor task exit
 
