@@ -83,7 +83,7 @@
 //!                     Box::pin(async move {
 //!                         let name: String = *args.downcast().unwrap();
 //!                         let result: String = Greeter::say_hi(&s.inner, name);
-//!                         s.broadcast("Greeter::say_hi");
+//!                         s.broadcast("say_hi");
 //!                         Box::new(result) as Box<dyn std::any::Any + Send>
 //!                     })),
 //!                 Box::new(name),
@@ -509,9 +509,10 @@
 //!   reach those records, which is why the events name the actor type
 //!   themselves. Cargo features unify across a build, so enabling it switches
 //!   every tracing-using crate in the binary the same way.
-//! - `profiler`: counts broadcasts per method, readable through
-//!   `get_broadcast_counts` and `get_sorted_broadcast_counts`. Counters are
-//!   process-wide and never reset.
+//! - `profiler`: counts broadcasts per method on each actor, readable through
+//!   `Handle::broadcast_counts` and drained per phase through
+//!   `Handle::take_broadcast_counts`. A development aid: its API is exempt
+//!   from semver and may change or be removed in any release.
 
 /// The README examples, compiled and run as part of the test suite.
 ///
