@@ -1077,33 +1077,46 @@ mod tests {
             .expect("panic payload was neither String nor &str")
     }
 
-    /// The profiler counts broadcasts per method name, so each method must
-    /// report its own name.
-    ///
-    /// The counters are process-global and shared with every test running in
-    /// parallel, so this uses a type no other test touches and only inspects
-    /// the keys belonging to it.
+    /// Broadcast counters live on the actor and are read through its handle,
+    /// so every test sees only its own counts.
     #[cfg(feature = "profiler")]
-    #[tokio::test]
-    async fn test_set_if_changed_broadcasts_under_its_own_name() {
-        #[derive(Debug, Clone, PartialEq)]
-        struct SetIfChangedProbe(i32);
+    mod profiler {
+        use super::*;
+        use std::collections::HashMap;
 
-        let handle = Handle::new(SetIfChangedProbe(0));
-        handle.set_if_changed(SetIfChangedProbe(1)).await;
+        /// Each method reports its own name, and a set_if_changed that
+        /// changes nothing does not count.
+        #[tokio::test]
+        async fn test_set_if_changed_broadcasts_under_its_own_name() {
+            let handle = Handle::new(0);
+            handle.set_if_changed(1).await;
+            handle.set_if_changed(1).await;
 
-        let counts = crate::get_broadcast_counts();
-        let keys: Vec<_> = counts
-            .keys()
-            .filter(|key| key.contains("SetIfChangedProbe"))
-            .collect();
+            assert_eq!(
+                handle.take_broadcast_counts().await,
+                HashMap::from([("set_if_changed", 1)])
+            );
+        }
 
-        assert_eq!(keys.len(), 1, "expected a single label, got {keys:?}");
-        assert!(
-            keys[0].ends_with("::set_if_changed"),
-            "broadcast was labelled {}",
-            keys[0]
-        );
+        /// A take returns only the broadcasts since the previous take, so
+        /// successive takes measure disjoint phases.
+        #[tokio::test]
+        async fn test_take_broadcast_counts_resets_for_phase_measurement() {
+            let handle = Handle::new(0);
+            handle.set(1).await;
+
+            assert_eq!(
+                handle.take_broadcast_counts().await,
+                HashMap::from([("set", 1)])
+            );
+            assert_eq!(handle.take_broadcast_counts().await, HashMap::new());
+
+            handle.set(2).await;
+            assert_eq!(
+                handle.take_broadcast_counts().await,
+                HashMap::from([("set", 1)])
+            );
+        }
     }
 
     /// A caller that stops waiting must not stop the actor. Wrapping a call
