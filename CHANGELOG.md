@@ -21,6 +21,20 @@ differently, each detailed in its own entry:
 
 ### Added
 
+- `Cache::into_stream_newest`, which consumes a cache into a `CacheStream`
+  yielding each newest value as an owned item.
+
+  The stream follows `recv_newest`: the first item is the current value,
+  delivered immediately; later items skip to the newest; falling behind is
+  logged and never surfaces; the stream ends once the actor has stopped and
+  its last update was delivered. It makes broadcast state composable with
+  `StreamExt` combinators, so watching two actors is `merge`, pacing is
+  `throttle`, and reacting to real changes is `filter`, where each of those
+  was a hand-written receive loop. This adds `futures-core` as a dependency,
+  the crate defining the stream trait whose combinators consumers bring
+  themselves.
+
+
 - `VecHandle` gains `retain_mut`, `swap` and `resize`.
 
   `retain_mut` filters and edits in one pass, where `retain` can only filter.
