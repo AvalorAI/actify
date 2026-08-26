@@ -1,11 +1,14 @@
 use std::fmt;
+use std::future::Future;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 
 use futures_core::{FusedStream, Stream};
-use tokio_stream::wrappers::BroadcastStream;
+use tokio::sync::broadcast::Receiver;
+use tokio::sync::broadcast::error::{RecvError, TryRecvError};
 
 use crate::Cache;
+use crate::cache::log_lag;
 
 impl<V> Cache<V>
 where
@@ -27,7 +30,7 @@ where
         let (first, rx) = self.into_parts();
         CacheStream {
             first,
-            inner: Some(BroadcastStream::new(rx)),
+            inner: Inner::Idle(rx),
         }
     }
 }
@@ -50,15 +53,56 @@ pub struct CacheStream<V> {
     /// The value carried from a cache whose first read was not yet claimed,
     /// delivered before anything received from the channel.
     first: Option<V>,
-    /// The subscription, dropped once the channel reports closed.
-    inner: Option<BroadcastStream<V>>,
+    inner: Inner<V>,
+}
+
+/// The in-flight receive owns the receiver and hands it back with the result,
+/// since `recv` borrows the receiver for the life of its future.
+type RecvFuture<V> = Pin<Box<dyn Future<Output = (Result<V, RecvError>, Receiver<V>)> + Send>>;
+
+enum Inner<V> {
+    /// No receive in flight: the receiver is at hand for draining.
+    Idle(Receiver<V>),
+    /// A receive is awaited. It is kept across polls: only a polled future
+    /// has registered the waker, and dropping it would lose the wakeup.
+    Recv(RecvFuture<V>),
+    /// The actor stopped and its last update was delivered.
+    Done,
+}
+
+fn recv_future<V>(mut rx: Receiver<V>) -> RecvFuture<V>
+where
+    V: Clone + Send + Sync + 'static,
+{
+    Box::pin(async move {
+        let result = rx.recv().await;
+        (result, rx)
+    })
+}
+
+/// Takes every queued value, keeping the newest. Lag is logged and read
+/// through; a closed channel is left for the next receive to report, since a
+/// value in hand is delivered first.
+///
+/// Draining must go through `try_recv`: it does not consume the task's
+/// cooperative budget. Polling receive futures until they report pending
+/// drains an exhausted budget instead of the channel, which ends the drain
+/// with values still queued and passes an older value off as the newest.
+fn drain_newest<V: Clone>(rx: &mut Receiver<V>, newest: &mut Option<V>) {
+    loop {
+        match rx.try_recv() {
+            Ok(value) => *newest = Some(value),
+            Err(TryRecvError::Lagged(nr)) => log_lag::<V>(nr),
+            Err(TryRecvError::Empty | TryRecvError::Closed) => return,
+        }
+    }
 }
 
 // poll_next takes the fields through Pin::get_mut, which needs Self: Unpin.
 // V sits inline, so the automatic impl would be conditional on V: Unpin. The
 // unconditional impl is sound because no field is structurally pinned: the
-// only pinned data lives behind BroadcastStream's own box, which moving this
-// struct does not move.
+// only pinned data lives in the receive future's own allocation, which moving
+// this struct does not move.
 impl<V> Unpin for CacheStream<V> {}
 
 impl<V> Stream for CacheStream<V>
@@ -67,8 +111,51 @@ where
 {
     type Item = V;
 
-    fn poll_next(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        Poll::Pending
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        let this = self.get_mut();
+
+        // The carried first value seeds the coalescing, so queued updates
+        // overwrite it within this poll, as recv_newest drains on a first read.
+        let mut newest = this.first.take();
+
+        // Done is the placeholder while an arm holds the state, so a panic
+        // mid-poll leaves a terminated stream rather than a broken one.
+        loop {
+            match std::mem::replace(&mut this.inner, Inner::Done) {
+                Inner::Idle(mut rx) => {
+                    drain_newest(&mut rx, &mut newest);
+                    if let Some(value) = newest {
+                        this.inner = Inner::Idle(rx);
+                        return Poll::Ready(Some(value));
+                    }
+                    // Nothing in hand, so wait. The fresh future is polled in
+                    // this same call: only a polled future registers the waker.
+                    this.inner = Inner::Recv(recv_future(rx));
+                }
+                Inner::Recv(mut future) => match future.as_mut().poll(cx) {
+                    Poll::Pending => {
+                        this.inner = Inner::Recv(future);
+                        return Poll::Pending;
+                    }
+                    // Looping back to Idle drains the values behind this one,
+                    // so the yield is the newest, not merely the next.
+                    Poll::Ready((Ok(value), rx)) => {
+                        newest = Some(value);
+                        this.inner = Inner::Idle(rx);
+                    }
+                    // The lag repositioned the receiver, so the Idle drain
+                    // picks up the values the channel still holds.
+                    Poll::Ready((Err(RecvError::Lagged(nr)), rx)) => {
+                        log_lag::<V>(nr);
+                        this.inner = Inner::Idle(rx);
+                    }
+                    // Nothing is lost by ending here: a receive is only
+                    // awaited once the queue was drained with nothing in hand.
+                    Poll::Ready((Err(RecvError::Closed), _)) => return Poll::Ready(None),
+                },
+                Inner::Done => return Poll::Ready(None),
+            }
+        }
     }
 }
 
@@ -77,7 +164,7 @@ where
     V: Clone + Send + Sync + 'static,
 {
     fn is_terminated(&self) -> bool {
-        self.inner.is_none() && self.first.is_none()
+        self.first.is_none() && matches!(self.inner, Inner::Done)
     }
 }
 
@@ -92,7 +179,6 @@ impl<V> fmt::Debug for CacheStream<V> {
 mod tests {
     use super::*;
     use crate::Handle;
-    use std::future::Future;
     use std::marker::PhantomPinned;
     use tokio::time::{Duration, Instant, sleep, timeout};
     use tokio_stream::StreamExt;
@@ -255,7 +341,10 @@ mod tests {
     }
 
     /// Skipping to the newest value is what falling behind means here, so lag
-    /// is not an error and the stream keeps delivering.
+    /// is not an error and the stream keeps delivering. The overflow is also
+    /// a backlog larger than the task's cooperative budget, so this locks the
+    /// drain reaching the true newest value rather than stopping where the
+    /// budget ran out.
     #[tokio::test(start_paused = true)]
     async fn test_the_stream_recovers_from_lag() {
         let handle = Handle::new(0);

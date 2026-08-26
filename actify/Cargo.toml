@@ -13,15 +13,15 @@ repository.workspace = true
 
 [dependencies]
 tokio = { workspace = true, features = ["macros", "rt", "sync", "time"] }
-tokio-stream = { workspace = true, features = ["sync"] }
 futures-core.workspace = true
 log.workspace = true
 actify-macros.workspace = true
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt-multi-thread", "test-util"] }
-# The throttle combinator in the stream doctests needs the time feature, which
-# the library itself does not.
+# Combinators for the stream tests and doctests; the throttle combinator needs
+# the time feature. The library implements the stream trait via futures-core
+# alone, so consumers choose their own combinator crate.
 tokio-stream = { workspace = true, features = ["time"] }
 
 [features]
