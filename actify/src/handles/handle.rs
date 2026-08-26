@@ -1,5 +1,7 @@
 use std::any::Any;
 use std::any::type_name;
+#[cfg(feature = "profiler")]
+use std::collections::HashMap;
 use std::fmt::{self, Debug};
 use tokio::sync::{broadcast, mpsc, oneshot, watch};
 
@@ -64,7 +66,7 @@ where
     T: ToView<V>,
     V: Clone + Send + Sync + 'static,
 {
-    Box::new(move |inner: &T, method: &str| {
+    Box::new(move |inner: &T, method: &'static str| {
         if sender.receiver_count() > 0 {
             if sender.send(inner.to_view()).is_err() {
                 tracing::trace!(
@@ -578,7 +580,7 @@ impl<T: Send + Sync + 'static, V> Handle<T, V> {
     pub async fn set(&self, val: T) {
         self.run(val, |s, val| {
             s.inner = val;
-            s.broadcast(&format!("{}::set", type_name::<T>()));
+            s.broadcast("set");
         })
         .await
     }
@@ -611,7 +613,7 @@ impl<T: Send + Sync + 'static, V> Handle<T, V> {
         self.run(val, |s, val| {
             if s.inner != val {
                 s.inner = val;
-                s.broadcast(&format!("{}::set_if_changed", type_name::<T>()));
+                s.broadcast("set_if_changed");
             }
         })
         .await
@@ -692,10 +694,87 @@ impl<T: Send + Sync + 'static, V> Handle<T, V> {
     {
         self.run(f, |s, f| {
             let result = f(&mut s.inner);
-            s.broadcast(&format!("{}::with_mut", type_name::<T>()));
+            s.broadcast("with_mut");
             result
         })
         .await
+    }
+
+    /// Returns how many times each method has broadcast, since the actor
+    /// started or since the last [`Handle::take_broadcast_counts`].
+    ///
+    /// Keys are bare method names, as written in the `#[actify]` impl block,
+    /// with the built-ins reporting `set`, `set_if_changed` and `with_mut`.
+    /// Two methods sharing a name on the same actor share a counter.
+    ///
+    /// Counters belong to the actor, so clones of a handle read the same
+    /// counts, and a broadcast is counted even when no subscriber listens.
+    /// Reading runs as a job on the actor's queue, so it includes every
+    /// broadcast from jobs queued before it.
+    ///
+    /// # Stability
+    ///
+    /// The profiler is a development aid. Its API is exempt from semver and
+    /// may change or be removed in any release.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use actify::Handle;
+    /// # #[tokio::main]
+    /// # async fn main() {
+    /// let handle = Handle::new(0);
+    /// handle.set(1).await;
+    /// handle.set(2).await;
+    ///
+    /// assert_eq!(handle.broadcast_counts().await[&"set"], 2);
+    /// # }
+    /// ```
+    ///
+    /// # Panics
+    ///
+    /// Panics if the actor has stopped, either because one of its methods
+    /// panicked or because its runtime shut down. See [Actor lifetime and
+    /// panics](crate#actor-lifetime-and-panics).
+    #[cfg(feature = "profiler")]
+    pub async fn broadcast_counts(&self) -> HashMap<&'static str, usize> {
+        self.run((), |s, ()| s.broadcast_counts()).await
+    }
+
+    /// Returns the broadcast counts and resets them, as one job.
+    ///
+    /// Successive takes therefore measure disjoint phases: each returned map
+    /// covers exactly the broadcasts since the previous take. See
+    /// [`Handle::broadcast_counts`] for the shape of the keys, and for
+    /// reading without resetting.
+    ///
+    /// # Stability
+    ///
+    /// The profiler is a development aid. Its API is exempt from semver and
+    /// may change or be removed in any release.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use actify::Handle;
+    /// # #[tokio::main]
+    /// # async fn main() {
+    /// let handle = Handle::new(0);
+    /// handle.set(1).await;
+    ///
+    /// assert_eq!(handle.take_broadcast_counts().await[&"set"], 1);
+    /// assert!(handle.take_broadcast_counts().await.is_empty());
+    /// # }
+    /// ```
+    ///
+    /// # Panics
+    ///
+    /// Panics if the actor has stopped, either because one of its methods
+    /// panicked or because its runtime shut down. See [Actor lifetime and
+    /// panics](crate#actor-lifetime-and-panics).
+    #[cfg(feature = "profiler")]
+    pub async fn take_broadcast_counts(&self) -> HashMap<&'static str, usize> {
+        self.run((), |s, ()| s.take_broadcast_counts()).await
     }
 }
 

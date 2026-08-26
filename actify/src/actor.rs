@@ -34,7 +34,7 @@ pub fn get_sorted_broadcast_counts() -> Vec<(String, usize)> {
     v
 }
 
-pub(crate) type BroadcastFn<T> = Box<dyn Fn(&T, &str) + Send + Sync>;
+pub(crate) type BroadcastFn<T> = Box<dyn Fn(&T, &'static str) + Send + Sync>;
 
 /// The internal actor wrapper that runs in a separate task.
 ///
@@ -44,6 +44,8 @@ pub(crate) type BroadcastFn<T> = Box<dyn Fn(&T, &str) + Send + Sync>;
 pub struct Actor<T> {
     pub inner: T,
     broadcast_fn: BroadcastFn<T>,
+    #[cfg(feature = "profiler")]
+    broadcast_counts: HashMap<&'static str, usize>,
 }
 
 impl<T: Debug> Debug for Actor<T> {
@@ -57,18 +59,31 @@ impl<T> Actor<T> {
         Self {
             inner,
             broadcast_fn,
+            #[cfg(feature = "profiler")]
+            broadcast_counts: HashMap::new(),
         }
     }
 
-    pub fn broadcast(&self, method: &str) {
+    pub fn broadcast(&mut self, method: &'static str) {
         #[cfg(feature = "profiler")]
         {
-            if let Ok(mut counts) = BROADCAST_COUNTS.lock() {
-                *counts.entry(method.to_string()).or_insert(0) += 1;
-            }
+            *self.broadcast_counts.entry(method).or_default() += 1;
         }
 
         (self.broadcast_fn)(&self.inner, method);
+    }
+
+    /// The broadcasts per method since the actor started or since the last
+    /// take.
+    #[cfg(feature = "profiler")]
+    pub(crate) fn broadcast_counts(&self) -> HashMap<&'static str, usize> {
+        self.broadcast_counts.clone()
+    }
+
+    /// Returns the broadcast counts and resets them.
+    #[cfg(feature = "profiler")]
+    pub(crate) fn take_broadcast_counts(&mut self) -> HashMap<&'static str, usize> {
+        std::mem::take(&mut self.broadcast_counts)
     }
 }
 
