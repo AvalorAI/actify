@@ -106,7 +106,7 @@ fn method_body(
     let output_type = &method.output_type;
     let return_type = quote_return_type(output_type);
 
-    let ident_string = format!("{}::{}", info.type_ident, ident);
+    let ident_string = ident.to_string();
 
     let awaiter = if method.is_async {
         Some(quote! { .await })

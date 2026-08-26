@@ -17,8 +17,6 @@ fn accumulate(errors: &mut Option<Error>, error: Error) {
 pub struct ImplInfo {
     /// The full impl type, e.g. `TestStruct<T>`.
     pub impl_type: Box<Type>,
-    /// Just the type name, e.g. `TestStruct`.
-    pub type_ident: Ident,
     /// Generated handle trait name, e.g. `TestStructHandle`.
     pub handle_trait_ident: Ident,
     /// Impl-level generics (where clause guaranteed present via `make_where_clause`).
@@ -91,7 +89,6 @@ impl ImplInfo {
 
         Ok(ImplInfo {
             impl_type: impl_block.self_ty.clone(),
-            type_ident,
             handle_trait_ident,
             generics: impl_block.generics.clone(),
             trait_path,
