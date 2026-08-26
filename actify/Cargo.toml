@@ -13,7 +13,7 @@ repository.workspace = true
 
 [dependencies]
 tokio = { workspace = true, features = ["macros", "rt", "sync", "time"] }
-log.workspace = true
+tracing = { workspace = true, features = ["std"] }
 actify-macros.workspace = true
 
 [dev-dependencies]
@@ -21,6 +21,8 @@ tokio = { workspace = true, features = ["rt-multi-thread", "test-util"] }
 
 [features]
 default = []
+# Emits the events as log records whenever no tracing subscriber is set.
+log = ["tracing/log"]
 profiler = []
 
 [package.metadata.docs.rs]

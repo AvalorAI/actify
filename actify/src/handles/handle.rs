@@ -67,12 +67,18 @@ where
     Box::new(move |inner: &T, method: &str| {
         if sender.receiver_count() > 0 {
             if sender.send(inner.to_view()).is_err() {
-                log::trace!("Broadcast failed because there are no active receivers on {method:?}");
+                tracing::trace!(
+                    method,
+                    "Broadcast failed because there are no active receivers"
+                );
             } else {
-                log::trace!("Broadcasted new value on {method:?}");
+                tracing::trace!(method, "Broadcasted new value");
             }
         } else {
-            log::trace!("Skipping broadcast because there are no active receivers on {method:?}");
+            tracing::trace!(
+                method,
+                "Skipping broadcast because there are no active receivers"
+            );
         }
     })
 }

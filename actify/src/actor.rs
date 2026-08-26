@@ -3,6 +3,7 @@ use std::fmt::{self, Debug};
 use std::future::Future;
 use std::pin::Pin;
 use tokio::sync::{mpsc, oneshot, watch};
+use tracing::Instrument;
 
 /// A boxed future, as returned by an actor method.
 pub(crate) type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
@@ -104,7 +105,10 @@ pub(crate) type ExitState = Option<ActorExit>;
 /// `std::thread::panicking()` is true while a panic unwinds the task, which is
 /// what separates a panicking actor method from a runtime shutdown or a
 /// cancelled task - both of which drop the task without unwinding.
-struct ExitGuard(watch::Sender<ExitState>);
+struct ExitGuard {
+    exit_tx: watch::Sender<ExitState>,
+    actor_type: &'static str,
+}
 
 impl Drop for ExitGuard {
     fn drop(&mut self) {
@@ -113,24 +117,50 @@ impl Drop for ExitGuard {
         } else {
             ActorExit::Stopped
         };
-        let _ = self.0.send(Some(reason));
+        // A panic also reaches the std panic hook, but that prints to stderr,
+        // which a subscriber shipping structured logs never sees.
+        if reason == ActorExit::Panicked {
+            tracing::error!(actor_type = self.actor_type, reason = ?reason, "Actor stopped");
+        } else {
+            tracing::debug!(actor_type = self.actor_type, reason = ?reason, "Actor stopped");
+        }
+        let _ = self.exit_tx.send(Some(reason));
     }
 }
 
-pub(crate) async fn serve<T: Send + Sync + 'static>(
+/// Serves jobs inside an `actor` span that carries the actor type, so that
+/// instrumentation in actor methods nests under the actor task.
+///
+/// The span is created before the future is spawned, which parents it to
+/// whatever span is current where the handle is created. This is why it is a
+/// manual wrapper rather than `#[tracing::instrument]`: on an async fn the
+/// attribute creates its span at first poll, inside the spawned task, where
+/// the creation context is gone.
+pub(crate) fn serve<T: Send + Sync + 'static>(
+    rx: mpsc::Receiver<Job<T>>,
+    actor: Actor<T>,
+    exit_tx: watch::Sender<ExitState>,
+) -> impl Future<Output = ()> {
+    let span = tracing::info_span!("actor", actor_type = type_name::<T>());
+    run(rx, actor, exit_tx).instrument(span)
+}
+
+async fn run<T: Send + Sync + 'static>(
     mut rx: mpsc::Receiver<Job<T>>,
     mut actor: Actor<T>,
     exit_tx: watch::Sender<ExitState>,
 ) {
-    let _guard = ExitGuard(exit_tx);
+    let _guard = ExitGuard {
+        exit_tx,
+        actor_type: type_name::<T>(),
+    };
     while let Some(job) = rx.recv().await {
         let res = (job.call)(&mut actor, job.args).await;
         if job.respond_to.send(res).is_err() {
-            log::debug!(
-                "Actor of type {} failed to respond as the receiver is dropped",
-                type_name::<T>()
+            tracing::debug!(
+                actor_type = type_name::<T>(),
+                "Actor failed to respond as the receiver is dropped"
             );
         }
     }
-    log::debug!("Actor of type {} terminated", type_name::<T>());
 }

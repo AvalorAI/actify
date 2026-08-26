@@ -688,9 +688,10 @@ where
 }
 
 fn log_lag<V>(nr: u64) {
-    log::debug!(
-        "A receiver on actor type {} lagged {nr:?} messages",
-        std::any::type_name::<V>()
+    tracing::debug!(
+        actor_type = std::any::type_name::<V>(),
+        messages = nr,
+        "A cache receiver lagged"
     );
 }
 
