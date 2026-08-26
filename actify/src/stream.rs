@@ -27,6 +27,12 @@ where
     /// pays. To keep reading borrowed values through the cache as well, stream
     /// a clone: [`clone_newest`](Self::clone_newest) starts it synchronized.
     ///
+    /// On its own, each `next` is a `recv_newest` returning an owned value,
+    /// and a plain receive loop is the better fit. The stream pays for itself
+    /// once combinators stack on it: one loop following several actors,
+    /// reacting only to real changes, pacing a consumer. [`CacheStream`]
+    /// shows each of those.
+    ///
     /// # Examples
     ///
     /// ```
@@ -72,6 +78,51 @@ where
 /// counterpart for a task that is already consuming values.
 ///
 /// # Examples
+///
+/// One task following two actors. A select over two receives needs
+/// per-branch bookkeeping for which side woke it and whether the other is
+/// still open; the merge delivers whichever actor updated and ends by itself
+/// once both are gone:
+///
+/// ```
+/// # use actify::Handle;
+/// # use tokio_stream::StreamExt;
+/// enum Update {
+///     Altitude(f64),
+///     Battery(u8),
+/// }
+///
+/// # #[tokio::main]
+/// # async fn main() {
+/// let altitude = Handle::new(0.0f64);
+/// let battery = Handle::new(100u8);
+///
+/// let mut updates = altitude
+///     .cache()
+///     .await
+///     .into_stream_newest()
+///     .map(Update::Altitude)
+///     .merge(battery.cache().await.into_stream_newest().map(Update::Battery));
+///
+/// altitude.set(50.0).await;
+/// battery.set(98).await;
+/// drop(altitude);
+/// drop(battery);
+///
+/// let mut last_altitude = None;
+/// let mut last_battery = None;
+/// while let Some(update) = updates.next().await {
+///     match update {
+///         Update::Altitude(meters) => last_altitude = Some(meters),
+///         Update::Battery(percent) => last_battery = Some(percent),
+///     }
+/// }
+///
+/// // The loop ended on its own, holding the newest state of each actor
+/// assert_eq!(last_altitude, Some(50.0));
+/// assert_eq!(last_battery, Some(98));
+/// # }
+/// ```
 ///
 /// Reacting only to actual changes: the filter keeps the previous value, so
 /// the loop body no longer has to. [`set_if_changed`](crate::Handle::set_if_changed)

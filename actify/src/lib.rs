@@ -360,8 +360,10 @@
 //!
 //! [`Cache::into_stream_newest`] consumes a cache into a [`CacheStream`],
 //! which yields each newest value as an owned item and composes with
-//! `StreamExt` combinators. See [`CacheStream`] for when to prefer it over a
-//! receive loop.
+//! `StreamExt` combinators: one loop following several actors is `merge`,
+//! reacting only to real changes is `filter`, pacing a consumer is
+//! `throttle`. Each is shown on [`CacheStream`]; a plain receive loop is the
+//! better fit when none of them apply.
 //!
 //! See [`CacheRecvError`] for the possible error conditions.
 //!

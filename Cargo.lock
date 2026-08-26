@@ -30,6 +30,7 @@ dependencies = [
  "env_logger",
  "log",
  "tokio",
+ "tokio-stream",
  "tracing",
  "trybuild",
 ]
