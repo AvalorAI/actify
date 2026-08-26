@@ -7,8 +7,10 @@ name = "actify"
 version = "0.8.3"
 dependencies = [
  "actify-macros",
+ "futures-core",
  "log",
  "tokio",
+ "tokio-stream",
 ]
 
 [[package]]
@@ -28,6 +30,7 @@ dependencies = [
  "env_logger",
  "log",
  "tokio",
+ "tokio-stream",
  "tracing",
  "trybuild",
 ]
@@ -149,6 +152,12 @@ name = "equivalent"
 version = "1.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "877a4ace8713b0bcf2a4e7eec82529c029f1d0619886d18145fea96c3ffe5c0f"
+
+[[package]]
+name = "futures-core"
+version = "0.3.32"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7e3450815272ef58cec6d564423f6e755e25379b217b0bc688e295ba24df6b1d"
 
 [[package]]
 name = "glob"
@@ -483,6 +492,17 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn",
+]
+
+[[package]]
+name = "tokio-stream"
+version = "0.1.19"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a3d06f0b082ba57c26b79407372e57cf2a1e28124f78e9479fe80322cf53420b"
+dependencies = [
+ "futures-core",
+ "pin-project-lite",
+ "tokio",
 ]
 
 [[package]]

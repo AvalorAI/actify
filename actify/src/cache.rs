@@ -89,6 +89,13 @@ where
         &self.inner
     }
 
+    /// Splits the cache into what a [`CacheStream`](crate::CacheStream) needs:
+    /// the receiver, and the held value only while no read has claimed it yet,
+    /// so a consumed first read cannot be replayed by the stream.
+    pub(crate) fn into_parts(self) -> (Option<V>, Receiver<V>) {
+        (self.first_request.then_some(self.inner), self.rx)
+    }
+
     /// Drains all buffered messages from the channel, keeping only the newest value.
     /// Returns `true` if any value was stored.
     ///
@@ -687,7 +694,7 @@ where
     }
 }
 
-fn log_lag<V>(nr: u64) {
+pub(crate) fn log_lag<V>(nr: u64) {
     log::debug!(
         "A receiver on actor type {} lagged {nr:?} messages",
         std::any::type_name::<V>()

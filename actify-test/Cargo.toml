@@ -19,6 +19,8 @@ trybuild.workspace = true
 # trybuild builds the compile-fail cases in a generated crate that takes its
 # tokio features from this section, not from [dependencies].
 tokio = { workspace = true, features = ["rt-multi-thread", "test-util"] }
+# Combinators for the stream tests; throttle needs the time feature.
+tokio-stream = { workspace = true, features = ["time"] }
 
 [features]
 default = []
