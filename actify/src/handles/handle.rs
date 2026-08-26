@@ -1214,6 +1214,42 @@ mod tests {
                 HashMap::from([("set", 1)])
             );
         }
+
+        /// Reading the counts must not change them; only a take resets.
+        #[tokio::test]
+        async fn test_broadcast_counts_peek_does_not_reset() {
+            let handle = Handle::new(0);
+            handle.set(1).await;
+
+            assert_eq!(handle.broadcast_counts().await, HashMap::from([("set", 1)]));
+            assert_eq!(handle.broadcast_counts().await, HashMap::from([("set", 1)]));
+        }
+
+        /// Only broadcasts are counted, so read-only calls leave no key.
+        #[tokio::test]
+        async fn test_non_broadcasting_calls_are_not_counted() {
+            let handle = Handle::new(0);
+            let _rx = handle.subscribe();
+            handle.get().await;
+            handle.with(|value| *value).await;
+
+            assert_eq!(handle.broadcast_counts().await, HashMap::new());
+        }
+
+        /// Counters belong to the actor, so clones of a handle read the same
+        /// counts while another actor's counts stay separate.
+        #[tokio::test]
+        async fn test_broadcast_counts_are_per_actor_and_shared_across_clones() {
+            let first = Handle::new(0);
+            let clone = first.clone();
+            let other = Handle::new(0);
+
+            first.set(1).await;
+            clone.set(2).await;
+
+            assert_eq!(clone.broadcast_counts().await, HashMap::from([("set", 2)]));
+            assert_eq!(other.broadcast_counts().await, HashMap::new());
+        }
     }
 
     /// A caller that stops waiting must not stop the actor. Wrapping a call
