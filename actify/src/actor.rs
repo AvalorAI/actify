@@ -132,7 +132,10 @@ impl Drop for ExitGuard {
 /// instrumentation in actor methods nests under the actor task.
 ///
 /// The span is created before the future is spawned, which parents it to
-/// whatever span is current where the handle is created.
+/// whatever span is current where the handle is created. This is why it is a
+/// manual wrapper rather than `#[tracing::instrument]`: on an async fn the
+/// attribute creates its span at first poll, inside the spawned task, where
+/// the creation context is gone.
 pub(crate) fn serve<T: Send + Sync + 'static>(
     rx: mpsc::Receiver<Job<T>>,
     actor: Actor<T>,
