@@ -126,6 +126,7 @@ impl<T, V> Debug for Handle<T, V> {
 }
 
 impl<T: Default + Clone + Send + Sync + 'static> Default for Handle<T> {
+    #[cfg_attr(feature = "profiler", track_caller)]
     fn default() -> Self {
         Handle::new(T::default())
     }
@@ -159,15 +160,15 @@ where
     /// let mut rx = handle.subscribe();
     /// # }
     /// ```
+    #[cfg_attr(feature = "profiler", track_caller)]
     pub fn new(val: T) -> Handle<T, V> {
         let (tx, rx) = mpsc::channel(CHANNEL_SIZE);
         let (broadcast_tx, _) = broadcast::channel::<V>(CHANNEL_SIZE);
         let (exit_tx, exit_rx) = watch::channel(None);
-        tokio::spawn(serve(
-            rx,
-            Actor::new(make_broadcast_fn(broadcast_tx.clone()), val),
-            exit_tx,
-        ));
+        let actor = Actor::new(make_broadcast_fn(broadcast_tx.clone()), val);
+        #[cfg(feature = "profiler")]
+        actor.register(std::panic::Location::caller());
+        tokio::spawn(serve(rx, actor, exit_tx));
         Handle {
             tx,
             broadcast_sender: broadcast_tx,
@@ -1257,14 +1258,14 @@ mod tests {
         #[tokio::test]
         async fn test_global_snapshot_distinguishes_actor_instances() {
             #[derive(Debug, Clone)]
-            struct SnapshotProbe(i32);
+            struct SnapshotProbe;
 
-            let first = Handle::new(SnapshotProbe(0));
-            let second = Handle::new(SnapshotProbe(0));
+            let first = Handle::new(SnapshotProbe);
+            let second = Handle::new(SnapshotProbe);
 
-            first.set(SnapshotProbe(1)).await;
-            second.set(SnapshotProbe(2)).await;
-            second.set(SnapshotProbe(3)).await;
+            first.set(SnapshotProbe).await;
+            second.set(SnapshotProbe).await;
+            second.set(SnapshotProbe).await;
 
             let probes: Vec<_> = crate::broadcast_counts()
                 .into_iter()
