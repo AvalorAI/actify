@@ -10,7 +10,7 @@ they record what changed rather than why, and are not exhaustive. 0.8.0 through
 ## [Unreleased]
 
 This release is breaking. Most of it is renames the compiler will point at,
-recorded in the table under Changed. Four changes compile cleanly and behave
+recorded in the table under Changed. Five changes compile cleanly and behave
 differently, each detailed in its own entry:
 
 - Methods taking `&self` no longer broadcast.
@@ -18,6 +18,8 @@ differently, each detailed in its own entry:
 - Cloning a `Cache` yields a fresh cache.
 - Throttle spawns return a `Throttle`, and dropping it leaves the throttle
   running.
+- Diagnostics are emitted through `tracing`; a `log` logger alone no longer
+  shows them.
 
 ### Added
 
@@ -163,6 +165,16 @@ differently, each detailed in its own entry:
 - `Throttle::abort` and `Throttle::is_finished`. A throttle spawned by
   `Throttle::spawn_interval` has no actor attached, so before this nothing could
   stop it short of shutting down the runtime.
+- Every actor task runs inside a tracing span named `actor`, at INFO level, with
+  the actor type in its `actor_type` field. Instrumentation in actor methods
+  nests under the actor serving them rather than sitting beside it. The span is
+  created where the handle is created, which parents it to the span that is
+  current there.
+- A `log` feature, off by default, for dependents that read diagnostics through
+  the `log` crate. It forwards tracing's own `log` feature, which emits every
+  event as a log record whenever no tracing subscriber is set. Cargo features
+  unify across a build, so enabling it switches every tracing-using crate in
+  the binary the same way.
 
 ### Changed
 
@@ -189,6 +201,14 @@ differently, each detailed in its own entry:
   Cargo unions features across a dependency graph, so code that used `tokio::fs`,
   `tokio::net` or another module without asking for it in its own manifest was
   relying on actify to enable it, and must now name the feature itself.
+
+
+- **Breaking:** diagnostics are emitted through `tracing` instead of `log`.
+  Levels are unchanged. The type names, dropped message counts and method names
+  that were formatted into message text are now fields on the events:
+  `actor_type`, `messages` and `method`. A dependent reading them through a
+  `log` logger sees nothing until it enables the `log` feature or sets a
+  tracing subscriber.
 
 
 - **Breaking:** the generated handle traits declare their methods

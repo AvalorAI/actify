@@ -484,8 +484,29 @@
 //! Calls after the actor's runtime has shut down panic too, reporting that the
 //! actor is no longer running.
 //!
+//! # Instrumentation
+//!
+//! Diagnostics are emitted through [`tracing`]. Every actor task runs inside
+//! an `actor` span at INFO level whose `actor_type` field names the actor
+//! type, so instrumentation in actor methods nests under the actor serving
+//! them. The span is created where the handle is created, which parents it to
+//! the span that is current there.
+//!
+//! An actor that stops and a [`Cache`] or [`Throttle`] that falls behind are
+//! reported at DEBUG, the latter with the number of dropped values in a
+//! `messages` field. Each broadcast is reported at TRACE with the method that
+//! caused it.
+//!
+//! Nothing is emitted without a tracing subscriber. A dependent reading
+//! diagnostics through the `log` crate can enable the `log` feature instead.
+//!
 //! # Feature flags
 //!
+//! - `log`: emits the events as `log` records whenever no tracing subscriber
+//!   is set, by forwarding to tracing's own `log` feature. Span fields do not
+//!   reach those records, which is why the events name the actor type
+//!   themselves. Cargo features unify across a build, so enabling it switches
+//!   every tracing-using crate in the binary the same way.
 //! - `profiler`: counts broadcasts per method, readable through
 //!   `get_broadcast_counts` and `get_sorted_broadcast_counts`. Counters are
 //!   process-wide and never reset.
