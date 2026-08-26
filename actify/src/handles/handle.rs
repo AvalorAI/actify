@@ -711,7 +711,9 @@ impl<T: Send + Sync + 'static, V> Handle<T, V> {
     /// Counters belong to the actor, so clones of a handle read the same
     /// counts, and a broadcast is counted even when no subscriber listens.
     /// Reading runs as a job on the actor's queue, so it includes every
-    /// broadcast from jobs queued before it.
+    /// broadcast from jobs queued before it. To see every live actor in the
+    /// process without holding their handles, use the free function
+    /// [`broadcast_counts`](crate::broadcast_counts).
     ///
     /// # Stability
     ///

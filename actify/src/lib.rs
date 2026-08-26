@@ -511,8 +511,10 @@
 //!   every tracing-using crate in the binary the same way.
 //! - `profiler`: counts broadcasts per method on each actor, readable through
 //!   `Handle::broadcast_counts` and drained per phase through
-//!   `Handle::take_broadcast_counts`. A development aid: its API is exempt
-//!   from semver and may change or be removed in any release.
+//!   `Handle::take_broadcast_counts`. The free function `broadcast_counts`
+//!   snapshots every live actor in the process, one entry per actor with its
+//!   type and the call site it was spawned from. A development aid: its API
+//!   is exempt from semver and may change or be removed in any release.
 
 /// The README examples, compiled and run as part of the test suite.
 ///

@@ -187,6 +187,15 @@ differently, each detailed in its own entry:
   phases, where the old totals only ever grew. The profiler is a development
   aid: its API is exempt from semver and may change or be removed in any
   release.
+- `broadcast_counts`, a free function snapshotting every live actor in the
+  process without holding any handle. Each actor appears as its own
+  `ActorCounts` entry: a spawn-order id and the `Handle::new` call site,
+  captured through `#[track_caller]`, tell instances of the same type apart.
+  A registry of weak references feeds the snapshot, so it keeps no actor
+  alive and dead actors fall out of it; the registry is only locked at spawn
+  and at snapshot, never per broadcast. A code path that reaches
+  `Handle::new` through its own helper reports the helper's caller only if
+  that helper is also `#[track_caller]`.
 
 ### Changed
 

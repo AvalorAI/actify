@@ -32,8 +32,7 @@ struct RegistryEntry {
 }
 
 #[cfg(feature = "profiler")]
-static REGISTRY: LazyLock<Mutex<Vec<RegistryEntry>>> =
-    LazyLock::new(|| Mutex::new(Vec::new()));
+static REGISTRY: LazyLock<Mutex<Vec<RegistryEntry>>> = LazyLock::new(|| Mutex::new(Vec::new()));
 
 #[cfg(feature = "profiler")]
 static NEXT_ID: AtomicU64 = AtomicU64::new(0);
