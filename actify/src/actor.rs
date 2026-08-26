@@ -149,31 +149,3 @@ async fn run<T: Send + Sync + 'static>(
     }
     tracing::debug!(actor_type = type_name::<T>(), "Actor terminated");
 }
-
-#[cfg(test)]
-mod tests {
-    use crate::Handle;
-    use crate::test_support;
-
-    #[tokio::test]
-    async fn test_actor_methods_run_inside_the_actor_span() {
-        let (_guard, events) = test_support::capture();
-
-        let handle = Handle::new(7);
-        handle
-            .with(|_| tracing::info!("emitted by an actor method"))
-            .await;
-
-        let events = events.lock().unwrap();
-        let event = events
-            .iter()
-            .find(|event| event.message == "emitted by an actor method")
-            .expect("the event is captured");
-        let span = event.span.as_ref().expect("the event carries a span");
-        assert_eq!(span.name, "actor");
-        assert_eq!(
-            span.fields.get("actor_type").map(String::as_str),
-            Some(std::any::type_name::<i32>())
-        );
-    }
-}

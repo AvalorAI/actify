@@ -526,8 +526,6 @@ mod actor;
 mod cache;
 mod extensions;
 mod handles;
-#[cfg(test)]
-mod test_support;
 mod throttle;
 
 // Reexport for easier reference

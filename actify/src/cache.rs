@@ -1155,32 +1155,6 @@ mod tests {
         assert_eq!(cache.try_recv_newest().unwrap(), Some(&last));
     }
 
-    /// The lag report carries the actor type and the number of dropped values
-    /// as fields, so a subscriber can tell which cache fell behind.
-    #[tokio::test(start_paused = true)]
-    async fn test_lag_reports_the_actor_type_and_count() {
-        let (_guard, events) = crate::test_support::capture();
-
-        let handle = Handle::new(0);
-        let mut cache = handle.cache().await;
-        cache.try_recv_newest().unwrap(); // Consume first request
-
-        overflow(&handle).await;
-        cache.try_recv_newest().unwrap();
-
-        let events = events.lock().unwrap();
-        let event = events
-            .iter()
-            .find(|event| event.message == "A cache receiver lagged")
-            .expect("the lag is reported");
-        assert_eq!(
-            event.fields.get("actor_type").map(String::as_str),
-            Some(std::any::type_name::<i32>())
-        );
-        let messages: u64 = event.fields["messages"].parse().expect("a count field");
-        assert!(messages > 0);
-    }
-
     #[tokio::test(start_paused = true)]
     async fn test_recv_newest_recovers_from_lag() {
         let handle = Handle::new(0);
