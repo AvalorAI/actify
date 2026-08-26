@@ -549,6 +549,3 @@ pub use throttle::{BoxFuture, Frequency, Throttle};
 pub mod __private {
     pub use crate::actor::Actor;
 }
-
-#[cfg(feature = "profiler")]
-pub use actor::{get_broadcast_counts, get_sorted_broadcast_counts};
