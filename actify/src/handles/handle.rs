@@ -1250,6 +1250,68 @@ mod tests {
             assert_eq!(clone.broadcast_counts().await, HashMap::from([("set", 2)]));
             assert_eq!(other.broadcast_counts().await, HashMap::new());
         }
+
+        /// The global snapshot lists every live actor separately, in spawn
+        /// order: same-type actors are told apart by their id and by the
+        /// call site that spawned them.
+        #[tokio::test]
+        async fn test_global_snapshot_distinguishes_actor_instances() {
+            #[derive(Debug, Clone)]
+            struct SnapshotProbe(i32);
+
+            let first = Handle::new(SnapshotProbe(0));
+            let second = Handle::new(SnapshotProbe(0));
+
+            first.set(SnapshotProbe(1)).await;
+            second.set(SnapshotProbe(2)).await;
+            second.set(SnapshotProbe(3)).await;
+
+            let probes: Vec<_> = crate::broadcast_counts()
+                .into_iter()
+                .filter(|actor| actor.actor_type.contains("SnapshotProbe"))
+                .collect();
+
+            assert_eq!(probes.len(), 2, "expected both probes, got {probes:?}");
+            assert_ne!(probes[0].id, probes[1].id);
+            assert_eq!(probes[0].counts, HashMap::from([("set", 1)]));
+            assert_eq!(probes[1].counts, HashMap::from([("set", 2)]));
+            assert!(probes[0].spawned_at.file().ends_with("handle.rs"));
+            assert_ne!(
+                probes[0].spawned_at.line(),
+                probes[1].spawned_at.line(),
+                "each Handle::new call site is its own spawn location"
+            );
+        }
+
+        /// An actor whose task has ended falls out of the snapshot, so the
+        /// registry does not grow with dead actors and keeps none alive.
+        #[tokio::test]
+        async fn test_global_snapshot_prunes_dead_actors() {
+            #[derive(Debug, Clone)]
+            struct PruneProbe;
+
+            fn live() -> usize {
+                crate::broadcast_counts()
+                    .iter()
+                    .filter(|actor| actor.actor_type.contains("PruneProbe"))
+                    .count()
+            }
+
+            let handle = Handle::new(PruneProbe);
+            assert_eq!(live(), 1);
+
+            drop(handle);
+
+            // The actor task ends on its own schedule after the last handle
+            // drops, so poll until the entry is gone.
+            tokio::time::timeout(std::time::Duration::from_secs(5), async {
+                while live() > 0 {
+                    tokio::task::yield_now().await;
+                }
+            })
+            .await
+            .expect("the dead actor stayed in the snapshot");
+        }
     }
 
     /// A caller that stops waiting must not stop the actor. Wrapping a call
