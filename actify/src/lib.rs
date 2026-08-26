@@ -492,10 +492,12 @@
 //! them. The span is created where the handle is created, which parents it to
 //! the span that is current there.
 //!
-//! An actor that stops and a [`Cache`] or [`Throttle`] that falls behind are
-//! reported at DEBUG, the latter with the number of dropped values in a
-//! `messages` field. Each broadcast is reported at TRACE with the method that
-//! caused it.
+//! Every actor exit is reported with the reason as a field: at ERROR when a
+//! method panicked, at DEBUG when the actor stopped because its handles were
+//! dropped or its runtime shut down. A [`Cache`] or [`Throttle`] that falls
+//! behind is reported at DEBUG with the number of dropped values in a
+//! `messages` field, and each broadcast at TRACE with the method that caused
+//! it.
 //!
 //! Nothing is emitted without a tracing subscriber. A dependent reading
 //! diagnostics through the `log` crate can enable the `log` feature instead.

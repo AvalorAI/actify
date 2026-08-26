@@ -105,7 +105,10 @@ pub(crate) type ExitState = Option<ActorExit>;
 /// `std::thread::panicking()` is true while a panic unwinds the task, which is
 /// what separates a panicking actor method from a runtime shutdown or a
 /// cancelled task - both of which drop the task without unwinding.
-struct ExitGuard(watch::Sender<ExitState>);
+struct ExitGuard {
+    exit_tx: watch::Sender<ExitState>,
+    actor_type: &'static str,
+}
 
 impl Drop for ExitGuard {
     fn drop(&mut self) {
@@ -114,7 +117,14 @@ impl Drop for ExitGuard {
         } else {
             ActorExit::Stopped
         };
-        let _ = self.0.send(Some(reason));
+        // A panic also reaches the std panic hook, but that prints to stderr,
+        // which a subscriber shipping structured logs never sees.
+        if reason == ActorExit::Panicked {
+            tracing::error!(actor_type = self.actor_type, reason = ?reason, "Actor stopped");
+        } else {
+            tracing::debug!(actor_type = self.actor_type, reason = ?reason, "Actor stopped");
+        }
+        let _ = self.exit_tx.send(Some(reason));
     }
 }
 
@@ -137,7 +147,10 @@ async fn run<T: Send + Sync + 'static>(
     mut actor: Actor<T>,
     exit_tx: watch::Sender<ExitState>,
 ) {
-    let _guard = ExitGuard(exit_tx);
+    let _guard = ExitGuard {
+        exit_tx,
+        actor_type: type_name::<T>(),
+    };
     while let Some(job) = rx.recv().await {
         let res = (job.call)(&mut actor, job.args).await;
         if job.respond_to.send(res).is_err() {
@@ -147,5 +160,4 @@ async fn run<T: Send + Sync + 'static>(
             );
         }
     }
-    tracing::debug!(actor_type = type_name::<T>(), "Actor terminated");
 }

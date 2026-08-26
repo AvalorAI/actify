@@ -73,6 +73,46 @@ async fn test_actor_methods_run_inside_the_actor_span() {
     assert!(line.contains(&span), "no actor span on: {line}");
 }
 
+/// A panicking method is the exit a subscriber must not miss: the std panic
+/// hook prints to stderr, which never reaches a structured log pipeline.
+#[tokio::test]
+async fn test_a_panicking_actor_reports_its_exit_as_an_error() {
+    let (_guard, output) = capture();
+
+    let handle = Handle::new(7);
+    let caller = handle.clone();
+    let _ = tokio::spawn(async move { caller.with_mut(|_| panic!("boom")).await }).await;
+
+    let output = output.contents();
+    let line = output
+        .lines()
+        .find(|line| line.contains("Actor stopped"))
+        .expect("the exit is reported");
+    assert!(line.contains("ERROR"), "wrong level on: {line}");
+    assert!(line.contains("reason=Panicked"), "no reason on: {line}");
+    let actor_type = format!("actor_type=\"{}\"", std::any::type_name::<i32>());
+    assert!(line.contains(&actor_type), "no actor type on: {line}");
+}
+
+/// Dropping every handle ends the actor task without unwinding, which is an
+/// unremarkable exit and reports at DEBUG.
+#[tokio::test]
+async fn test_a_dropped_actor_reports_its_exit() {
+    let (_guard, output) = capture();
+
+    let handle = Handle::new(7);
+    drop(handle);
+    tokio::task::yield_now().await;
+
+    let output = output.contents();
+    let line = output
+        .lines()
+        .find(|line| line.contains("Actor stopped"))
+        .expect("the exit is reported");
+    assert!(line.contains("DEBUG"), "wrong level on: {line}");
+    assert!(line.contains("reason=Stopped"), "no reason on: {line}");
+}
+
 /// The lag report carries the actor type and the number of dropped values as
 /// fields, so a subscriber can tell which cache fell behind.
 #[tokio::test]

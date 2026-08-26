@@ -170,6 +170,11 @@ differently, each detailed in its own entry:
   nests under the actor serving them rather than sitting beside it. The span is
   created where the handle is created, which parents it to the span that is
   current there.
+- Every actor exit is reported with the reason as a field: at ERROR when a
+  method panicked, at DEBUG when the actor stopped because its handles were
+  dropped or its runtime shut down. A panic previously reached only the std
+  panic hook on stderr, which a subscriber shipping structured logs never
+  sees, and a runtime shutdown emitted nothing.
 - A `log` feature, off by default, for dependents that read diagnostics through
   the `log` crate. It forwards tracing's own `log` feature, which emits every
   event as a log record whenever no tracing subscriber is set. Cargo features
