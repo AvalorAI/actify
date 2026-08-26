@@ -1177,6 +1177,24 @@ mod tests {
             );
         }
 
+        /// The macro and the built-ins report keys of the same shape, so the
+        /// counts of one actor are comparable to each other.
+        #[tokio::test]
+        async fn test_broadcast_counts_use_bare_method_names() {
+            use crate::VecHandle;
+
+            let handle = Handle::new(vec![0]);
+            handle.push(1).await;
+            handle.push(2).await;
+            handle.set(vec![3]).await;
+            handle.with_mut(|v| v.pop()).await;
+
+            assert_eq!(
+                handle.take_broadcast_counts().await,
+                HashMap::from([("push", 2), ("set", 1), ("with_mut", 1)])
+            );
+        }
+
         /// A take returns only the broadcasts since the previous take, so
         /// successive takes measure disjoint phases.
         #[tokio::test]
