@@ -18,10 +18,12 @@ repository = "https://github.com/AvalorAI/actify"
 # reaches into actify::__private, which carries no stability promise.
 actify-macros = { path = "actify-macros", version = "=0.5.0" }
 env_logger = "0.11"
+futures-core = "0.3"
 log = "0.4"
 proc-macro2 = "1.0"
 quote = "1.0"
 syn = { version = "2.0", features = ["full"] }
 tokio = { version = "1.44.1", default-features = false }
+tokio-stream = { version = "0.1", default-features = false }
 tracing = "0.1"
 trybuild = "1"

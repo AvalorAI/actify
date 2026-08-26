@@ -18,6 +18,7 @@
 //! * Automatic [broadcasting] of state changes to subscribers
 //! * Local synchronization through [`Cache`]
 //! * Rate-limited updates through [`Throttle`]
+//! * Stream combinators over broadcast state through [`CacheStream`]
 //! * Built-in [extension traits] for common standard library types
 //!
 //! [tokio]: https://docs.rs/tokio/latest/tokio/
@@ -357,6 +358,11 @@
 //! [`Cache::wait_until`] waits until the cached value satisfies a predicate,
 //! reading through the cache so it holds the value that matched.
 //!
+//! [`Cache::into_stream_newest`] consumes a cache into a [`CacheStream`],
+//! which yields each newest value as an owned item and composes with
+//! `StreamExt` combinators. See [`CacheStream`] for when to prefer it over a
+//! receive loop.
+//!
 //! See [`CacheRecvError`] for the possible error conditions.
 //!
 //! # ReadHandle
@@ -505,6 +511,7 @@ mod actor;
 mod cache;
 mod extensions;
 mod handles;
+mod stream;
 mod throttle;
 
 // Reexport for easier reference
@@ -515,6 +522,7 @@ pub use extensions::{
     vec::VecHandle, vecdeque::VecDequeHandle,
 };
 pub use handles::{Handle, ReadHandle, ToView};
+pub use stream::CacheStream;
 pub use throttle::{BoxFuture, Frequency, Throttle};
 
 /// The crate's own items that the [`actify`](macro@crate::actify) macro needs in
