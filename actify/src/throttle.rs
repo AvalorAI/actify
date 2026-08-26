@@ -806,6 +806,25 @@ mod tests {
             assert_eq!(state.next::<i32>().await, Some(oldest_kept));
         }
 
+        /// The lag marker repositions the receiver, and the drain continues
+        /// through it to the values the channel still holds.
+        #[test]
+        fn test_drain_available_reads_through_lag() {
+            const CAPACITY: usize = 2;
+            const SENT: i32 = 10;
+
+            let (tx, rx) = broadcast::channel(CAPACITY);
+            let mut rx = Some(rx);
+            let mut current = None;
+
+            for value in 0..SENT {
+                tx.send(value).unwrap();
+            }
+
+            assert!(drain_available(&mut rx, &mut current));
+            assert_eq!(current, Some(SENT - 1));
+        }
+
         #[tokio::test(start_paused = true)]
         async fn test_current_applies_parse() {
             let (_tx, rx) = broadcast::channel::<A>(8);
@@ -1529,28 +1548,24 @@ mod tests {
 
     #[tokio::test(start_paused = true)]
     async fn test_the_callback_payload_is_inferred() {
+        let calls = Arc::new(Mutex::new(0));
+        let client = DummyClient {
+            calls: calls.clone(),
+        };
+
         // The blanket implementation covers a callback taking the value itself
-        let _ = Throttle::spawn_interval(
-            DummyClient {},
-            DummyClient::call_a,
-            Duration::from_millis(100),
-            A {},
-        );
+        let a = Throttle::spawn_interval(client.clone(), DummyClient::call_a, PERIOD, A {});
 
         // A has a ToView impl for both B and C, and the callback picks which
-        let _ = Throttle::spawn_interval(
-            DummyClient {},
-            DummyClient::call_b,
-            Duration::from_millis(100),
-            A {},
-        );
+        let b = Throttle::spawn_interval(client.clone(), DummyClient::call_b, PERIOD, A {});
+        let c = Throttle::spawn_interval(client, DummyClient::call_c, PERIOD, A {});
 
-        let _ = Throttle::spawn_interval(
-            DummyClient {},
-            DummyClient::call_c,
-            Duration::from_millis(100),
-            A {},
-        );
+        sleep(PERIOD / 2).await;
+        assert_eq!(*calls.lock().unwrap(), 3);
+
+        for throttle in [a, b, c] {
+            throttle.abort();
+        }
     }
 
     #[derive(Debug, Clone)]
@@ -1575,12 +1590,26 @@ mod tests {
     }
 
     #[derive(Debug, Clone)]
-    struct DummyClient {}
+    struct DummyClient {
+        calls: Arc<Mutex<i32>>,
+    }
 
     impl DummyClient {
-        fn call_a(&self, _event: A) {}
-        fn call_b(&self, _event: B) {}
-        fn call_c(&self, _event: C) {}
+        fn count(&self) {
+            *self.calls.lock().unwrap() += 1;
+        }
+
+        fn call_a(&self, _event: A) {
+            self.count()
+        }
+
+        fn call_b(&self, _event: B) {
+            self.count()
+        }
+
+        fn call_c(&self, _event: C) {
+            self.count()
+        }
     }
 
     #[derive(Debug, Clone)]

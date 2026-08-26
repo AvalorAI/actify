@@ -774,6 +774,19 @@ mod tests {
             assert_eq!(start.elapsed(), Duration::ZERO);
         }
 
+        /// A lagging receiver is logged and the wait continues, so
+        /// [`CacheRecvError::Lagged`] never surfaces.
+        #[tokio::test(start_paused = true)]
+        async fn test_the_wait_survives_lag() {
+            let handle = Handle::new(0);
+            let mut cache = handle.cache().await;
+            cache.try_recv().unwrap(); // Consume first request
+
+            let last = overflow(&handle).await;
+
+            assert_eq!(finished(cache.wait_until(|v| *v == last)).await, Ok(&last));
+        }
+
         #[tokio::test(start_paused = true)]
         async fn test_the_wait_ends_on_the_matching_update() {
             let handle = Handle::new(0);
@@ -1215,6 +1228,40 @@ mod tests {
             assert_eq!(cache.blocking_recv_newest().unwrap(), &2);
             // Only once the queue is drained does the closed channel surface
             assert_eq!(cache.blocking_recv_newest(), Err(CacheRecvError::Closed));
+        })
+        .join()
+        .unwrap();
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn test_blocking_recv_reports_lag() {
+        let handle = Handle::new(0);
+        let mut cache = handle.cache().await;
+        cache.try_recv().unwrap(); // Consume first request
+
+        overflow(&handle).await;
+
+        std::thread::spawn(move || {
+            let err = cache.blocking_recv().unwrap_err();
+            assert!(matches!(err, CacheRecvError::Lagged(n) if n > 0));
+
+            // Reporting the lag repositions the receiver, so the cache keeps working
+            assert!(cache.blocking_recv().is_ok());
+        })
+        .join()
+        .unwrap();
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn test_blocking_recv_newest_recovers_from_lag() {
+        let handle = Handle::new(0);
+        let mut cache = handle.cache().await;
+        cache.blocking_recv_newest().unwrap(); // Consume first request
+
+        let last = overflow(&handle).await;
+
+        std::thread::spawn(move || {
+            assert_eq!(cache.blocking_recv_newest().unwrap(), &last);
         })
         .join()
         .unwrap();

@@ -37,6 +37,8 @@ trait ActorSet<K> {
 
     fn is_superset(&self, other: HashSet<K>) -> bool;
 
+    fn is_disjoint(&self, other: HashSet<K>) -> bool;
+
     fn take(&mut self, value: K) -> Option<K>;
 
     fn replace(&mut self, value: K) -> Option<K>;
@@ -335,6 +337,24 @@ where
         self.is_superset(&other)
     }
 
+    /// Returns `true` if `self` and `other` have no elements in common.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use actify::{Handle, HashSetHandle};
+    /// # use std::collections::HashSet;
+    /// # #[tokio::main]
+    /// # async fn main() {
+    /// let handle = Handle::new(HashSet::from([1, 2, 3]));
+    /// assert!(handle.is_disjoint(HashSet::from([4, 5])).await);
+    /// assert!(!handle.is_disjoint(HashSet::from([3, 4])).await);
+    /// # }
+    /// ```
+    fn is_disjoint(&self, other: HashSet<K>) -> bool {
+        self.is_disjoint(&other)
+    }
+
     /// Removes the stored element equal to `value` and returns it, or `None` if
     /// the set does not hold one.
     ///
@@ -435,6 +455,9 @@ mod tests {
         let subset = HashSet::from([1, 2]);
         assert!(handle.is_superset(subset.clone()).await);
         assert!(!handle.is_subset(subset).await);
+
+        assert!(handle.is_disjoint(HashSet::from([4, 5])).await);
+        assert!(!handle.is_disjoint(HashSet::from([3, 4])).await);
     }
     /// `Eq` and `Hash` read only the id, so two elements can be equal while
     /// carrying different labels. Without that, nothing tells `take` from
