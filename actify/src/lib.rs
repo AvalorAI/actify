@@ -513,10 +513,10 @@
 //!   `Handle::broadcast_counts` and drained per phase through
 //!   `Handle::take_broadcast_counts`. The free function `broadcast_counts`
 //!   snapshots every live actor in the process, one entry per actor with its
-//!   type and the call site it was spawned from, and `stopped_broadcast_counts`
-//!   keeps the work of stopped actors, summed per spawn site. A development
-//!   aid: its API is exempt from semver and may change or be removed in any
-//!   release.
+//!   type and the call site it was spawned from, and `cumulative_broadcast_counts`
+//!   totals every broadcast ever made per spawn site, including taken counts
+//!   and those of stopped actors. A development aid: its API is exempt from
+//!   semver and may change or be removed in any release.
 
 /// The README examples, compiled and run as part of the test suite.
 ///

@@ -196,13 +196,14 @@ differently, each detailed in its own entry:
   and at snapshot, never per broadcast. A code path that reaches
   `Handle::new` through its own helper reports the helper's caller only if
   that helper is also `#[track_caller]`.
-- `stopped_broadcast_counts`, keeping the work of actors that have stopped.
-  An actor folds its remaining counts in when it stops, so a short-lived
-  actor is not lost between two snapshots. The fold sums per spawn site,
-  which bounds the memory by the `Handle::new` call sites in the binary
-  rather than by how many actors have lived. Every broadcast is reported
-  exactly once: counts claimed through `Handle::take_broadcast_counts`
-  belong to the taker and are not folded again on stop.
+- `cumulative_broadcast_counts`, totalling every broadcast ever made, per
+  spawn site. The totals include what live actors still hold, what callers
+  claimed through `Handle::take_broadcast_counts` and what stopped actors
+  left behind, so a short-lived actor is not lost between two snapshots and
+  a take never subtracts from the totals. What taken and stopped counts
+  amount to is the difference between the totals and the sum of the live
+  counts. Totalling per spawn site bounds the memory by the `Handle::new`
+  call sites in the binary rather than by how many actors have lived.
 
 ### Changed
 
