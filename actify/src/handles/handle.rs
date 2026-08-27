@@ -167,7 +167,7 @@ where
         let (exit_tx, exit_rx) = watch::channel(None);
         let actor = Actor::new(make_broadcast_fn(broadcast_tx.clone()), val);
         #[cfg(feature = "profiler")]
-        actor.register(std::panic::Location::caller());
+        let actor = actor.register(std::panic::Location::caller());
         tokio::spawn(serve(rx, actor, exit_tx));
         Handle {
             tx,

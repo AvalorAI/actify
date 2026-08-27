@@ -25,8 +25,10 @@ pub(crate) type BroadcastFn<T> = Box<dyn Fn(&T, &'static str) + Send + Sync>;
 pub struct Actor<T> {
     pub inner: T,
     broadcast_fn: BroadcastFn<T>,
+    /// `None` only between construction and [`Actor::register`], which runs
+    /// before the actor task is spawned.
     #[cfg(feature = "profiler")]
-    broadcast_counts: SharedCounts,
+    broadcast_counts: Option<SharedCounts>,
 }
 
 impl<T: Debug> Debug for Actor<T> {
@@ -41,46 +43,50 @@ impl<T> Actor<T> {
             inner,
             broadcast_fn,
             #[cfg(feature = "profiler")]
-            broadcast_counts: SharedCounts::default(),
+            broadcast_counts: None,
         }
     }
 
     pub fn broadcast(&mut self, method: &'static str) {
         #[cfg(feature = "profiler")]
-        if let Ok(mut counts) = self.broadcast_counts.lock() {
-            *counts.entry(method).or_default() += 1;
+        if let Some(counters) = &self.broadcast_counts {
+            counters.record(method);
         }
 
         (self.broadcast_fn)(&self.inner, method);
     }
 }
 
-/// The actor's own side of the profiler: its counters. The registry and the
-/// process-wide snapshot live in `crate::profiler`.
+/// The actor's own side of the profiler: its counters. The registry, the
+/// process-wide snapshot and the stopped aggregate live in `crate::profiler`.
 #[cfg(feature = "profiler")]
 impl<T> Actor<T> {
-    /// Adds the actor to the process-wide registry that
-    /// [`broadcast_counts`](crate::broadcast_counts) reads. The entry holds
-    /// the counts weakly, so it does not outlive the actor. Runs once per
-    /// actor, before its task is spawned.
-    pub(crate) fn register(&self, spawned_at: &'static Location<'static>) {
-        crate::profiler::register(type_name::<T>(), spawned_at, &self.broadcast_counts);
+    /// Builds the actor's counters and adds them to the registry that
+    /// [`broadcast_counts`](crate::broadcast_counts) reads, which holds them
+    /// weakly so they do not outlive the actor. Consumes and returns the
+    /// actor to stay a single expression at the construction site. Runs once
+    /// per actor, before its task is spawned.
+    pub(crate) fn register(mut self, spawned_at: &'static Location<'static>) -> Self {
+        self.broadcast_counts = Some(crate::profiler::new_counters(type_name::<T>(), spawned_at));
+        self
     }
 
     /// The broadcasts per method since the actor started or since the last
     /// take.
     pub(crate) fn broadcast_counts(&self) -> HashMap<&'static str, usize> {
         self.broadcast_counts
-            .lock()
-            .map(|counts| counts.clone())
+            .as_ref()
+            .map(|counters| counters.snapshot())
             .unwrap_or_default()
     }
 
-    /// Returns the broadcast counts and resets them.
+    /// Returns the broadcast counts and resets them. Taken counts are the
+    /// caller's: they are not folded into the stopped aggregate when the
+    /// actor stops.
     pub(crate) fn take_broadcast_counts(&mut self) -> HashMap<&'static str, usize> {
         self.broadcast_counts
-            .lock()
-            .map(|mut counts| std::mem::take(&mut *counts))
+            .as_ref()
+            .map(|counters| counters.take())
             .unwrap_or_default()
     }
 }
