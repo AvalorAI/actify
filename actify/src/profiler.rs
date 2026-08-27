@@ -43,7 +43,7 @@ impl BroadcastCounts {
             .lock()
             .map(|mut counts| std::mem::take(&mut *counts))
             .unwrap_or_default();
-        fold_into_totals(self.actor_type, self.spawned_at, 0, &counts);
+        fold_counts_into_totals(self.actor_type, self.spawned_at, &counts);
         counts
     }
 }
@@ -53,7 +53,7 @@ impl Drop for BroadcastCounts {
         let Ok(counts) = self.counts.get_mut() else {
             return;
         };
-        fold_into_totals(self.actor_type, self.spawned_at, 0, counts);
+        fold_counts_into_totals(self.actor_type, self.spawned_at, counts);
     }
 }
 
@@ -76,18 +76,25 @@ static CUMULATIVE: LazyLock<Mutex<HashMap<SiteKey, SiteTotals>>> =
 
 static NEXT_ID: AtomicU64 = AtomicU64::new(0);
 
-/// Adds one actor's contribution to the cumulative totals: the actor itself
-/// at spawn, its drained counts at a take and at stop. Runs on those cold
-/// paths only, never per broadcast.
-fn fold_into_totals(
+/// Counts one produced actor for its spawn site. Runs at spawn rather than
+/// at stop, so `actors` covers live actors just as the counts do, and a site
+/// exists in the totals as soon as it has produced one.
+fn count_actor_into_totals(actor_type: &'static str, spawned_at: &'static Location<'static>) {
+    if let Ok(mut totals) = CUMULATIVE.lock() {
+        totals.entry((actor_type, spawned_at)).or_default().actors += 1;
+    }
+}
+
+/// Folds counts an actor no longer holds into its spawn site's totals: the
+/// drained counts at a take, the remainder at stop. Runs on those cold paths
+/// only, never per broadcast.
+fn fold_counts_into_totals(
     actor_type: &'static str,
     spawned_at: &'static Location<'static>,
-    spawned: u64,
     counts: &HashMap<&'static str, usize>,
 ) {
     if let Ok(mut totals) = CUMULATIVE.lock() {
         let site = totals.entry((actor_type, spawned_at)).or_default();
-        site.actors += spawned;
         for (&method, &count) in counts {
             *site.counts.entry(method).or_default() += count;
         }
@@ -111,7 +118,7 @@ pub(crate) fn new_counters(
         registry.retain(|weak| weak.strong_count() > 0);
         registry.push(Arc::downgrade(&counters));
     }
-    fold_into_totals(actor_type, spawned_at, 1, &HashMap::new());
+    count_actor_into_totals(actor_type, spawned_at);
     counters
 }
 
