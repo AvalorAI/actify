@@ -1,5 +1,7 @@
 use std::any::Any;
 use std::any::type_name;
+#[cfg(feature = "profiler")]
+use std::collections::HashMap;
 use std::fmt::{self, Debug};
 use tokio::sync::{broadcast, mpsc, oneshot, watch};
 
@@ -64,7 +66,7 @@ where
     T: ToView<V>,
     V: Clone + Send + Sync + 'static,
 {
-    Box::new(move |inner: &T, method: &str| {
+    Box::new(move |inner: &T, method: &'static str| {
         if sender.receiver_count() > 0 {
             if sender.send(inner.to_view()).is_err() {
                 tracing::trace!(
@@ -124,6 +126,7 @@ impl<T, V> Debug for Handle<T, V> {
 }
 
 impl<T: Default + Clone + Send + Sync + 'static> Default for Handle<T> {
+    #[cfg_attr(feature = "profiler", track_caller)]
     fn default() -> Self {
         Handle::new(T::default())
     }
@@ -157,15 +160,17 @@ where
     /// let mut rx = handle.subscribe();
     /// # }
     /// ```
+    #[cfg_attr(feature = "profiler", track_caller)]
     pub fn new(val: T) -> Handle<T, V> {
         let (tx, rx) = mpsc::channel(CHANNEL_SIZE);
         let (broadcast_tx, _) = broadcast::channel::<V>(CHANNEL_SIZE);
         let (exit_tx, exit_rx) = watch::channel(None);
-        tokio::spawn(serve(
-            rx,
-            Actor::new(make_broadcast_fn(broadcast_tx.clone()), val),
-            exit_tx,
-        ));
+        let actor = Actor::new(
+            make_broadcast_fn(broadcast_tx.clone()),
+            val,
+            std::panic::Location::caller(),
+        );
+        tokio::spawn(serve(rx, actor, exit_tx));
         Handle {
             tx,
             broadcast_sender: broadcast_tx,
@@ -578,7 +583,7 @@ impl<T: Send + Sync + 'static, V> Handle<T, V> {
     pub async fn set(&self, val: T) {
         self.run(val, |s, val| {
             s.inner = val;
-            s.broadcast(&format!("{}::set", type_name::<T>()));
+            s.broadcast("set");
         })
         .await
     }
@@ -611,7 +616,7 @@ impl<T: Send + Sync + 'static, V> Handle<T, V> {
         self.run(val, |s, val| {
             if s.inner != val {
                 s.inner = val;
-                s.broadcast(&format!("{}::set_if_changed", type_name::<T>()));
+                s.broadcast("set_if_changed");
             }
         })
         .await
@@ -692,10 +697,101 @@ impl<T: Send + Sync + 'static, V> Handle<T, V> {
     {
         self.run(f, |s, f| {
             let result = f(&mut s.inner);
-            s.broadcast(&format!("{}::with_mut", type_name::<T>()));
+            s.broadcast("with_mut");
             result
         })
         .await
+    }
+}
+
+/// The profiler reads of one actor. The process-wide snapshot lives in
+/// `crate::profiler`.
+#[cfg(feature = "profiler")]
+impl<T, V> Handle<T, V>
+where
+    T: ToView<V> + Send + Sync + 'static,
+    V: Clone + Send + Sync + 'static,
+{
+    /// Returns how many times each method has broadcast, since the actor
+    /// started or since the last [`Handle::take_broadcast_counts`].
+    ///
+    /// Keys are bare method names, as written in the `#[actify]` impl block,
+    /// with the built-ins reporting `set`, `set_if_changed` and `with_mut`.
+    /// Two methods sharing a name on the same actor share a counter.
+    ///
+    /// Counters belong to the actor, so clones of a handle read the same
+    /// counts, and a broadcast is counted even when no subscriber listens.
+    /// Reading runs as a job on the actor's queue, so it includes every
+    /// broadcast from jobs queued before it. To see every live actor in the
+    /// process without holding their handles, use the free function
+    /// [`broadcast_counts`](crate::broadcast_counts).
+    ///
+    /// # Stability
+    ///
+    /// The profiler is a development aid. Its API is exempt from semver and
+    /// may change or be removed in any release.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use actify::Handle;
+    /// # #[tokio::main]
+    /// # async fn main() {
+    /// let handle = Handle::new(0);
+    /// handle.set(1).await;
+    /// handle.set(2).await;
+    ///
+    /// assert_eq!(handle.broadcast_counts().await[&"set"], 2);
+    /// # }
+    /// ```
+    ///
+    /// # Panics
+    ///
+    /// Panics if the actor has stopped, either because one of its methods
+    /// panicked or because its runtime shut down. See [Actor lifetime and
+    /// panics](crate#actor-lifetime-and-panics).
+    pub async fn broadcast_counts(&self) -> HashMap<&'static str, usize> {
+        self.run((), |s, ()| s.broadcast_counts()).await
+    }
+
+    /// Returns the broadcast counts and resets them, as one job.
+    ///
+    /// Successive takes therefore measure disjoint phases: each returned map
+    /// covers exactly the broadcasts since the previous take. See
+    /// [`Handle::broadcast_counts`] for the shape of the keys, and for
+    /// reading without resetting.
+    ///
+    /// A take resets the actor's own counters, never the totals: the taken
+    /// counts remain in what
+    /// [`cumulative_broadcast_counts`](crate::cumulative_broadcast_counts)
+    /// reports.
+    ///
+    /// # Stability
+    ///
+    /// The profiler is a development aid. Its API is exempt from semver and
+    /// may change or be removed in any release.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use actify::Handle;
+    /// # #[tokio::main]
+    /// # async fn main() {
+    /// let handle = Handle::new(0);
+    /// handle.set(1).await;
+    ///
+    /// assert_eq!(handle.take_broadcast_counts().await[&"set"], 1);
+    /// assert!(handle.take_broadcast_counts().await.is_empty());
+    /// # }
+    /// ```
+    ///
+    /// # Panics
+    ///
+    /// Panics if the actor has stopped, either because one of its methods
+    /// panicked or because its runtime shut down. See [Actor lifetime and
+    /// panics](crate#actor-lifetime-and-panics).
+    pub async fn take_broadcast_counts(&self) -> HashMap<&'static str, usize> {
+        self.run((), |s, ()| s.take_broadcast_counts()).await
     }
 }
 
@@ -1077,33 +1173,291 @@ mod tests {
             .expect("panic payload was neither String nor &str")
     }
 
-    /// The profiler counts broadcasts per method name, so each method must
-    /// report its own name.
-    ///
-    /// The counters are process-global and shared with every test running in
-    /// parallel, so this uses a type no other test touches and only inspects
-    /// the keys belonging to it.
+    /// Broadcast counters live on the actor and are read through its handle,
+    /// so every test sees only its own counts.
     #[cfg(feature = "profiler")]
-    #[tokio::test]
-    async fn test_set_if_changed_broadcasts_under_its_own_name() {
-        #[derive(Debug, Clone, PartialEq)]
-        struct SetIfChangedProbe(i32);
+    mod profiler {
+        use super::*;
+        use std::collections::HashMap;
 
-        let handle = Handle::new(SetIfChangedProbe(0));
-        handle.set_if_changed(SetIfChangedProbe(1)).await;
+        /// Each method reports its own name, and a set_if_changed that
+        /// changes nothing does not count.
+        #[tokio::test]
+        async fn test_set_if_changed_broadcasts_under_its_own_name() {
+            let handle = Handle::new(0);
+            handle.set_if_changed(1).await;
+            handle.set_if_changed(1).await;
 
-        let counts = crate::get_broadcast_counts();
-        let keys: Vec<_> = counts
-            .keys()
-            .filter(|key| key.contains("SetIfChangedProbe"))
-            .collect();
+            assert_eq!(
+                handle.take_broadcast_counts().await,
+                HashMap::from([("set_if_changed", 1)])
+            );
+        }
 
-        assert_eq!(keys.len(), 1, "expected a single label, got {keys:?}");
-        assert!(
-            keys[0].ends_with("::set_if_changed"),
-            "broadcast was labelled {}",
-            keys[0]
-        );
+        /// The macro and the built-ins report keys of the same shape, so the
+        /// counts of one actor are comparable to each other.
+        #[tokio::test]
+        async fn test_broadcast_counts_use_bare_method_names() {
+            use crate::VecHandle;
+
+            let handle = Handle::new(vec![0]);
+            handle.push(1).await;
+            handle.push(2).await;
+            handle.set(vec![3]).await;
+            handle.with_mut(|v| v.pop()).await;
+
+            assert_eq!(
+                handle.take_broadcast_counts().await,
+                HashMap::from([("push", 2), ("set", 1), ("with_mut", 1)])
+            );
+        }
+
+        /// A take returns only the broadcasts since the previous take, so
+        /// successive takes measure disjoint phases.
+        #[tokio::test]
+        async fn test_take_broadcast_counts_resets_for_phase_measurement() {
+            let handle = Handle::new(0);
+            handle.set(1).await;
+
+            assert_eq!(
+                handle.take_broadcast_counts().await,
+                HashMap::from([("set", 1)])
+            );
+            assert_eq!(handle.take_broadcast_counts().await, HashMap::new());
+
+            handle.set(2).await;
+            assert_eq!(
+                handle.take_broadcast_counts().await,
+                HashMap::from([("set", 1)])
+            );
+        }
+
+        /// Reading the counts must not change them; only a take resets.
+        #[tokio::test]
+        async fn test_broadcast_counts_peek_does_not_reset() {
+            let handle = Handle::new(0);
+            handle.set(1).await;
+
+            assert_eq!(handle.broadcast_counts().await, HashMap::from([("set", 1)]));
+            assert_eq!(handle.broadcast_counts().await, HashMap::from([("set", 1)]));
+        }
+
+        /// Only broadcasts are counted, so read-only calls leave no key.
+        #[tokio::test]
+        async fn test_non_broadcasting_calls_are_not_counted() {
+            let handle = Handle::new(0);
+            let _rx = handle.subscribe();
+            handle.get().await;
+            handle.with(|value| *value).await;
+
+            assert_eq!(handle.broadcast_counts().await, HashMap::new());
+        }
+
+        /// Counters belong to the actor, so clones of a handle read the same
+        /// counts while another actor's counts stay separate.
+        #[tokio::test]
+        async fn test_broadcast_counts_are_per_actor_and_shared_across_clones() {
+            let first = Handle::new(0);
+            let clone = first.clone();
+            let other = Handle::new(0);
+
+            first.set(1).await;
+            clone.set(2).await;
+
+            assert_eq!(clone.broadcast_counts().await, HashMap::from([("set", 2)]));
+            assert_eq!(other.broadcast_counts().await, HashMap::new());
+        }
+
+        /// The global snapshot lists every live actor separately, in spawn
+        /// order: same-type actors are told apart by their id and by the
+        /// call site that spawned them.
+        #[tokio::test]
+        async fn test_global_snapshot_distinguishes_actor_instances() {
+            #[derive(Debug, Clone)]
+            struct SnapshotProbe;
+
+            let first = Handle::new(SnapshotProbe);
+            let second = Handle::new(SnapshotProbe);
+
+            first.set(SnapshotProbe).await;
+            second.set(SnapshotProbe).await;
+            second.set(SnapshotProbe).await;
+
+            let probes: Vec<_> = crate::broadcast_counts()
+                .into_iter()
+                .filter(|actor| actor.actor_type.contains("SnapshotProbe"))
+                .collect();
+
+            assert_eq!(probes.len(), 2, "expected both probes, got {probes:?}");
+            assert_ne!(probes[0].id, probes[1].id);
+            assert_eq!(probes[0].counts, HashMap::from([("set", 1)]));
+            assert_eq!(probes[1].counts, HashMap::from([("set", 2)]));
+            assert!(probes[0].spawned_at.file().ends_with("handle.rs"));
+            assert_ne!(
+                probes[0].spawned_at.line(),
+                probes[1].spawned_at.line(),
+                "each Handle::new call site is its own spawn location"
+            );
+        }
+
+        /// An actor whose task has ended falls out of the snapshot, so the
+        /// registry does not grow with dead actors and keeps none alive.
+        #[tokio::test]
+        async fn test_global_snapshot_prunes_dead_actors() {
+            #[derive(Debug, Clone)]
+            struct PruneProbe;
+
+            fn live() -> usize {
+                crate::broadcast_counts()
+                    .iter()
+                    .filter(|actor| actor.actor_type.contains("PruneProbe"))
+                    .count()
+            }
+
+            let handle = Handle::new(PruneProbe);
+            assert_eq!(live(), 1);
+
+            drop(handle);
+
+            // The actor task ends on its own schedule after the last handle
+            // drops, so poll until the entry is gone.
+            tokio::time::timeout(std::time::Duration::from_secs(5), async {
+                while live() > 0 {
+                    tokio::task::yield_now().await;
+                }
+            })
+            .await
+            .expect("the dead actor stayed in the snapshot");
+        }
+
+        /// The totals count every broadcast from a spawn site exactly once,
+        /// whether its actor is live, taken from or stopped, so the taken
+        /// and stopped share is the difference between the totals and the
+        /// sum of the live counts: here one taken plus two stopped.
+        #[tokio::test]
+        async fn test_taken_and_stopped_counts_are_the_totals_minus_the_live_sum() {
+            #[derive(Debug, Clone)]
+            struct CumulativeProbe;
+
+            fn spawn_one() -> Handle<CumulativeProbe> {
+                Handle::new(CumulativeProbe)
+            }
+
+            fn totals() -> crate::CumulativeCounts {
+                crate::cumulative_broadcast_counts()
+                    .into_iter()
+                    .find(|site| site.actor_type.contains("CumulativeProbe"))
+                    .expect("the spawn site is missing")
+            }
+
+            fn live_probes() -> Vec<crate::ActorCounts> {
+                crate::broadcast_counts()
+                    .into_iter()
+                    .filter(|actor| actor.actor_type.contains("CumulativeProbe"))
+                    .collect()
+            }
+
+            /// A dropped actor folds its counts when its task ends, and on
+            /// this single-threaded test runtime that task only runs when
+            /// the test yields. The timeout turns a missing fold into a
+            /// failure instead of a hang.
+            async fn wait_until_live_is(count: usize) {
+                tokio::time::timeout(std::time::Duration::from_secs(5), async {
+                    while live_probes().len() > count {
+                        tokio::task::yield_now().await;
+                    }
+                })
+                .await
+                .expect("the dropped actor never stopped");
+            }
+
+            // Three actors from the one spawn site inside spawn_one, each
+            // ending up in a different state.
+
+            // Stopped: broadcasts three times, then stops holding all three.
+            let stopped = spawn_one();
+            stopped.set(CumulativeProbe).await;
+            stopped.set(CumulativeProbe).await;
+            stopped.set(CumulativeProbe).await;
+            drop(stopped);
+
+            // Taken from: broadcasts once, and the take claims that count.
+            let taker = spawn_one();
+            taker.set(CumulativeProbe).await;
+            assert_eq!(
+                taker.take_broadcast_counts().await,
+                HashMap::from([("set", 1)])
+            );
+
+            // Live: broadcasts once and keeps holding it.
+            let held = spawn_one();
+            held.set(CumulativeProbe).await;
+
+            wait_until_live_is(2).await;
+
+            let site = totals();
+
+            // The site counts every actor it produced, live ones included.
+            assert_eq!(site.actors, 3);
+
+            // The totals hold all five broadcasts: three the stopped actor
+            // folded in, one the take folded in, one still held live.
+            assert_eq!(site.counts, HashMap::from([("set", 5)]));
+
+            // The live snapshot only shows what actors still hold: the
+            // taker was drained, so the held actor's single count remains.
+            let live_sum: usize = live_probes()
+                .iter()
+                .map(|actor| actor.counts.get(&"set").copied().unwrap_or(0))
+                .sum();
+            assert_eq!(live_sum, 1, "only the held actor still holds a count");
+
+            // The rule the docs promise: totals minus the live sum is the
+            // taken and stopped share.
+            assert_eq!(
+                site.counts[&"set"] - live_sum,
+                4,
+                "one taken, three stopped"
+            );
+
+            // The site is the Handle::new call in spawn_one.
+            assert!(site.spawned_at.file().ends_with("handle.rs"));
+
+            // The taker's own counters are already empty, so its stop must
+            // add nothing: the taken count is in the totals exactly once.
+            drop(taker);
+            wait_until_live_is(1).await;
+            assert_eq!(totals().counts, HashMap::from([("set", 5)]));
+            assert_eq!(totals().actors, 3);
+        }
+
+        /// One call site stays one entry in the totals however many actors
+        /// it produces: the key space grows with the code in the binary, not
+        /// with the spawns at runtime.
+        #[tokio::test]
+        async fn test_a_spawning_loop_grows_actors_not_entries() {
+            #[derive(Debug, Clone)]
+            struct LoopProbe;
+
+            for _ in 0..5 {
+                let handle = Handle::new(LoopProbe);
+                handle.set(LoopProbe).await;
+                handle.set(LoopProbe).await;
+            }
+
+            let sites: Vec<_> = crate::cumulative_broadcast_counts()
+                .into_iter()
+                .filter(|site| site.actor_type.contains("LoopProbe"))
+                .collect();
+
+            // Five actors and ten broadcasts from one Handle::new line are
+            // one entry: entries, actors and counts are three different
+            // numbers. Whether an actor has folded yet or still counts as
+            // live does not matter, since the totals include both.
+            assert_eq!(sites.len(), 1, "one call site is one entry");
+            assert_eq!(sites[0].actors, 5);
+            assert_eq!(sites[0].counts, HashMap::from([("set", 10)]));
+        }
     }
 
     /// A caller that stops waiting must not stop the actor. Wrapping a call

@@ -83,7 +83,7 @@
 //!                     Box::pin(async move {
 //!                         let name: String = *args.downcast().unwrap();
 //!                         let result: String = Greeter::say_hi(&s.inner, name);
-//!                         s.broadcast("Greeter::say_hi");
+//!                         s.broadcast("say_hi");
 //!                         Box::new(result) as Box<dyn std::any::Any + Send>
 //!                     })),
 //!                 Box::new(name),
@@ -509,9 +509,14 @@
 //!   reach those records, which is why the events name the actor type
 //!   themselves. Cargo features unify across a build, so enabling it switches
 //!   every tracing-using crate in the binary the same way.
-//! - `profiler`: counts broadcasts per method, readable through
-//!   `get_broadcast_counts` and `get_sorted_broadcast_counts`. Counters are
-//!   process-wide and never reset.
+//! - `profiler`: counts broadcasts per method on each actor, readable through
+//!   `Handle::broadcast_counts` and drained per phase through
+//!   `Handle::take_broadcast_counts`. The free function `broadcast_counts`
+//!   snapshots every live actor in the process, one entry per actor with its
+//!   type and the call site it was spawned from, and `cumulative_broadcast_counts`
+//!   totals every broadcast ever made per spawn site, including taken counts
+//!   and those of stopped actors. A development aid: its API is exempt from
+//!   semver and may change or be removed in any release.
 
 /// The README examples, compiled and run as part of the test suite.
 ///
@@ -528,6 +533,8 @@ mod actor;
 mod cache;
 mod extensions;
 mod handles;
+#[cfg(feature = "profiler")]
+mod profiler;
 mod throttle;
 
 // Reexport for easier reference
@@ -540,6 +547,9 @@ pub use extensions::{
 pub use handles::{Handle, ReadHandle, ToView};
 pub use throttle::{BoxFuture, Frequency, Throttle};
 
+#[cfg(feature = "profiler")]
+pub use profiler::{ActorCounts, CumulativeCounts, broadcast_counts, cumulative_broadcast_counts};
+
 /// The crate's own items that the [`actify`](macro@crate::actify) macro needs in
 /// generated code. Standard library types are named by absolute path instead.
 ///
@@ -549,6 +559,3 @@ pub use throttle::{BoxFuture, Frequency, Throttle};
 pub mod __private {
     pub use crate::actor::Actor;
 }
-
-#[cfg(feature = "profiler")]
-pub use actor::{get_broadcast_counts, get_sorted_broadcast_counts};

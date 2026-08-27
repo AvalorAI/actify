@@ -784,11 +784,10 @@ mod tests {
         actor_handle.baz(0).await;
         assert!(rx.try_recv().is_err()); // Nothing
 
-        let counts = actify::get_broadcast_counts();
-        println!("{:?}", counts);
-
-        let sorted_counts = actify::get_sorted_broadcast_counts();
-        println!("{:?}", sorted_counts);
+        assert_eq!(
+            actor_handle.take_broadcast_counts().await,
+            HashMap::from([("foo", 2), ("set", 1)])
+        );
     }
 
     #[tokio::test]

@@ -180,6 +180,30 @@ differently, each detailed in its own entry:
   event as a log record whenever no tracing subscriber is set. Cargo features
   unify across a build, so enabling it switches every tracing-using crate in
   the binary the same way.
+- `Handle::broadcast_counts` and `Handle::take_broadcast_counts` under the
+  `profiler` feature. Counts live on the actor and are read as a job on its
+  queue, so a read includes every broadcast queued before it. The take returns
+  the counts and resets them in one job, so successive takes measure disjoint
+  phases, where the old totals only ever grew. The profiler is a development
+  aid: its API is exempt from semver and may change or be removed in any
+  release.
+- `broadcast_counts`, a free function snapshotting every live actor in the
+  process without holding any handle. Each actor appears as its own
+  `ActorCounts` entry: a spawn-order id and the `Handle::new` call site,
+  captured through `#[track_caller]`, tell instances of the same type apart.
+  A registry of weak references feeds the snapshot, so it keeps no actor
+  alive and dead actors fall out of it; the registry is only locked at spawn
+  and at snapshot, never per broadcast. A code path that reaches
+  `Handle::new` through its own helper reports the helper's caller only if
+  that helper is also `#[track_caller]`.
+- `cumulative_broadcast_counts`, totalling every broadcast ever made, per
+  spawn site. The totals include what live actors still hold, what callers
+  claimed through `Handle::take_broadcast_counts` and what stopped actors
+  left behind, so a short-lived actor is not lost between two snapshots and
+  a take never subtracts from the totals. What taken and stopped counts
+  amount to is the difference between the totals and the sum of the live
+  counts. Totalling per spawn site bounds the memory by the `Handle::new`
+  call sites in the binary rather than by how many actors have lived.
 
 ### Changed
 
@@ -214,6 +238,17 @@ differently, each detailed in its own entry:
   `actor_type`, `messages` and `method`. A dependent reading them through a
   `log` logger sees nothing until it enables the `log` feature or sets a
   tracing subscriber.
+
+
+- **Breaking:** the profiler counts broadcasts per actor, under bare method
+  names passed as `&'static str`. The counters were one process-wide map that
+  every broadcast locked and allocated a `String` for, and its keys mixed two
+  shapes: macro methods reported the type-qualified `Vec::push` while the
+  built-ins reported a full `type_name` path. Counting on the actor removes
+  the lock and the allocation, and one actor's counts share one key shape.
+  The `method` field on broadcast events carries the same bare name; the
+  actor span already names the type. The built-ins also stop formatting a
+  type-qualified name on every call, which they did in every build.
 
 
 - **Breaking:** the generated handle traits declare their methods
@@ -408,6 +443,12 @@ differently, each detailed in its own entry:
   Nothing can broadcast between `new` and `subscribe`, because no other handle to
   that actor exists yet. Note that the initial value is now passed explicitly, so
   it is on the caller to pass the value the actor was created with.
+
+
+- **Breaking:** `get_broadcast_counts` and `get_sorted_broadcast_counts`.
+  `Handle::broadcast_counts` reads the same counts per actor. A sorted view is
+  one line at the call site, and a process-wide total added the counts of
+  unrelated actors into one map, which is the mixing the redesign removes.
 
 ### Fixed
 

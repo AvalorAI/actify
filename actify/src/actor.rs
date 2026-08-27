@@ -8,33 +8,16 @@ use tracing::Instrument;
 /// A boxed future, as returned by an actor method.
 pub(crate) type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
+use std::panic::Location;
+
+#[cfg(feature = "profiler")]
+use crate::profiler::BroadcastCounts;
 #[cfg(feature = "profiler")]
 use std::collections::HashMap;
 #[cfg(feature = "profiler")]
-use std::sync::{LazyLock, Mutex};
+use std::sync::Arc;
 
-#[cfg(feature = "profiler")]
-static BROADCAST_COUNTS: LazyLock<Mutex<HashMap<String, usize>>> =
-    LazyLock::new(|| Mutex::new(HashMap::new()));
-
-#[cfg(feature = "profiler")]
-/// Returns a HashMap of all broadcast counts per method
-pub fn get_broadcast_counts() -> HashMap<String, usize> {
-    BROADCAST_COUNTS
-        .lock()
-        .map(|c| c.clone())
-        .unwrap_or_default()
-}
-
-#[cfg(feature = "profiler")]
-/// Returns a sorted Vec of all broadcast counts per method
-pub fn get_sorted_broadcast_counts() -> Vec<(String, usize)> {
-    let mut v: Vec<_> = get_broadcast_counts().into_iter().collect();
-    v.sort_by_key(|entry| std::cmp::Reverse(entry.1));
-    v
-}
-
-pub(crate) type BroadcastFn<T> = Box<dyn Fn(&T, &str) + Send + Sync>;
+pub(crate) type BroadcastFn<T> = Box<dyn Fn(&T, &'static str) + Send + Sync>;
 
 /// The internal actor wrapper that runs in a separate task.
 ///
@@ -44,6 +27,8 @@ pub(crate) type BroadcastFn<T> = Box<dyn Fn(&T, &str) + Send + Sync>;
 pub struct Actor<T> {
     pub inner: T,
     broadcast_fn: BroadcastFn<T>,
+    #[cfg(feature = "profiler")]
+    broadcast_counts: Arc<BroadcastCounts>,
 }
 
 impl<T: Debug> Debug for Actor<T> {
@@ -53,22 +38,42 @@ impl<T: Debug> Debug for Actor<T> {
 }
 
 impl<T> Actor<T> {
-    pub(crate) fn new(broadcast_fn: BroadcastFn<T>, inner: T) -> Self {
+    /// The spawn site is unused without the profiler feature; taking it
+    /// unconditionally keeps the call site free of feature gates.
+    pub(crate) fn new(
+        broadcast_fn: BroadcastFn<T>,
+        inner: T,
+        _spawned_at: &'static Location<'static>,
+    ) -> Self {
         Self {
             inner,
             broadcast_fn,
+            #[cfg(feature = "profiler")]
+            broadcast_counts: crate::profiler::new_counters(type_name::<T>(), _spawned_at),
         }
     }
 
-    pub fn broadcast(&self, method: &str) {
+    pub fn broadcast(&mut self, method: &'static str) {
         #[cfg(feature = "profiler")]
-        {
-            if let Ok(mut counts) = BROADCAST_COUNTS.lock() {
-                *counts.entry(method.to_string()).or_insert(0) += 1;
-            }
-        }
+        self.broadcast_counts.record(method);
 
         (self.broadcast_fn)(&self.inner, method);
+    }
+}
+
+/// The actor's own side of the profiler: its counters. The registry, the
+/// process-wide snapshot and the cumulative totals live in `crate::profiler`.
+#[cfg(feature = "profiler")]
+impl<T> Actor<T> {
+    /// The broadcasts per method since the actor started or since the last
+    /// take.
+    pub(crate) fn broadcast_counts(&self) -> HashMap<&'static str, usize> {
+        self.broadcast_counts.snapshot()
+    }
+
+    /// Returns the broadcast counts and resets them.
+    pub(crate) fn take_broadcast_counts(&mut self) -> HashMap<&'static str, usize> {
+        self.broadcast_counts.take()
     }
 }
 
