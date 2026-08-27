@@ -487,10 +487,14 @@
 //! # Instrumentation
 //!
 //! Diagnostics are emitted through [`tracing`]. Every actor task runs inside
-//! an `actor` span at INFO level whose `actor_type` field names the actor
-//! type, so instrumentation in actor methods nests under the actor serving
-//! them. The span is created where the handle is created, which parents it to
-//! the span that is current there.
+//! an `actor` span at INFO level that names the instance: `actor_type` is
+//! the actor type, `actor_id` a process-wide spawn-order number, and
+//! `spawned_at` the [`Handle::new`] call site, captured through
+//! `#[track_caller]`. Instrumentation in actor methods nests under the actor
+//! serving them. The span is created where the handle is created, which
+//! parents it to the span that is current there. A code path that reaches
+//! [`Handle::new`] through its own helper reports the helper's caller only
+//! if that helper is also `#[track_caller]`.
 //!
 //! Every actor exit is reported with the reason as a field: at ERROR when a
 //! method panicked, at DEBUG when the actor stopped because its handles were
@@ -506,14 +510,15 @@
 //!
 //! - `log`: emits the events as `log` records whenever no tracing subscriber
 //!   is set, by forwarding to tracing's own `log` feature. Span fields do not
-//!   reach those records, which is why the events name the actor type
+//!   reach those records, which is why the events name the actor type and id
 //!   themselves. Cargo features unify across a build, so enabling it switches
 //!   every tracing-using crate in the binary the same way.
 //! - `profiler`: counts broadcasts per method on each actor, readable through
 //!   `Handle::broadcast_counts` and drained per phase through
 //!   `Handle::take_broadcast_counts`. The free function `broadcast_counts`
 //!   snapshots every live actor in the process, one entry per actor with its
-//!   type and the call site it was spawned from, and `cumulative_broadcast_counts`
+//!   type, the call site it was spawned from and the id its span carries as
+//!   `actor_id`, and `cumulative_broadcast_counts`
 //!   totals every broadcast ever made per spawn site, including taken counts
 //!   and those of stopped actors. A development aid: its API is exempt from
 //!   semver and may change or be removed in any release.
