@@ -10,21 +10,18 @@ use std::panic::Location;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, LazyLock, Mutex, Weak};
 
-/// One actor's profiling state: its identity and its counters. The actor
-/// owns the only strong reference, so dropping this is the actor stopping,
-/// which folds whatever counts remain into the stopped aggregate.
-pub(crate) struct Counters {
+/// One actor's broadcast counters and its identity. The actor holds the only
+/// strong `Arc` to it and the registry a weak one, so dropping this is the
+/// actor stopping, which folds whatever counts remain into the stopped
+/// aggregate.
+pub(crate) struct BroadcastCounts {
     id: u64,
     actor_type: &'static str,
     spawned_at: &'static Location<'static>,
     counts: Mutex<HashMap<&'static str, usize>>,
 }
 
-/// The shared handle to one actor's [`Counters`]: the actor holds it
-/// strongly, the registry weakly.
-pub(crate) type SharedCounts = Arc<Counters>;
-
-impl Counters {
+impl BroadcastCounts {
     pub(crate) fn record(&self, method: &'static str) {
         if let Ok(mut counts) = self.counts.lock() {
             *counts.entry(method).or_default() += 1;
@@ -46,7 +43,7 @@ impl Counters {
     }
 }
 
-impl Drop for Counters {
+impl Drop for BroadcastCounts {
     fn drop(&mut self) {
         let Ok(counts) = self.counts.get_mut() else {
             return;
@@ -73,7 +70,8 @@ struct StoppedSite {
 
 type SiteKey = (&'static str, &'static Location<'static>);
 
-static REGISTRY: LazyLock<Mutex<Vec<Weak<Counters>>>> = LazyLock::new(|| Mutex::new(Vec::new()));
+static REGISTRY: LazyLock<Mutex<Vec<Weak<BroadcastCounts>>>> =
+    LazyLock::new(|| Mutex::new(Vec::new()));
 
 static STOPPED: LazyLock<Mutex<HashMap<SiteKey, StoppedSite>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
@@ -86,8 +84,8 @@ static NEXT_ID: AtomicU64 = AtomicU64::new(0);
 pub(crate) fn new_counters(
     actor_type: &'static str,
     spawned_at: &'static Location<'static>,
-) -> SharedCounts {
-    let counters = Arc::new(Counters {
+) -> Arc<BroadcastCounts> {
+    let counters = Arc::new(BroadcastCounts {
         id: NEXT_ID.fetch_add(1, Ordering::Relaxed),
         actor_type,
         spawned_at,

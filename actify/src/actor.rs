@@ -9,11 +9,13 @@ use tracing::Instrument;
 pub(crate) type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
 #[cfg(feature = "profiler")]
-use crate::profiler::SharedCounts;
+use crate::profiler::BroadcastCounts;
 #[cfg(feature = "profiler")]
 use std::collections::HashMap;
 #[cfg(feature = "profiler")]
 use std::panic::Location;
+#[cfg(feature = "profiler")]
+use std::sync::Arc;
 
 pub(crate) type BroadcastFn<T> = Box<dyn Fn(&T, &'static str) + Send + Sync>;
 
@@ -28,7 +30,7 @@ pub struct Actor<T> {
     /// `None` only between construction and [`Actor::register`], which runs
     /// before the actor task is spawned.
     #[cfg(feature = "profiler")]
-    broadcast_counts: Option<SharedCounts>,
+    broadcast_counts: Option<Arc<BroadcastCounts>>,
 }
 
 impl<T: Debug> Debug for Actor<T> {
