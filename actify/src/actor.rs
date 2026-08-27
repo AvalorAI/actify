@@ -8,12 +8,12 @@ use tracing::Instrument;
 /// A boxed future, as returned by an actor method.
 pub(crate) type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
+use std::panic::Location;
+
 #[cfg(feature = "profiler")]
 use crate::profiler::BroadcastCounts;
 #[cfg(feature = "profiler")]
 use std::collections::HashMap;
-#[cfg(feature = "profiler")]
-use std::panic::Location;
 #[cfg(feature = "profiler")]
 use std::sync::Arc;
 
@@ -38,16 +38,18 @@ impl<T: Debug> Debug for Actor<T> {
 }
 
 impl<T> Actor<T> {
+    /// The spawn site is unused without the profiler feature; taking it
+    /// unconditionally keeps the call site free of feature gates.
     pub(crate) fn new(
         broadcast_fn: BroadcastFn<T>,
         inner: T,
-        #[cfg(feature = "profiler")] spawned_at: &'static Location<'static>,
+        _spawned_at: &'static Location<'static>,
     ) -> Self {
         Self {
             inner,
             broadcast_fn,
             #[cfg(feature = "profiler")]
-            broadcast_counts: crate::profiler::new_counters(type_name::<T>(), spawned_at),
+            broadcast_counts: crate::profiler::new_counters(type_name::<T>(), _spawned_at),
         }
     }
 

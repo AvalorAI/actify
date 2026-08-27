@@ -165,14 +165,11 @@ where
         let (tx, rx) = mpsc::channel(CHANNEL_SIZE);
         let (broadcast_tx, _) = broadcast::channel::<V>(CHANNEL_SIZE);
         let (exit_tx, exit_rx) = watch::channel(None);
-        #[cfg(feature = "profiler")]
         let actor = Actor::new(
             make_broadcast_fn(broadcast_tx.clone()),
             val,
             std::panic::Location::caller(),
         );
-        #[cfg(not(feature = "profiler"))]
-        let actor = Actor::new(make_broadcast_fn(broadcast_tx.clone()), val);
         tokio::spawn(serve(rx, actor, exit_tx));
         Handle {
             tx,
