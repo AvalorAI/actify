@@ -214,8 +214,8 @@ pub struct CumulativeCounts {
 /// many actors have lived. Entries are sorted by actor type, then spawn
 /// site.
 ///
-/// A take racing a read can leave that one read missing the taken counts;
-/// the next read includes them.
+/// A take or a stop racing a read can leave that one read missing those
+/// counts; the next read includes them.
 ///
 /// # Stability
 ///
@@ -233,15 +233,10 @@ pub struct CumulativeCounts {
 /// }
 /// ```
 pub fn cumulative_broadcast_counts() -> Vec<CumulativeCounts> {
-    // Pinning the live actors first means none can stop and fold mid-read:
-    // their counts are read from the maps they still hold.
-    let live: Vec<Arc<BroadcastCounts>> = match REGISTRY.lock() {
-        Ok(mut registry) => {
-            registry.retain(|weak| weak.strong_count() > 0);
-            registry.iter().filter_map(|weak| weak.upgrade()).collect()
-        }
-        Err(_) => Vec::new(),
-    };
+    // The folded totals are read before the live snapshot, so an actor
+    // stopping between the two reads goes missing from this one read rather
+    // than being counted twice: its fold lands after the clone, and its map
+    // is already gone from the snapshot.
     let mut sites: HashMap<SiteKey, SiteTotals> = match CUMULATIVE.lock() {
         Ok(totals) => totals
             .iter()
@@ -249,11 +244,11 @@ pub fn cumulative_broadcast_counts() -> Vec<CumulativeCounts> {
             .collect(),
         Err(_) => HashMap::new(),
     };
-    for counters in live {
+    for actor in broadcast_counts() {
         let site = sites
-            .entry((counters.actor_type, counters.spawned_at))
+            .entry((actor.actor_type, actor.spawned_at))
             .or_default();
-        for (method, count) in counters.snapshot() {
+        for (method, count) in actor.counts {
             *site.counts.entry(method).or_default() += count;
         }
     }
