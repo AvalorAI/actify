@@ -7,7 +7,6 @@
 
 use std::collections::HashMap;
 use std::panic::Location;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, LazyLock, Mutex, Weak};
 
 /// One actor's broadcast counters and its identity. The actor holds the only
@@ -74,8 +73,6 @@ static REGISTRY: LazyLock<Mutex<Vec<Weak<BroadcastCounts>>>> =
 static CUMULATIVE: LazyLock<Mutex<HashMap<SiteKey, SiteTotals>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
-static NEXT_ID: AtomicU64 = AtomicU64::new(0);
-
 /// Counts one produced actor for its spawn site. Runs at spawn rather than
 /// at stop, so `actors` covers live actors just as the counts do, and a site
 /// exists in the totals as soon as it has produced one.
@@ -103,13 +100,16 @@ fn fold_counts_into_totals(
 
 /// Builds one actor's counters, adds them to the registry and counts the
 /// actor in the cumulative totals. Runs once per actor, before its task is
-/// spawned; the registry lock is never touched per broadcast.
+/// spawned; the registry lock is never touched per broadcast. The id is
+/// assigned in `Actor::new`, so the span and the profiler name one actor by
+/// one number.
 pub(crate) fn new_counters(
+    id: u64,
     actor_type: &'static str,
     spawned_at: &'static Location<'static>,
 ) -> Arc<BroadcastCounts> {
     let counters = Arc::new(BroadcastCounts {
-        id: NEXT_ID.fetch_add(1, Ordering::Relaxed),
+        id,
         actor_type,
         spawned_at,
         counts: Mutex::new(HashMap::new()),
@@ -126,7 +126,9 @@ pub(crate) fn new_counters(
 /// [`broadcast_counts`].
 #[derive(Clone, Debug)]
 pub struct ActorCounts {
-    /// Tells actors of the same type apart; assigned in spawn order.
+    /// Tells actors of the same type apart; assigned in spawn order. The
+    /// actor's span carries the same value in its `actor_id` field, so a
+    /// snapshot entry can be matched to log lines.
     pub id: u64,
     /// The actor type, as `std::any::type_name` renders it.
     pub actor_type: &'static str,

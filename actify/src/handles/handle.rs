@@ -126,7 +126,7 @@ impl<T, V> Debug for Handle<T, V> {
 }
 
 impl<T: Default + Clone + Send + Sync + 'static> Default for Handle<T> {
-    #[cfg_attr(feature = "profiler", track_caller)]
+    #[track_caller]
     fn default() -> Self {
         Handle::new(T::default())
     }
@@ -160,7 +160,7 @@ where
     /// let mut rx = handle.subscribe();
     /// # }
     /// ```
-    #[cfg_attr(feature = "profiler", track_caller)]
+    #[track_caller]
     pub fn new(val: T) -> Handle<T, V> {
         let (tx, rx) = mpsc::channel(CHANNEL_SIZE);
         let (broadcast_tx, _) = broadcast::channel::<V>(CHANNEL_SIZE);

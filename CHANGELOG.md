@@ -165,16 +165,21 @@ differently, each detailed in its own entry:
 - `Throttle::abort` and `Throttle::is_finished`. A throttle spawned by
   `Throttle::spawn_interval` has no actor attached, so before this nothing could
   stop it short of shutting down the runtime.
-- Every actor task runs inside a tracing span named `actor`, at INFO level, with
-  the actor type in its `actor_type` field. Instrumentation in actor methods
-  nests under the actor serving them rather than sitting beside it. The span is
-  created where the handle is created, which parents it to the span that is
-  current there.
+- Every actor task runs inside a tracing span named `actor`, at INFO level,
+  that names the instance: the actor type in `actor_type`, a process-wide
+  spawn-order number in `actor_id`, and the `Handle::new` call site in
+  `spawned_at`, captured through `#[track_caller]`. Instrumentation in actor
+  methods nests under the actor serving them rather than sitting beside it.
+  The span is created where the handle is created, which parents it to the
+  span that is current there. A code path that reaches `Handle::new` through
+  its own helper reports the helper's caller only if that helper is also
+  `#[track_caller]`.
 - Every actor exit is reported with the reason as a field: at ERROR when a
   method panicked, at DEBUG when the actor stopped because its handles were
   dropped or its runtime shut down. A panic previously reached only the std
   panic hook on stderr, which a subscriber shipping structured logs never
-  sees, and a runtime shutdown emitted nothing.
+  sees, and a runtime shutdown emitted nothing. The exit events carry the
+  actor type and id themselves, since span fields do not reach `log` records.
 - A `log` feature, off by default, for dependents that read diagnostics through
   the `log` crate. It forwards tracing's own `log` feature, which emits every
   event as a log record whenever no tracing subscriber is set. Cargo features
@@ -189,13 +194,12 @@ differently, each detailed in its own entry:
   release.
 - `broadcast_counts`, a free function snapshotting every live actor in the
   process without holding any handle. Each actor appears as its own
-  `ActorCounts` entry: a spawn-order id and the `Handle::new` call site,
-  captured through `#[track_caller]`, tell instances of the same type apart.
-  A registry of weak references feeds the snapshot, so it keeps no actor
-  alive and dead actors fall out of it; the registry is only locked at spawn
-  and at snapshot, never per broadcast. A code path that reaches
-  `Handle::new` through its own helper reports the helper's caller only if
-  that helper is also `#[track_caller]`.
+  `ActorCounts` entry: a spawn-order id, the same number the actor span
+  carries as `actor_id`, and the `Handle::new` call site tell instances of
+  the same type apart, so a snapshot entry can be matched to the log lines
+  of the actor it describes. A registry of weak references feeds the
+  snapshot, so it keeps no actor alive and dead actors fall out of it; the
+  registry is only locked at spawn and at snapshot, never per broadcast.
 - `cumulative_broadcast_counts`, totalling every broadcast ever made, per
   spawn site. The totals include what live actors still hold, what callers
   claimed through `Handle::take_broadcast_counts` and what stopped actors

@@ -9,6 +9,7 @@ use tracing::Instrument;
 pub(crate) type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
 use std::panic::Location;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 #[cfg(feature = "profiler")]
 use crate::profiler::BroadcastCounts;
@@ -16,6 +17,10 @@ use crate::profiler::BroadcastCounts;
 use std::collections::HashMap;
 #[cfg(feature = "profiler")]
 use std::sync::Arc;
+
+/// Names actor instances in spawn order, process-wide. The span's `actor_id`
+/// and the profiler's id are this same numbering.
+static NEXT_ID: AtomicU64 = AtomicU64::new(0);
 
 pub(crate) type BroadcastFn<T> = Box<dyn Fn(&T, &'static str) + Send + Sync>;
 
@@ -27,6 +32,8 @@ pub(crate) type BroadcastFn<T> = Box<dyn Fn(&T, &'static str) + Send + Sync>;
 pub struct Actor<T> {
     pub inner: T,
     broadcast_fn: BroadcastFn<T>,
+    id: u64,
+    spawned_at: &'static Location<'static>,
     #[cfg(feature = "profiler")]
     broadcast_counts: Arc<BroadcastCounts>,
 }
@@ -38,18 +45,22 @@ impl<T: Debug> Debug for Actor<T> {
 }
 
 impl<T> Actor<T> {
-    /// The spawn site is unused without the profiler feature; taking it
-    /// unconditionally keeps the call site free of feature gates.
+    /// The id and the spawn site name the instance: both go on the actor
+    /// span, and the profiler reuses them so a snapshot entry matches the
+    /// span's log lines.
     pub(crate) fn new(
         broadcast_fn: BroadcastFn<T>,
         inner: T,
-        _spawned_at: &'static Location<'static>,
+        spawned_at: &'static Location<'static>,
     ) -> Self {
+        let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
         Self {
             inner,
             broadcast_fn,
+            id,
+            spawned_at,
             #[cfg(feature = "profiler")]
-            broadcast_counts: crate::profiler::new_counters(type_name::<T>(), _spawned_at),
+            broadcast_counts: crate::profiler::new_counters(id, type_name::<T>(), spawned_at),
         }
     }
 
@@ -113,6 +124,7 @@ pub(crate) type ExitState = Option<ActorExit>;
 struct ExitGuard {
     exit_tx: watch::Sender<ExitState>,
     actor_type: &'static str,
+    actor_id: u64,
 }
 
 impl Drop for ExitGuard {
@@ -125,15 +137,26 @@ impl Drop for ExitGuard {
         // A panic also reaches the std panic hook, but that prints to stderr,
         // which a subscriber shipping structured logs never sees.
         if reason == ActorExit::Panicked {
-            tracing::error!(actor_type = self.actor_type, reason = ?reason, "Actor stopped");
+            tracing::error!(
+                actor_type = self.actor_type,
+                actor_id = self.actor_id,
+                reason = ?reason,
+                "Actor stopped"
+            );
         } else {
-            tracing::debug!(actor_type = self.actor_type, reason = ?reason, "Actor stopped");
+            tracing::debug!(
+                actor_type = self.actor_type,
+                actor_id = self.actor_id,
+                reason = ?reason,
+                "Actor stopped"
+            );
         }
         let _ = self.exit_tx.send(Some(reason));
     }
 }
 
-/// Serves jobs inside an `actor` span that carries the actor type, so that
+/// Serves jobs inside an `actor` span that names the instance: the actor
+/// type, its spawn-order id and the call site it was spawned from, so that
 /// instrumentation in actor methods nests under the actor task.
 ///
 /// The span is created before the future is spawned, which parents it to
@@ -146,7 +169,12 @@ pub(crate) fn serve<T: Send + Sync + 'static>(
     actor: Actor<T>,
     exit_tx: watch::Sender<ExitState>,
 ) -> impl Future<Output = ()> {
-    let span = tracing::info_span!("actor", actor_type = type_name::<T>());
+    let span = tracing::info_span!(
+        "actor",
+        actor_type = type_name::<T>(),
+        actor_id = actor.id,
+        spawned_at = %actor.spawned_at,
+    );
     run(rx, actor, exit_tx).instrument(span)
 }
 
@@ -158,12 +186,14 @@ async fn run<T: Send + Sync + 'static>(
     let _guard = ExitGuard {
         exit_tx,
         actor_type: type_name::<T>(),
+        actor_id: actor.id,
     };
     while let Some(job) = rx.recv().await {
         let res = (job.call)(&mut actor, job.args).await;
         if job.respond_to.send(res).is_err() {
             tracing::debug!(
                 actor_type = type_name::<T>(),
+                actor_id = actor.id,
                 "Actor failed to respond as the receiver is dropped"
             );
         }

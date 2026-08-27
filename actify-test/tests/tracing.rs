@@ -99,7 +99,9 @@ async fn test_actor_methods_run_inside_the_actor_span() {
         .lines()
         .find(|line| line.contains("emitted by an actor method"))
         .expect("the event is captured");
-    let span = format!("actor{{actor_type=\"{}\"}}", std::any::type_name::<i32>());
+    // The prefix only: the span's identity fields are pinned by their own
+    // tests.
+    let span = format!("actor{{actor_type=\"{}\"", std::any::type_name::<i32>());
     assert!(line.contains(&span), "no actor span on: {line}");
 }
 
