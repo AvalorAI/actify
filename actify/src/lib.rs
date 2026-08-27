@@ -548,7 +548,7 @@ pub use handles::{Handle, ReadHandle, ToView};
 pub use throttle::{BoxFuture, Frequency, Throttle};
 
 #[cfg(feature = "profiler")]
-pub use profiler::{ActorCounts, StoppedCounts, broadcast_counts, stopped_broadcast_counts};
+pub use profiler::{ActorCounts, CumulativeCounts, broadcast_counts, cumulative_broadcast_counts};
 
 /// The crate's own items that the [`actify`](macro@crate::actify) macro needs in
 /// generated code. Standard library types are named by absolute path instead.

@@ -1,8 +1,8 @@
 //! The process-wide side of the `profiler` feature: the registry of live
-//! actors, the snapshot read from it, and the aggregate that keeps the work
-//! of stopped actors. The counters themselves live on the actor, and the
-//! reads of a single actor live on its handle; everything feature-gated that
-//! stands on its own is here, behind the single gate on the module
+//! actors, the snapshot read from it, and the cumulative totals that keep
+//! every broadcast ever made. The counters themselves live on the actor, and
+//! the reads of a single actor live on its handle; everything feature-gated
+//! that stands on its own is here, behind the single gate on the module
 //! declaration.
 
 use std::collections::HashMap;
@@ -12,8 +12,8 @@ use std::sync::{Arc, LazyLock, Mutex, Weak};
 
 /// One actor's broadcast counters and its identity. The actor holds the only
 /// strong `Arc` to it and the registry a weak one, so dropping this is the
-/// actor stopping, which folds whatever counts remain into the stopped
-/// aggregate.
+/// actor stopping, which folds whatever counts remain into the cumulative
+/// totals.
 pub(crate) struct BroadcastCounts {
     id: u64,
     actor_type: &'static str,
@@ -35,11 +35,16 @@ impl BroadcastCounts {
             .unwrap_or_default()
     }
 
+    /// Drains the counters, folding the drained counts into the cumulative
+    /// totals so a take never subtracts from them.
     pub(crate) fn take(&self) -> HashMap<&'static str, usize> {
-        self.counts
+        let counts = self
+            .counts
             .lock()
             .map(|mut counts| std::mem::take(&mut *counts))
-            .unwrap_or_default()
+            .unwrap_or_default();
+        fold_into_totals(self.actor_type, self.spawned_at, 0, &counts);
+        counts
     }
 }
 
@@ -48,22 +53,15 @@ impl Drop for BroadcastCounts {
         let Ok(counts) = self.counts.get_mut() else {
             return;
         };
-        let counts = std::mem::take(counts);
-        if let Ok(mut stopped) = STOPPED.lock() {
-            let site = stopped
-                .entry((self.actor_type, self.spawned_at))
-                .or_default();
-            site.actors += 1;
-            for (method, count) in counts {
-                *site.counts.entry(method).or_default() += count;
-            }
-        }
+        fold_into_totals(self.actor_type, self.spawned_at, 0, counts);
     }
 }
 
-/// The summed work of the stopped actors sharing one spawn site.
-#[derive(Default)]
-struct StoppedSite {
+/// One spawn site's row in the cumulative totals: the actors it has produced
+/// and the counts they no longer hold themselves, because they were taken or
+/// their actor stopped. What live actors still hold is added at read time.
+#[derive(Clone, Default)]
+struct SiteTotals {
     actors: u64,
     counts: HashMap<&'static str, usize>,
 }
@@ -73,14 +71,32 @@ type SiteKey = (&'static str, &'static Location<'static>);
 static REGISTRY: LazyLock<Mutex<Vec<Weak<BroadcastCounts>>>> =
     LazyLock::new(|| Mutex::new(Vec::new()));
 
-static STOPPED: LazyLock<Mutex<HashMap<SiteKey, StoppedSite>>> =
+static CUMULATIVE: LazyLock<Mutex<HashMap<SiteKey, SiteTotals>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
 static NEXT_ID: AtomicU64 = AtomicU64::new(0);
 
-/// Builds one actor's counters and adds them to the registry. Runs once per
-/// actor, before its task is spawned; the registry lock is never touched per
-/// broadcast.
+/// Adds one actor's contribution to the cumulative totals: the actor itself
+/// at spawn, its drained counts at a take and at stop. Runs on those cold
+/// paths only, never per broadcast.
+fn fold_into_totals(
+    actor_type: &'static str,
+    spawned_at: &'static Location<'static>,
+    spawned: u64,
+    counts: &HashMap<&'static str, usize>,
+) {
+    if let Ok(mut totals) = CUMULATIVE.lock() {
+        let site = totals.entry((actor_type, spawned_at)).or_default();
+        site.actors += spawned;
+        for (&method, &count) in counts {
+            *site.counts.entry(method).or_default() += count;
+        }
+    }
+}
+
+/// Builds one actor's counters, adds them to the registry and counts the
+/// actor in the cumulative totals. Runs once per actor, before its task is
+/// spawned; the registry lock is never touched per broadcast.
 pub(crate) fn new_counters(
     actor_type: &'static str,
     spawned_at: &'static Location<'static>,
@@ -95,6 +111,7 @@ pub(crate) fn new_counters(
         registry.retain(|weak| weak.strong_count() > 0);
         registry.push(Arc::downgrade(&counters));
     }
+    fold_into_totals(actor_type, spawned_at, 1, &HashMap::new());
     counters
 }
 
@@ -117,8 +134,8 @@ pub struct ActorCounts {
 }
 
 /// A snapshot of every live actor's broadcast counts, one entry per actor in
-/// spawn order. [`stopped_broadcast_counts`] holds the work of actors that
-/// have already stopped.
+/// spawn order. [`cumulative_broadcast_counts`] totals every broadcast ever
+/// made, including those of actors that have already stopped.
 ///
 /// The snapshot never resets anything: to measure a process-wide phase, take
 /// two snapshots and diff them by `id`. Per-actor phases are simpler through
@@ -168,30 +185,37 @@ pub fn broadcast_counts() -> Vec<ActorCounts> {
         .collect()
 }
 
-/// The summed broadcast counts of every stopped actor, one entry per spawn
-/// site, as returned by [`stopped_broadcast_counts`].
+/// Every broadcast ever made from one spawn site, as returned by
+/// [`cumulative_broadcast_counts`].
 #[derive(Clone, Debug)]
-pub struct StoppedCounts {
+pub struct CumulativeCounts {
     /// The actor type, as `std::any::type_name` renders it.
     pub actor_type: &'static str,
     /// The call site the actors were spawned from.
     pub spawned_at: &'static Location<'static>,
-    /// How many actors from this spawn site have stopped.
+    /// How many actors this spawn site has produced, live ones included.
     pub actors: u64,
-    /// Their summed broadcasts per method. Counts a caller claimed through
+    /// Their broadcasts per method: what live actors still hold, what
+    /// callers claimed through
     /// [`Handle::take_broadcast_counts`](crate::Handle::take_broadcast_counts)
-    /// are not reported again here.
+    /// and what stopped actors left behind.
     pub counts: HashMap<&'static str, usize>,
 }
 
-/// The work of every actor that has stopped, summed per spawn site and kept
-/// for the life of the process.
+/// Every broadcast ever made, totalled per spawn site and kept for the life
+/// of the process.
 ///
-/// An actor folds its remaining counts in here when it stops, so nothing is
-/// lost when an actor dies between two [`broadcast_counts`] snapshots.
-/// Summing per spawn site is what keeps the memory bounded: the aggregate
-/// grows with the `Handle::new` call sites in the binary, not with how many
-/// actors have lived. Entries are sorted by actor type, then spawn site.
+/// Nothing resets the totals: a take moves counts into them and a stopping
+/// actor folds its remainder in, so nothing is lost when an actor dies
+/// between two [`broadcast_counts`] snapshots. What taken and stopped counts
+/// amount to is the difference between these totals and the sum of the live
+/// counts. Totalling per spawn site is what keeps the memory bounded: the
+/// totals grow with the `Handle::new` call sites in the binary, not with how
+/// many actors have lived. Entries are sorted by actor type, then spawn
+/// site.
+///
+/// A take racing a read can leave that one read missing the taken counts;
+/// the next read includes them.
 ///
 /// # Stability
 ///
@@ -201,24 +225,45 @@ pub struct StoppedCounts {
 /// # Examples
 ///
 /// ```
-/// for site in actify::stopped_broadcast_counts() {
+/// for site in actify::cumulative_broadcast_counts() {
 ///     println!(
-///         "{} spawned at {}: {} stopped, {:?}",
+///         "{} spawned at {}: {} actors, {:?}",
 ///         site.actor_type, site.spawned_at, site.actors, site.counts
 ///     );
 /// }
 /// ```
-pub fn stopped_broadcast_counts() -> Vec<StoppedCounts> {
-    let Ok(stopped) = STOPPED.lock() else {
-        return Vec::new();
+pub fn cumulative_broadcast_counts() -> Vec<CumulativeCounts> {
+    // Pinning the live actors first means none can stop and fold mid-read:
+    // their counts are read from the maps they still hold.
+    let live: Vec<Arc<BroadcastCounts>> = match REGISTRY.lock() {
+        Ok(mut registry) => {
+            registry.retain(|weak| weak.strong_count() > 0);
+            registry.iter().filter_map(|weak| weak.upgrade()).collect()
+        }
+        Err(_) => Vec::new(),
     };
-    let mut sites: Vec<_> = stopped
-        .iter()
-        .map(|(&(actor_type, spawned_at), site)| StoppedCounts {
+    let mut sites: HashMap<SiteKey, SiteTotals> = match CUMULATIVE.lock() {
+        Ok(totals) => totals
+            .iter()
+            .map(|(&key, site)| (key, site.clone()))
+            .collect(),
+        Err(_) => HashMap::new(),
+    };
+    for counters in live {
+        let site = sites
+            .entry((counters.actor_type, counters.spawned_at))
+            .or_default();
+        for (method, count) in counters.snapshot() {
+            *site.counts.entry(method).or_default() += count;
+        }
+    }
+    let mut sites: Vec<_> = sites
+        .into_iter()
+        .map(|((actor_type, spawned_at), site)| CumulativeCounts {
             actor_type,
             spawned_at,
             actors: site.actors,
-            counts: site.counts.clone(),
+            counts: site.counts,
         })
         .collect();
     sites.sort_by_key(|site| {

@@ -764,9 +764,10 @@ where
     /// [`Handle::broadcast_counts`] for the shape of the keys, and for
     /// reading without resetting.
     ///
-    /// Taken counts are the caller's: they are not reported again through
-    /// [`stopped_broadcast_counts`](crate::stopped_broadcast_counts) when
-    /// the actor stops.
+    /// A take resets the actor's own counters, never the totals: the taken
+    /// counts remain in what
+    /// [`cumulative_broadcast_counts`](crate::cumulative_broadcast_counts)
+    /// reports.
     ///
     /// # Stability
     ///
