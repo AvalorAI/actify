@@ -759,6 +759,10 @@ where
     /// [`Handle::broadcast_counts`] for the shape of the keys, and for
     /// reading without resetting.
     ///
+    /// Taken counts are the caller's: they are not reported again through
+    /// [`stopped_broadcast_counts`](crate::stopped_broadcast_counts) when
+    /// the actor stops.
+    ///
     /// # Stability
     ///
     /// The profiler is a development aid. Its API is exempt from semver and

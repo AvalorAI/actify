@@ -32,7 +32,10 @@ impl Counters {
     }
 
     pub(crate) fn snapshot(&self) -> HashMap<&'static str, usize> {
-        self.counts.lock().map(|counts| counts.clone()).unwrap_or_default()
+        self.counts
+            .lock()
+            .map(|counts| counts.clone())
+            .unwrap_or_default()
     }
 
     pub(crate) fn take(&self) -> HashMap<&'static str, usize> {
