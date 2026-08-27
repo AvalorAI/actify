@@ -1330,12 +1330,12 @@ mod tests {
             .expect("the dead actor stayed in the snapshot");
         }
 
-        /// The cumulative totals count every broadcast ever made from a
-        /// spawn site exactly once: what live actors still hold, what takers
-        /// claimed and what stopped actors left behind. The fold on stop
-        /// moves counts into the totals without changing them.
+        /// The totals count every broadcast from a spawn site exactly once,
+        /// whether its actor is live, taken from or stopped, so the taken
+        /// and stopped share is the difference between the totals and the
+        /// sum of the live counts: here one taken plus two stopped.
         #[tokio::test]
-        async fn test_cumulative_totals_include_live_taken_and_stopped() {
+        async fn test_taken_and_stopped_counts_are_the_totals_minus_the_live_sum() {
             #[derive(Debug, Clone)]
             struct CumulativeProbe;
 
@@ -1343,17 +1343,32 @@ mod tests {
                 Handle::new(CumulativeProbe)
             }
 
-            fn totals() -> Option<crate::CumulativeCounts> {
+            fn totals() -> crate::CumulativeCounts {
                 crate::cumulative_broadcast_counts()
                     .into_iter()
                     .find(|site| site.actor_type.contains("CumulativeProbe"))
+                    .expect("the spawn site is missing")
             }
 
-            fn live() -> usize {
+            fn live_probes() -> Vec<crate::ActorCounts> {
                 crate::broadcast_counts()
-                    .iter()
+                    .into_iter()
                     .filter(|actor| actor.actor_type.contains("CumulativeProbe"))
-                    .count()
+                    .collect()
+            }
+
+            /// A dropped actor folds its counts when its task ends, and on
+            /// this single-threaded test runtime that task only runs when
+            /// the test yields. The timeout turns a missing fold into a
+            /// failure instead of a hang.
+            async fn wait_until_live_is(count: usize) {
+                tokio::time::timeout(std::time::Duration::from_secs(5), async {
+                    while live_probes().len() > count {
+                        tokio::task::yield_now().await;
+                    }
+                })
+                .await
+                .expect("the dropped actor never stopped");
             }
 
             let stopped = spawn_one();
@@ -1371,67 +1386,25 @@ mod tests {
             let held = spawn_one();
             held.set(CumulativeProbe).await;
 
-            // The stopped actor folds when its task ends, on its own
-            // schedule; totals must not change across that fold.
-            tokio::time::timeout(std::time::Duration::from_secs(5), async {
-                while live() > 2 {
-                    tokio::task::yield_now().await;
-                }
-            })
-            .await
-            .expect("the stopped actor stayed live");
+            wait_until_live_is(2).await;
 
-            let site = totals().expect("the spawn site is missing");
+            let site = totals();
+            let live_sum: usize = live_probes()
+                .iter()
+                .map(|actor| actor.counts.get(&"set").copied().unwrap_or(0))
+                .sum();
             assert_eq!(site.actors, 3);
             assert_eq!(site.counts, HashMap::from([("set", 4)]));
+            assert_eq!(live_sum, 1, "only the held actor still holds a count");
+            assert_eq!(site.counts[&"set"] - live_sum, 3, "one taken, two stopped");
             assert!(site.spawned_at.file().ends_with("handle.rs"));
-        }
 
-        /// A take claims the actor's own counters for phase measurement; the
-        /// cumulative totals keep the taken counts, and do not count them
-        /// again when the actor stops.
-        #[tokio::test]
-        async fn test_taken_counts_stay_in_the_cumulative_totals() {
-            #[derive(Debug, Clone)]
-            struct TakeTotalsProbe;
-
-            fn totals() -> Option<crate::CumulativeCounts> {
-                crate::cumulative_broadcast_counts()
-                    .into_iter()
-                    .find(|site| site.actor_type.contains("TakeTotalsProbe"))
-            }
-
-            fn live() -> usize {
-                crate::broadcast_counts()
-                    .iter()
-                    .filter(|actor| actor.actor_type.contains("TakeTotalsProbe"))
-                    .count()
-            }
-
-            let handle = Handle::new(TakeTotalsProbe);
-            handle.set(TakeTotalsProbe).await;
-            assert_eq!(
-                handle.take_broadcast_counts().await,
-                HashMap::from([("set", 1)])
-            );
-            assert_eq!(handle.broadcast_counts().await, HashMap::new());
-            assert_eq!(
-                totals().expect("the spawn site is missing").counts,
-                HashMap::from([("set", 1)])
-            );
-
-            drop(handle);
-            tokio::time::timeout(std::time::Duration::from_secs(5), async {
-                while live() > 0 {
-                    tokio::task::yield_now().await;
-                }
-            })
-            .await
-            .expect("the stopped actor stayed live");
-
-            let site = totals().expect("the spawn site is missing");
-            assert_eq!(site.actors, 1);
-            assert_eq!(site.counts, HashMap::from([("set", 1)]));
+            // The taker's own counters are already empty, so its stop must
+            // add nothing: the taken count is in the totals exactly once.
+            drop(taker);
+            wait_until_live_is(1).await;
+            assert_eq!(totals().counts, HashMap::from([("set", 4)]));
+            assert_eq!(totals().actors, 3);
         }
     }
 
