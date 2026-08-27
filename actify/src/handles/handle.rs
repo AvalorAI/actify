@@ -1374,8 +1374,9 @@ mod tests {
             // Three actors from the one spawn site inside spawn_one, each
             // ending up in a different state.
 
-            // Stopped: broadcasts twice, then stops still holding both.
+            // Stopped: broadcasts three times, then stops holding all three.
             let stopped = spawn_one();
+            stopped.set(CumulativeProbe).await;
             stopped.set(CumulativeProbe).await;
             stopped.set(CumulativeProbe).await;
             drop(stopped);
@@ -1399,9 +1400,9 @@ mod tests {
             // The site counts every actor it produced, live ones included.
             assert_eq!(site.actors, 3);
 
-            // The totals hold all four broadcasts: two the stopped actor
+            // The totals hold all five broadcasts: three the stopped actor
             // folded in, one the take folded in, one still held live.
-            assert_eq!(site.counts, HashMap::from([("set", 4)]));
+            assert_eq!(site.counts, HashMap::from([("set", 5)]));
 
             // The live snapshot only shows what actors still hold: the
             // taker was drained, so the held actor's single count remains.
@@ -1413,7 +1414,11 @@ mod tests {
 
             // The rule the docs promise: totals minus the live sum is the
             // taken and stopped share.
-            assert_eq!(site.counts[&"set"] - live_sum, 3, "one taken, two stopped");
+            assert_eq!(
+                site.counts[&"set"] - live_sum,
+                4,
+                "one taken, three stopped"
+            );
 
             // The site is the Handle::new call in spawn_one.
             assert!(site.spawned_at.file().ends_with("handle.rs"));
@@ -1422,8 +1427,36 @@ mod tests {
             // add nothing: the taken count is in the totals exactly once.
             drop(taker);
             wait_until_live_is(1).await;
-            assert_eq!(totals().counts, HashMap::from([("set", 4)]));
+            assert_eq!(totals().counts, HashMap::from([("set", 5)]));
             assert_eq!(totals().actors, 3);
+        }
+
+        /// One call site stays one entry in the totals however many actors
+        /// it produces: the key space grows with the code in the binary, not
+        /// with the spawns at runtime.
+        #[tokio::test]
+        async fn test_a_spawning_loop_grows_actors_not_entries() {
+            #[derive(Debug, Clone)]
+            struct LoopProbe;
+
+            for _ in 0..5 {
+                let handle = Handle::new(LoopProbe);
+                handle.set(LoopProbe).await;
+                handle.set(LoopProbe).await;
+            }
+
+            let sites: Vec<_> = crate::cumulative_broadcast_counts()
+                .into_iter()
+                .filter(|site| site.actor_type.contains("LoopProbe"))
+                .collect();
+
+            // Five actors and ten broadcasts from one Handle::new line are
+            // one entry: entries, actors and counts are three different
+            // numbers. Whether an actor has folded yet or still counts as
+            // live does not matter, since the totals include both.
+            assert_eq!(sites.len(), 1, "one call site is one entry");
+            assert_eq!(sites[0].actors, 5);
+            assert_eq!(sites[0].counts, HashMap::from([("set", 10)]));
         }
     }
 
