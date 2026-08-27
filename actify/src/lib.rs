@@ -531,6 +531,8 @@ mod actor;
 mod cache;
 mod extensions;
 mod handles;
+#[cfg(feature = "profiler")]
+mod profiler;
 mod throttle;
 
 // Reexport for easier reference
@@ -544,7 +546,7 @@ pub use handles::{Handle, ReadHandle, ToView};
 pub use throttle::{BoxFuture, Frequency, Throttle};
 
 #[cfg(feature = "profiler")]
-pub use actor::{ActorCounts, broadcast_counts};
+pub use profiler::{ActorCounts, broadcast_counts};
 
 /// The crate's own items that the [`actify`](macro@crate::actify) macro needs in
 /// generated code. Standard library types are named by absolute path instead.

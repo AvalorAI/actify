@@ -700,7 +700,16 @@ impl<T: Send + Sync + 'static, V> Handle<T, V> {
         })
         .await
     }
+}
 
+/// The profiler reads of one actor. The process-wide snapshot lives in
+/// `crate::profiler`.
+#[cfg(feature = "profiler")]
+impl<T, V> Handle<T, V>
+where
+    T: ToView<V> + Send + Sync + 'static,
+    V: Clone + Send + Sync + 'static,
+{
     /// Returns how many times each method has broadcast, since the actor
     /// started or since the last [`Handle::take_broadcast_counts`].
     ///
@@ -739,7 +748,6 @@ impl<T: Send + Sync + 'static, V> Handle<T, V> {
     /// Panics if the actor has stopped, either because one of its methods
     /// panicked or because its runtime shut down. See [Actor lifetime and
     /// panics](crate#actor-lifetime-and-panics).
-    #[cfg(feature = "profiler")]
     pub async fn broadcast_counts(&self) -> HashMap<&'static str, usize> {
         self.run((), |s, ()| s.broadcast_counts()).await
     }
@@ -775,7 +783,6 @@ impl<T: Send + Sync + 'static, V> Handle<T, V> {
     /// Panics if the actor has stopped, either because one of its methods
     /// panicked or because its runtime shut down. See [Actor lifetime and
     /// panics](crate#actor-lifetime-and-panics).
-    #[cfg(feature = "profiler")]
     pub async fn take_broadcast_counts(&self) -> HashMap<&'static str, usize> {
         self.run((), |s, ()| s.take_broadcast_counts()).await
     }
