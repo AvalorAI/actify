@@ -1371,11 +1371,16 @@ mod tests {
                 .expect("the dropped actor never stopped");
             }
 
+            // Three actors from the one spawn site inside spawn_one, each
+            // ending up in a different state.
+
+            // Stopped: broadcasts twice, then stops still holding both.
             let stopped = spawn_one();
             stopped.set(CumulativeProbe).await;
             stopped.set(CumulativeProbe).await;
             drop(stopped);
 
+            // Taken from: broadcasts once, and the take claims that count.
             let taker = spawn_one();
             taker.set(CumulativeProbe).await;
             assert_eq!(
@@ -1383,20 +1388,34 @@ mod tests {
                 HashMap::from([("set", 1)])
             );
 
+            // Live: broadcasts once and keeps holding it.
             let held = spawn_one();
             held.set(CumulativeProbe).await;
 
             wait_until_live_is(2).await;
 
             let site = totals();
+
+            // The site counts every actor it produced, live ones included.
+            assert_eq!(site.actors, 3);
+
+            // The totals hold all four broadcasts: two the stopped actor
+            // folded in, one the take folded in, one still held live.
+            assert_eq!(site.counts, HashMap::from([("set", 4)]));
+
+            // The live snapshot only shows what actors still hold: the
+            // taker was drained, so the held actor's single count remains.
             let live_sum: usize = live_probes()
                 .iter()
                 .map(|actor| actor.counts.get(&"set").copied().unwrap_or(0))
                 .sum();
-            assert_eq!(site.actors, 3);
-            assert_eq!(site.counts, HashMap::from([("set", 4)]));
             assert_eq!(live_sum, 1, "only the held actor still holds a count");
+
+            // The rule the docs promise: totals minus the live sum is the
+            // taken and stopped share.
             assert_eq!(site.counts[&"set"] - live_sum, 3, "one taken, two stopped");
+
+            // The site is the Handle::new call in spawn_one.
             assert!(site.spawned_at.file().ends_with("handle.rs"));
 
             // The taker's own counters are already empty, so its stop must
