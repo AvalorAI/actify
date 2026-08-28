@@ -9,6 +9,8 @@ they record what changed rather than why, and are not exhaustive. 0.8.0 through
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-08-28
+
 This release is breaking. Most of it is renames the compiler will point at,
 recorded in the table under Changed. Five changes compile cleanly and behave
 differently, each detailed in its own entry:
@@ -640,7 +642,8 @@ drift; the dependency is now declared by path and version together.
 
 - Removed unnecessary mutability.
 
-[Unreleased]: https://github.com/AvalorAI/actify/compare/v0.8.3...HEAD
+[Unreleased]: https://github.com/AvalorAI/actify/compare/v0.9.0...HEAD
+[0.9.0]: https://github.com/AvalorAI/actify/compare/v0.8.3...v0.9.0
 [0.8.3]: https://github.com/AvalorAI/actify/compare/0.7.3...v0.8.3
 [0.7.3]: https://github.com/AvalorAI/actify/compare/0.7.2...0.7.3
 [0.7.2]: https://github.com/AvalorAI/actify/compare/0.7.0...0.7.2
