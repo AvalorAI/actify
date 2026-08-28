@@ -1,6 +1,6 @@
 [package]
 name = "actify-macros"
-version = "0.5.0"
+version = "0.6.0"
 description = "Actify's procedural macros"
 documentation = "https://docs.rs/actify-macros/latest/actify_macros/"
 readme = "README.md"
