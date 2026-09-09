@@ -838,6 +838,13 @@ impl<T, V: Default + Clone + Send + Sync + 'static> Handle<T, V> {
 mod tests {
     use super::*;
 
+    /// A handle travels by value: it is held in structs and captured by
+    /// futures, so its size is paid on every copy.
+    #[test]
+    fn test_handle_is_pointer_sized() {
+        assert_eq!(size_of::<Handle<u8>>(), size_of::<usize>());
+    }
+
     /// A panicking actor method must surface as a panic naming that cause, not
     /// as the generic message used when the actor merely stopped.
     ///
