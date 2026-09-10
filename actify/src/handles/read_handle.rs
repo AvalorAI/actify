@@ -229,6 +229,11 @@ where
 mod tests {
     use super::*;
 
+    #[test]
+    fn test_read_handle_is_pointer_sized() {
+        assert_eq!(size_of::<ReadHandle<u8>>(), size_of::<usize>());
+    }
+
     #[tokio::test]
     async fn test_read_handle() {
         let handle = Handle::new(1);

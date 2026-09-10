@@ -3,6 +3,7 @@ use std::any::type_name;
 #[cfg(feature = "profiler")]
 use std::collections::HashMap;
 use std::fmt::{self, Debug};
+use std::sync::Arc;
 use tokio::sync::{broadcast, mpsc, oneshot, watch};
 
 use super::read_handle::ReadHandle;
@@ -98,17 +99,22 @@ where
 /// (e.g. `Handle::<MyType, Summary>::new(val)`). [`Handle::with`] always reads
 /// the actor type.
 pub struct Handle<T, V = T> {
-    pub(super) tx: mpsc::Sender<Job<T>>,
-    pub(super) broadcast_sender: broadcast::Sender<V>,
-    pub(super) exit_rx: watch::Receiver<ExitState>,
+    channels: Arc<Channels<T, V>>,
+}
+
+/// The channel endpoints every clone of a [`Handle`] shares. One `Arc` holds
+/// all three, so a handle is a single pointer and cloning it is one reference
+/// count increment.
+struct Channels<T, V> {
+    tx: mpsc::Sender<Job<T>>,
+    broadcast_sender: broadcast::Sender<V>,
+    exit_rx: watch::Receiver<ExitState>,
 }
 
 impl<T, V> Clone for Handle<T, V> {
     fn clone(&self) -> Self {
         Handle {
-            tx: self.tx.clone(),
-            broadcast_sender: self.broadcast_sender.clone(),
-            exit_rx: self.exit_rx.clone(),
+            channels: Arc::clone(&self.channels),
         }
     }
 }
@@ -172,9 +178,11 @@ where
         );
         tokio::spawn(serve(rx, actor, exit_tx));
         Handle {
-            tx,
-            broadcast_sender: broadcast_tx,
-            exit_rx,
+            channels: Arc::new(Channels {
+                tx,
+                broadcast_sender: broadcast_tx,
+                exit_rx,
+            }),
         }
     }
 
@@ -470,7 +478,7 @@ impl<T, V> Handle<T, V> {
     /// # }
     /// ```
     pub fn subscribe(&self) -> broadcast::Receiver<V> {
-        self.broadcast_sender.subscribe()
+        self.channels.broadcast_sender.subscribe()
     }
 
     /// Returns a [`ReadHandle`] that provides read-only access to this actor.
@@ -482,7 +490,7 @@ impl<T, V> Handle<T, V> {
     ///
     /// Returns immediately if it has already stopped.
     async fn wait_for_exit(&self) -> ActorExit {
-        let mut exit_rx = self.exit_rx.clone();
+        let mut exit_rx = self.channels.exit_rx.clone();
         loop {
             if let Some(exit) = *exit_rx.borrow_and_update() {
                 return exit;
@@ -503,7 +511,7 @@ impl<T: Send + Sync + 'static, V> Handle<T, V> {
     /// Falls as calls queue up and rises again as the actor serves them, so it
     /// is the way to observe the actor falling behind.
     pub fn remaining_capacity(&self) -> usize {
-        self.tx.capacity()
+        self.channels.tx.capacity()
     }
 
     #[doc(hidden)]
@@ -518,13 +526,12 @@ impl<T: Send + Sync + 'static, V> Handle<T, V> {
             args,
             respond_to,
         };
-        if self.tx.send(job).await.is_err() {
-            self.report_actor_gone().await;
+        if self.channels.tx.send(job).await.is_ok() {
+            if let Ok(res) = get_result.await {
+                return res;
+            }
         }
-        match get_result.await {
-            Ok(res) => res,
-            Err(_) => self.report_actor_gone().await,
-        }
+        self.report_actor_gone().await
     }
 
     /// Panics with the reason the actor stopped serving jobs.
@@ -837,6 +844,13 @@ impl<T, V: Default + Clone + Send + Sync + 'static> Handle<T, V> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A handle travels by value: it is held in structs and captured by
+    /// futures, so its size is paid on every copy.
+    #[test]
+    fn test_handle_is_pointer_sized() {
+        assert_eq!(size_of::<Handle<u8>>(), size_of::<usize>());
+    }
 
     /// A panicking actor method must surface as a panic naming that cause, not
     /// as the generic message used when the actor merely stopped.

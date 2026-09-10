@@ -9,6 +9,15 @@ they record what changed rather than why, and are not exhaustive. 0.8.0 through
 
 ## [Unreleased]
 
+### Fixed
+
+- `Handle` and `ReadHandle` are the size of one pointer. 0.9.0 added the
+  actor's exit state to every handle as a `watch::Receiver`, which doubled
+  them from two words to four. The channel endpoints now sit behind one
+  `Arc`, so a handle is one word and cloning it is one reference count
+  increment. A call's reply is no longer held across the wait for the exit
+  reason, which shrinks the future behind every call.
+
 ## [0.9.0] - 2026-08-28
 
 This release is breaking. Most of it is renames the compiler will point at,
