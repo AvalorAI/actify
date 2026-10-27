@@ -9,6 +9,8 @@ they record what changed rather than why, and are not exhaustive. 0.8.0 through
 
 ## [Unreleased]
 
+## [0.9.1] - 2026-10-27
+
 ### Fixed
 
 - `Handle` and `ReadHandle` are the size of one pointer. 0.9.0 added the
@@ -651,7 +653,8 @@ drift; the dependency is now declared by path and version together.
 
 - Removed unnecessary mutability.
 
-[Unreleased]: https://github.com/AvalorAI/actify/compare/v0.9.0...HEAD
+[Unreleased]: https://github.com/AvalorAI/actify/compare/v0.9.1...HEAD
+[0.9.1]: https://github.com/AvalorAI/actify/compare/v0.9.0...v0.9.1
 [0.9.0]: https://github.com/AvalorAI/actify/compare/v0.8.3...v0.9.0
 [0.8.3]: https://github.com/AvalorAI/actify/compare/0.7.3...v0.8.3
 [0.7.3]: https://github.com/AvalorAI/actify/compare/0.7.2...0.7.3
